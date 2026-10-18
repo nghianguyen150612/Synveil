@@ -221,7 +221,7 @@ final class SessionRestorationTests: XCTestCase {
     }
 
     func testProbeTargetsStoredCanonicalOriginAndIsReadOnly() async throws {
-        let endpoint = try ServerEndpoint(validating: "https://sync.synveil.example:8443/vault")
+        let endpoint = try ServerEndpoint(validating: "https://sync.synveil.example:8443")
         let transport = StubHTTPTransport(response: successfulLibrariesResponse())
         let probe = AuthenticatedSessionValidationService(transport: transport)
 

@@ -42,7 +42,7 @@ public final class URLSessionHTTPTransport: HTTPTransportProtocol, @unchecked Se
         requestTimeout: TimeInterval = 10.0,
         resourceTimeout: TimeInterval = 15.0,
         maxResponseBodyBytes: Int = maxProbeResponseBodyBytes,
-        allowLoopbackTestHttp: Bool = false,
+        allowLoopbackTestHttp: Bool = ServerEndpoint.defaultAllowsLoopbackTestHTTP,
         allowsCellularAccess: Bool = true,
         allowsExpensiveNetworkAccess: Bool = true,
         allowsConstrainedNetworkAccess: Bool = true

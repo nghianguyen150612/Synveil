@@ -56,7 +56,10 @@ public struct ServerSetupView: View {
                         .accessibilityIdentifier("synveil.server-setup.input")
                         .accessibilityLabel("Server Address Input Field")
 
-                    Text("Example: https://synveil.example.com or http://192.168.1.100:8443")
+                    Text(
+                        "Use HTTPS. Debug builds also allow http://127.0.0.1 or http://[::1] "
+                            + "for local testing."
+                    )
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }

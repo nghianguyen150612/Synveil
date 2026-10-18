@@ -146,8 +146,8 @@ This matrix maps every iOS v0.1 product capability (from `docs/ios/IOS_PLATFORM_
 | Encrypted Credential Vault (`svd1_` pair) | `CAP-09` | `synveil-core::tokens::svd1`, `synveil-platform::secrets` | `IOS_NATIVE_EQUIVALENT` | Apple **Keychain Services** (`Security.framework`) with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`. | P028 (Keychain) |
 | DeviceBearer Request Authentication | `CAP-10` | `synveil-core::tokens::svd1` | `DIRECTLY_REUSABLE` (Format) / `IOS_NATIVE_EQUIVALENT` (Header) | `synveil-core` validates bearer string; Swift adds `Authorization: Bearer svd1_...`. | P013 (FFI), P029 (Session) |
 | Local Credential Fencing ("Forget on device") | `CAP-11` | N/A | `IOS_NATIVE_EQUIVALENT` | Keychain key deletion via `SecItemDelete` on profile removal or origin change. | P028 (Keychain) |
-| Profile-Bound Device Session | `CAP-12` | N/A | `IOS_NATIVE_EQUIVALENT` | Swift `SessionManager` class holding active profile ID, origin, and bearer credential handle. | P029 (Session) |
-| Multi-Profile Isolation & Switching | `CAP-13` | N/A | `REQUIRES_PRODUCT_DECISION` / `IOS_NATIVE_EQUIVALENT` | Swift Profile Switcher + Keychain isolation per profile UUID. | P030 (Multi-Profile) |
+| Profile-Bound Device Session | `CAP-12` | N/A | `IOS_NATIVE_EQUIVALENT` | Swift `SessionController` and restoration services bind the active endpoint, owner/device, and bearer credential. | P029 (Session) |
+| Multi-Profile Isolation & Switching | `CAP-13` | N/A | `REQUIRES_PRODUCT_DECISION` | iOS has one active server session and no profile switcher. Access-group and product behavior remain unresolved. | P030 (Multi-Profile) |
 | Library Discovery & Pagination (`GET /api/v1/libraries`) | `CAP-14` | API in `synveil-api::files`, models in `synveil-core` | `DIRECTLY_REUSABLE` (Models) / `IOS_NATIVE_EQUIVALENT` (HTTP) | Shared JSON models; Swift `URLSession` fetches paginated libraries (100/page, 4096 max). | P031 (Library API) |
 | Logical Directory Browsing (`GET /api/v1/libraries/{id}/nodes`) | `CAP-15` | API in `synveil-api::files`, models in `synveil-core` | `DIRECTLY_REUSABLE` (Models) / `IOS_NATIVE_EQUIVALENT` (HTTP) | Shared JSON node models; Swift `URLSession` handles cursor-based pagination (512-byte max). | P032 (Node API) |
 | Path Breadcrumb Navigation | `CAP-16` | N/A | `IOS_NATIVE_EQUIVALENT` | SwiftUI Breadcrumb trail view driven by node hierarchy. | P033 (Breadcrumbs) |
@@ -157,7 +157,7 @@ This matrix maps every iOS v0.1 product capability (from `docs/ios/IOS_PLATFORM_
 | Streaming Content Download | `CAP-20` | `synveil-object-store` (Hashing stream), API in `synveil-api::downloads` | `IOS_NATIVE_EQUIVALENT` | Swift `URLSessionDownloadTask` / `URLSession.bytes` streaming bytes into App Sandbox. | P038 (Downloads) |
 | Storage Access Framework (SAF) Integration | `CAP-21` | Android SAF | `ANDROID_ONLY_NOT_APPLICABLE` | Replaced by SwiftUI `.fileImporter` / `UIDocumentPickerViewController` and sandbox staging. | P039 (File Picker) |
 | Transfer Staging & Storage Pressure Protection | `CAP-22` | Staging rules in `synveil-client-sync` | `IOS_NATIVE_EQUIVALENT` | Swift `FileManager` checking free space (512 MiB limit, 64 MiB reserve) in `Library/Caches/staging`. | P040 (Transfer Staging) |
-| Resumable Chunked Upload & Replace (4 MiB) | `CAP-23` | Session models in `synveil-core`, `synveil-object-store::keys` | `DIRECTLY_REUSABLE` (Hashes/Keys) / `IOS_NATIVE_EQUIVALENT` (Upload) | `synveil-core` SHA-256 calculation; Swift background `URLSessionUploadTask` sends 4 MiB PATCH chunks. | P013 (FFI), P041 (Resumable Upload) |
+| Resumable Chunked Upload & Replace (4 MiB) | `CAP-23` | Session models in `synveil-core`, `synveil-object-store::keys` | `DIRECTLY_REUSABLE` (Hashes/Keys) / `IOS_NATIVE_EQUIVALENT` (Upload) | Swift foreground transport sends 4 MiB PATCH chunks; authenticated background URLSession transfer remains capability-off under P051. | P013 (FFI), P041 (Resumable Upload) |
 | Local SQLite Metadata Database | `CAP-24` | Migration scripts in `synveil-client-sync::local_migrations` | `REUSABLE_WITH_ADAPTER` | Swift GRDB / SQLite cache storing libraries, nodes, sync feed checkpoints, and mutation queue. | P042 (Local DB Cache) |
 | Offline-First Browsing & Network Observer | `CAP-25` | N/A | `IOS_NATIVE_EQUIVALENT` | Apple **Network framework** (`NWPathMonitor`) + SQLite offline node projection. | P043 (Offline/Network) |
 | Change Feed Consumption & Signed ACK Loop | `CAP-26` | `synveil-client-sync::sync_cycle`, `synveil-client-sync::rebaseline` | `REUSABLE_WITH_ADAPTER` | Sync feed parser and signed ACK calculation in Rust FFI; Swift manages HTTP loop & SQLite write. | P013 (FFI), P044 (Sync Loop) |
@@ -167,8 +167,8 @@ This matrix maps every iOS v0.1 product capability (from `docs/ios/IOS_PLATFORM_
 | BrowserSession-Only Conflict Resolution Boundary | `CAP-30` | `ADR-032` security rule | `IOS_NATIVE_EQUIVALENT` | Swift HTTP client blocks DeviceBearer conflict resolution API requests. Resolution remains web-only. | P048 (Conflict Boundary) |
 | Content Export & Sharing | `CAP-31` | Android `ACTION_SEND` | `IOS_NATIVE_EQUIVALENT` | SwiftUI `ShareLink` / `UIActivityViewController` and Quick Look (`QLPreviewController`) previewing. | P049 (Sharing/Preview) |
 | User Sync Settings & Network Constraints | `CAP-32` | N/A | `IOS_NATIVE_EQUIVALENT` | SwiftUI Settings Form + `UserDefaults` + `NWPathMonitor` constraint checks (Wi-Fi vs Cellular). | P050 (Sync Settings) |
-| File Provider Extension (`NSFileProviderExtension`) | `CAP-33` | N/A | `IOS_DEFERRED_AFTER_V0_1` | Apple `NSFileProviderExtension` (Files app virtual filesystem integration). Post-v0.1. | P053–P055 (Deferred) |
-| PhotoKit Background Auto-Upload | `CAP-34` | N/A | `IOS_DEFERRED_AFTER_V0_1` | Apple `PhotoKit` framework camera roll photo backup. Post-v0.1. | P056–P058 (Deferred) |
+| File Provider Extension (`NSFileProviderReplicatedExtension`) | `CAP-33` | N/A | `IOS_DEFERRED_AFTER_V0_1` | P053–P054 infrastructure is fail-closed; production domain/content operations remain disabled. P055 PR #139 is unmerged. | P053–P055 |
+| PhotoKit Foreground Upload | `CAP-34` | N/A | `IOS_DEFERRED_AFTER_V0_1` for v0.1 release parity | P056–P058 implement opt-in host-app discovery and foreground upload of ordinary FileVersions; photo binding and BackupSnapshot retention proof are absent. | P056–P058 |
 
 ---
 
@@ -181,7 +181,7 @@ The current Rust HTTP networking layer in `synveil-client-sync::http_remote` rel
 - `tokio` async runtime (`rt-multi-thread`, `io-util`).
 
 ### Assessment Findings
-1. **Background Transfers**: iOS strictly requires background uploads and downloads to be managed by `URLSessionConfiguration.background`. Operating system daemons execute background HTTP requests when the application is suspended or terminated. Rust `reqwest` running inside an async Tokio runtime cannot participate in iOS background OS transfers.
+1. **Background Transfers**: If authenticated background uploads/downloads are re-enabled, iOS requires `URLSessionConfiguration.background`; Rust `reqwest` cannot join the OS transfer daemon. Under the current P051 security decision, those background capabilities remain OFF and foreground P043/P045 transfer paths stay available.
 2. **TLS & Certificate Validation**: Apple platform security guidelines require using system TLS APIs (`Security.framework` / `CFNetwork`). While `rustls` builds for Apple targets, forcing `rustls` inside Swift apps prevents iOS from utilizing system certificate stores, enterprise root CA profiles, and native TLS session resumption.
 3. **HTTP Architecture Decision for iOS**:
    - **Do NOT reuse Rust `reqwest`/`rustls` HTTP stack on iOS.**
@@ -232,7 +232,7 @@ All models, identifier utilities, hashing tools, and validation rules in `synvei
 - **`sync_cycle.rs`**: Journal change feed processing, sequence tracking, gap detection.
 - **`rebaseline.rs` & `rebaseline_convergence.rs`**: Manifest snapshot page download validation, tree hash verification, rebaseline convergence checks (`ADR-028`).
 - **`conflict_policy.rs`**: Deterministic client-side conflict classification rules (`ADR-032`).
-- **`signatures` / `tokens`**: Signed ACK token generation (`POST /api/v1/libraries/{id}/sync/ack`).
+- **`signatures` / `tokens`**: Signed ACK token generation (`POST /api/v1/devices/{device_id}/libraries/{library_id}/changes/ack`).
 
 ### Assessment Findings
 1. **Correctness-Critical Semantics**: Re-implementing rebaseline convergence, signed ACK math, or conflict state transitions in Swift creates severe risk of cross-platform protocol drift between Android and iOS.
@@ -346,7 +346,7 @@ The following explicit domain functions and data types are identified as candida
 The following responsibilities **must remain 100% Swift/iOS-native**, with zero Rust exposure:
 
 1. **User Interface & Layout (`SwiftUI`)**: All screens, form inputs, navigation stacks, breadcrumbs, dialogs, and progress bars.
-2. **Credential Vault (`Security.framework`)**: Apple Keychain Services (`SecItemAdd`, `SecItemCopyMatching`, `SecItemDelete`) with Secure Enclave protection (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`).
+2. **Credential Vault (`Security.framework`)**: Apple Keychain Services (`SecItemAdd`, `SecItemCopyMatching`, `SecItemDelete`) with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` device-only data protection. The current generic-password item does not use a Secure Enclave key.
 3. **HTTP Transport & Background Networking (`URLSession`)**: Foreground async/await HTTP transport, custom TLS certificate validation, and `URLSessionConfiguration.background` tasks.
 4. **Local Database Persistence (`GRDB.swift` / SQLite3)**: SQLite database storage for cached libraries, nodes, mutation queue, and sync checkpoints in `<Sandbox>/Library/Application Support/`.
 5. **Background Task Scheduling (`BackgroundTasks`)**: `BGAppRefreshTask` registration and scheduling under iOS system Doze heuristics.
@@ -428,4 +428,4 @@ All downstream implementation prompts must strictly enforce these concrete const
 3. **No Keyring Crate on iOS**: Credential persistence for `svd1_` device tokens must use native Swift Keychain Services (`Security.framework`).
 4. **App Sandbox Compliance**: File staging must reside in `Library/Caches/staging` and obey the 512 MiB limit and 64 MiB free space reserve before transfer initialization.
 5. **Deterministic Conflict Preservation**: Never implement automatic client-side conflict resolution or DeviceBearer conflict resolution API calls. Conflicts must remain represented as local summary banners directing users to web review (`ADR-032`).
-6. **No Preempting Deferred Features**: Do not introduce `FileProvider` (`NSFileProviderExtension`) or `PhotoKit` (`PHPhotoLibrary`) framework imports into early v0.1 foundational prompts.
+6. **No Preempting Deferred Features**: Keep File Provider (`NSFileProviderReplicatedExtension`) and PhotoKit (`PHPhotoLibrary`) isolated from foundational v0.1 layers; later host-app PhotoKit implementation remains post-baseline, while production Files integration stays disabled.

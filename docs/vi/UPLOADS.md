@@ -258,6 +258,8 @@ tài liệu. Cleanup byte của chúng là job idempotent riêng.
 
 ## Blueprint API
 
+> **Thông báo API hiện tại:** Các route multipart `/api/v1/uploads` trong blueprint lịch sử này đã lỗi thời. Android và iOS hiện dùng `POST /api/v1/upload-sessions`, `PATCH`/`GET /api/v1/upload-sessions/{upload_session_id}`, và `/complete` hoặc `/abort`. Hợp đồng request/response hiện hành có thẩm quyền trong [api/openapi.yaml](../../api/openapi.yaml).
+
 Mọi route yêu cầu authenticated principal và authorization có scope tới target
 library. Device credential còn cần scope upload/sync. Public object ID và storage
 handle không bao giờ được chấp nhận làm destination authority.

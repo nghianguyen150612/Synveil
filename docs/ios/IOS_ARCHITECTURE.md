@@ -27,7 +27,7 @@ The Synveil iOS architecture is designed around six primary goals:
 2. **UI Isolation**: SwiftUI views are pure functions of state. Views MUST NOT directly execute network calls, query SQLite, invoke FFI functions, or interact with Keychain.
 3. **No Raw Secret Persistence**: Authentication secrets (`svd1_` device tokens) MUST reside strictly in Apple Keychain Services (`Security.framework`) with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` protection and in-memory HTTP header composers. Secrets MUST NEVER appear in `UserDefaults`, SQLite database tables, application logs, or SwiftUI view state.
 4. **Server Authority**: Local optimistic UI states and pending mutation queues MUST NEVER be mistaken for authoritative server confirmation. Operations remain marked as "Pending sync" until acknowledged by the Synveil server.
-5. **No Transfer Loss on View Teardown**: Transfer state, chunk staging, and progress tracking are owned by an infrastructure-level Transfer Engine. Navigating away from a view or backgrounding the app MUST NOT terminate active or queued transfers.
+5. **Durable Transfer Recovery**: Transfer intent, chunk staging, and progress tracking are owned outside SwiftUI view lifetimes. Navigating away from a view does not cancel durable work. Authenticated background file transfers are capability-off under P051; foreground work may be suspended by iOS and must reconcile its saved server session before retry.
 6. **No Automatic Client Conflict Resolution**: Following `ADR-032`, when server sync returns a conflict, the app persists a local conflict summary and displays an "Owner/web review required" banner. The iOS client MUST NOT attempt automated conflict resolution or issue DeviceBearer conflict resolution API calls.
 7. **MainActor UI Safety**: All UI state updates and SwiftUI view bindings are strictly bound to `@MainActor`. Heavy computation, hashing, SQLite queries, and FFI bridging MUST execute off the main thread.
 
@@ -45,7 +45,7 @@ The Synveil iOS architecture is designed around six primary goals:
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                           APPLICATION LAYER                             │
 │  App Launch Orchestrator  │  Session Controller  │  Sync Coordinator    │
-│  Transfer Coordinator     │  Profile Switcher    │  Background Scheduler│
+│  Transfer Coordinator     │  Session / Onboarding│  Background Scheduler│
 └──────────────────────────────────┬──────────────────────────────────────┘
                                    │
                                    ▼
@@ -312,7 +312,7 @@ Networking uses **Swift `URLSession`** as the primary Apple transport engine, ba
 ```
 
 1. **Vault Engine**: iOS Keychain Services (`Security.framework`).
-2. **Protection Class**: `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`. Keypair items are non-migratable across devices and protected by hardware Secure Enclave.
+2. **Protection Class**: `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`. Generic-password credential items are non-migratable across devices under Keychain data protection; the implementation does not create or claim a Secure Enclave key.
 3. **Memory Bounding**: Bearer token strings are held in memory-bounded value wrappers that zeroize memory upon deallocation where possible.
 4. **Local Cleanup**: "Forget on this device" executes `SecItemDelete` for the profile ID, wipes local SQLite cache, and resets session state.
 
@@ -374,10 +374,10 @@ Deterministic transfer states:
 ### 14.2 Resumable Upload Flow (4 MiB Chunks)
 1. User picks file via `.fileImporter` -> Staged in `Library/Caches/staging/uploads/`.
 2. Compute total file size and SHA-256 hash via FFI.
-3. Initiate upload session via `POST /api/v1/libraries/{id}/uploads` (or node replace).
+3. Initiate one frozen create/replace upload operation via `POST /api/v1/upload-sessions`.
 4. Slice input stream into 4 MiB raw chunks.
-5. Send 4 MiB chunk via `PATCH /api/v1/uploads/{session_id}`.
-6. Upon ambiguous network drop, send query `GET /api/v1/uploads/{session_id}` to obtain remote offset and resume cleanly.
+5. Send 4 MiB chunk via `PATCH /api/v1/upload-sessions/{upload_session_id}`.
+6. Upon ambiguous network drop, query `GET /api/v1/upload-sessions/{upload_session_id}` to obtain the authoritative offset and resume cleanly.
 7. Transfer completes ONLY upon authoritative server 200/201 response.
 
 ---
@@ -405,10 +405,10 @@ Metadata Mutation Engine
 1. **Connectivity Detection**: Apple `NWPathMonitor` continuously tracks Wi-Fi vs Cellular availability.
 2. **Offline Mode**: When offline, the app renders cached nodes from local SQLite tables with a prominent "Offline - Showing Cached Data" banner. Mutation operations remain queued locally.
 3. **Inbound Sync Loop**:
-   * Fetch journal feed `GET /api/v1/libraries/{id}/sync/feed?since={seq}`.
+   * Fetch the device-scoped journal feed `GET /api/v1/devices/{device_id}/libraries/{library_id}/changes`.
    * Pass raw JSON feed to Rust Bridge for change evaluation and signed ACK computation.
    * Apply changes to local SQLite projection in a single atomic database transaction.
-   * Send signed ACK token `POST /api/v1/libraries/{id}/sync/ack`.
+   * Send the signed ACK token to `POST /api/v1/devices/{device_id}/libraries/{library_id}/changes/ack`.
 4. **Rebaseline Snapshot Recovery**:
    * If journal history is expired, download rebaseline manifest pages.
    * Stage manifest snapshot items in SQLite rebaseline staging table.
@@ -614,7 +614,7 @@ State Transitions:
 3. **Simulator Verifiable**:
    * SwiftUI layout rendering, navigation stack transitions, mocked URLSession HTTP transfers, SQLite persistent cache transactions.
 4. **Physical Device Only**:
-   * Hardware Secure Enclave Keychain protection, `NWPathMonitor` Wi-Fi <-> Cellular transitions, real `BGAppRefreshTask` Doze execution.
+   * Device-only Keychain protection behavior, `NWPathMonitor` Wi-Fi <-> Cellular transitions, real `BGAppRefreshTask` scheduling.
 
 ---
 

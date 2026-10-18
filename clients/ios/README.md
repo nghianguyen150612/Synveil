@@ -4,8 +4,8 @@
 `clients/ios/` is the canonical home of the native Synveil iOS client (`v0.1`). It establishes a clean, production-grade Swift application layout adhering strictly to ADR-058 (`docs/adr/ADR-058-ios-v0.1-client-architecture.md`), `IOS_ARCHITECTURE.md`, and `IOS_VALIDATION_CI_ARCHITECTURE.md`.
 
 ## 2. Current Project Status
-- **Phase**: Rust Apple Artifact CI (Prompt015).
-- **Status**: Dedicated GitHub Actions static validation gate (`.github/workflows/ios-static-validation.yml`), build gate (`.github/workflows/ios-build.yml`), Simulator test gate (`.github/workflows/ios-simulator-tests.yml`), and Rust Apple artifact gate (`.github/workflows/ios-rust-apple-build.yml`) established.
+- **Status**: Native iOS v0.1 implementation milestones P022–P058 are recorded in `docs/ios/manifests/`; P058 merged through PR #142 at `c0c4c42`. P059 performs the full Android parity audit and regression hardening. P060 remains the separate release gate.
+- **CI**: Dedicated GitHub Actions static validation (`.github/workflows/ios-static-validation.yml`), build (`.github/workflows/ios-build.yml`), Simulator test (`.github/workflows/ios-simulator-tests.yml`), and Rust Apple artifact (`.github/workflows/ios-rust-apple-build.yml`) workflows are established.
 - **Application Target**: `Synveil` (Swift + SwiftUI, bundle identifier `com.synveil.ios`, deployment target iOS 17.0).
 - **Test Target**: `SynveilTests` (XCTest Unit Testing Bundle, bundle identifier `com.synveil.ios.tests`).
 - **Signing Policy**: Configured for unsigned Simulator builds (`CODE_SIGNING_ALLOWED=NO`, zero committed team IDs or provisioning profiles).
@@ -19,10 +19,10 @@ Configuration answers what non-secret parameters the app starts with, distinct f
 - **`AppConfiguration`** (`Application/Configuration/AppConfiguration.swift`): App composition configuration holding `environment` and optional `serverEndpoint`.
 
 ### 3.2 Endpoint Validation & Normalization Rules
-`ServerEndpoint(validating: rawString)` enforces strict safety rules using `URLComponents`:
-- **Allowed Schemes**: `https` (preferred/production) and `http` (local development/home-LAN self-hosting).
-- **Rejected Inputs**: Empty/whitespace inputs, missing schemes, unsupported schemes (`ftp`, `file`), missing hosts, userinfo credentials (`user:pass@`), query parameters (`?key=val`), and fragments (`#anchor`).
-- **Deterministic Normalization**: Trims surrounding whitespace, lowercases scheme/host, normalizes trailing slashes (preserves root `/` or subpath without trailing slash).
+`ServerEndpoint(validating: rawString)` validates a canonical origin against the Android v0.1 transport policy:
+- **Allowed Schemes**: HTTPS in all builds; debug builds may explicitly allow cleartext HTTP only for numeric `127.0.0.1` or `[::1]`.
+- **Rejected Inputs**: Empty or whitespace-containing input, unsupported schemes, missing hosts, userinfo credentials, non-root API paths, queries, fragments, malformed ports, backslashes, and origins over 2,048 UTF-8 bytes. LAN HTTP and `localhost` HTTP are rejected.
+- **Deterministic Normalization**: Lowercases scheme/host and emits the canonical root slash. An absent path and `/` are accepted; API base paths are rejected.
 
 ### 3.3 Safe Production Defaults
 - In production builds, `AppConfiguration.serverEndpoint` defaults strictly to `nil` (unconfigured server).

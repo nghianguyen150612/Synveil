@@ -270,9 +270,13 @@ final class MutationDrainCoordinatorTests: XCTestCase {
         await f.transport.set(try drainAppliedHTTP(row.mutation))
         _ = await drainCoordinator(f).drain(scope: f.scope, maximumOperations: 1)
         let request = await f.transport.requests().last!
+        let expectedPath = [
+            "api", "v1", "devices", f.scope.deviceId.rawValue, "libraries",
+            f.scope.libraryId.rawValue, "mutations",
+        ].joined(separator: "/")
         XCTAssertEqual(
             request.url.path,
-            "/synveil/api/v1/devices/\(f.scope.deviceId.rawValue)/libraries/\(f.scope.libraryId.rawValue)/mutations"
+            "/" + expectedPath
         )
         XCTAssertEqual(request.url.scheme, "https")
         XCTAssertEqual(request.headers["Authorization"], "Bearer " + queueBearer)

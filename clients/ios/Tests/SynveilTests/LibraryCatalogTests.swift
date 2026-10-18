@@ -322,7 +322,7 @@ final class LibraryCatalogTests: XCTestCase {
         XCTAssertFalse(request.url.absoluteString.contains(catalogBearer))
         XCTAssertEqual(request.url.host, fixture.endpoint.host)
         XCTAssertEqual(request.url.port, fixture.endpoint.port)
-        XCTAssertEqual(request.url.path, "/synveil/api/v1/libraries")
+        XCTAssertEqual(request.url.path, "/api/v1/libraries")
         XCTAssertEqual(
             URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems,
             [URLQueryItem(name: "limit", value: "100")])
@@ -783,7 +783,7 @@ final class LibraryCatalogTests: XCTestCase {
         endpoint: ServerEndpoint? = nil
     ) throws -> Fixture {
         let endpoint =
-            try endpoint ?? ServerEndpoint(validating: "https://catalog.example:8443/synveil")
+            try endpoint ?? ServerEndpoint(validating: "https://catalog.example:8443")
         let session = try catalogSession(endpoint: endpoint)
         let store = CatalogTestStore(session)
         let controller = SessionController(
