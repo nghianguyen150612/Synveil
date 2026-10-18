@@ -144,8 +144,11 @@ Assert-True ($null -ne $hkcu) 'PER_USER_REGISTRY_FAILURE: HKCU uninstall registr
 $uninstaller = $hkcu.GetValue('UninstallString').Trim('"'); $hkcu.Dispose()
 Assert-True (Test-Path $uninstaller -PathType Leaf) 'PER_USER_REGISTRY_FAILURE: registered uninstaller missing'
 
-& (Join-Path $RepositoryRoot 'scripts\test-windows-installed-runtime.ps1') -RuntimeRoot $root -Manifest (Join-Path $root 'SYNVEIL-MANIFEST.txt')
-if ($LASTEXITCODE -ne 0) { throw 'PER_USER_RUNTIME_FAILURE: installed manifest verifier failed' }
+try {
+    & (Join-Path $RepositoryRoot 'scripts\test-windows-installed-runtime.ps1') -RuntimeRoot $root -Manifest (Join-Path $root 'SYNVEIL-MANIFEST.txt')
+} catch {
+    throw "PER_USER_RUNTIME_FAILURE: installed manifest verifier failed: $($_.Exception.Message)"
+}
 $acl = Get-Acl -LiteralPath $root
 $broadWrite = @($acl.Access | Where-Object {
     $_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and

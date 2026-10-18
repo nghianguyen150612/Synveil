@@ -145,6 +145,8 @@ def main() -> int:
         require(runtime_rule in package, f"authoritative runtime rule: {runtime_rule}")
     for required in ("SYNVEIL-MANIFEST.txt", "unmanifested package file", "0x8664", "platforms/qwindows.dll"):
         require(required in installed_test, f"installed runtime verification: {required}")
+    require("if ($LASTEXITCODE -ne 0)" not in per_user_test,
+            "P025 PowerShell verifier must not consume stale native-process exit status")
     for evidence in ("synthetic_standard_user", "administrator_member", "installer_elevated", "integrity_sid", "RegistryView]::Registry64", "RegistryView]::Registry32", "machine PATH changed", "Synveil service created", "Synveil scheduled task created", "PER_USER_ACL_FAILURE", "second uninstaller", "state_preservation"):
         require(evidence in per_user_test, f"P025 per-user evidence: {evidence}")
     for evidence in ("[Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)",
