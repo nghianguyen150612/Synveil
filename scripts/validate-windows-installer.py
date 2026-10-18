@@ -147,6 +147,10 @@ def main() -> int:
         require(required in installed_test, f"installed runtime verification: {required}")
     for evidence in ("synthetic_standard_user", "administrator_member", "installer_elevated", "integrity_sid", "RegistryView]::Registry64", "RegistryView]::Registry32", "machine PATH changed", "Synveil service created", "Synveil scheduled task created", "PER_USER_ACL_FAILURE", "second uninstaller", "state_preservation"):
         require(evidence in per_user_test, f"P025 per-user evidence: {evidence}")
+    for evidence in ("[Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)",
+                     "$env:LOCALAPPDATA = $localAppData", "$env:APPDATA = $roamingAppData",
+                     "$env:TEMP = Join-Path $localAppData 'Temp'", "P025_PROFILE_PATH_FAILURE"):
+        require(evidence in per_user_test, f"P025 user-profile environment: {evidence}")
     for evidence in ("SetPassword", "-Credential", "-LoadUserProfile", "WaitForExit(300000)",
                      "Get-LocalUser -Name $user", "Remove-LocalUser", "Remove-CimInstance", "::add-mask::"):
         require(evidence in per_user_invoker, f"P025 disposable-account harness: {evidence}")

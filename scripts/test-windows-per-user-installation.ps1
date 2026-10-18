@@ -7,13 +7,57 @@ param(
 $ErrorActionPreference = 'Stop'
 $appId = '{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1'
 $uninstallSubkey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\$appId"
-$root = Join-Path $env:LOCALAPPDATA 'Programs\Synveil'
-$startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Synveil.lnk'
-$desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Synveil.lnk'
-$commonStartMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Synveil.lnk'
-$publicDesktop = Join-Path $env:PUBLIC 'Desktop\Synveil.lnk'
-$logRoot = Join-Path $env:LOCALAPPDATA 'Synveil\installer'
-$sentinel = Join-Path $env:LOCALAPPDATA 'Synveil\state-sentinel\p025.txt'
+$profileIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$profileName = ($profileIdentity.Name -split '\\')[-1]
+$profileRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+$profileLeaf = if ([string]::IsNullOrWhiteSpace($profileRoot)) { '' } else { Split-Path -Leaf $profileRoot }
+if ([string]::IsNullOrWhiteSpace($profileRoot) -or $profileLeaf -cne $profileName) {
+    $profileRoot = Join-Path $env:SystemDrive "Users\$profileName"
+}
+$localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+$roamingAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)
+$desktopRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory)
+$expectedLocal = Join-Path $profileRoot 'AppData\Local'
+$expectedRoaming = Join-Path $profileRoot 'AppData\Roaming'
+$expectedDesktop = Join-Path $profileRoot 'Desktop'
+if ([string]::IsNullOrWhiteSpace($localAppData) -or
+    !$localAppData.StartsWith($expectedLocal, [StringComparison]::OrdinalIgnoreCase)) {
+    $localAppData = $expectedLocal
+}
+if ([string]::IsNullOrWhiteSpace($roamingAppData) -or
+    !$roamingAppData.StartsWith($expectedRoaming, [StringComparison]::OrdinalIgnoreCase)) {
+    $roamingAppData = $expectedRoaming
+}
+if ([string]::IsNullOrWhiteSpace($desktopRoot) -or
+    !$desktopRoot.StartsWith($expectedDesktop, [StringComparison]::OrdinalIgnoreCase)) {
+    $desktopRoot = $expectedDesktop
+}
+$programData = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)
+$publicDesktopRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonDesktopDirectory)
+if ([string]::IsNullOrWhiteSpace($programData)) { $programData = Join-Path $env:SystemDrive 'ProgramData' }
+if ([string]::IsNullOrWhiteSpace($publicDesktopRoot)) {
+    $publicDesktopRoot = Join-Path $env:SystemDrive 'Users\Public\Desktop'
+}
+$env:USERPROFILE = $profileRoot
+$env:LOCALAPPDATA = $localAppData
+$env:APPDATA = $roamingAppData
+$env:ProgramData = $programData
+$env:PUBLIC = Split-Path -Parent $publicDesktopRoot
+$env:TEMP = Join-Path $localAppData 'Temp'
+$env:TMP = $env:TEMP
+$root = Join-Path $localAppData 'Programs\Synveil'
+$startMenu = Join-Path $roamingAppData 'Microsoft\Windows\Start Menu\Programs\Synveil.lnk'
+$desktop = Join-Path $desktopRoot 'Synveil.lnk'
+$commonStartMenu = Join-Path $programData 'Microsoft\Windows\Start Menu\Programs\Synveil.lnk'
+$publicDesktop = Join-Path $publicDesktopRoot 'Synveil.lnk'
+$logRoot = Join-Path $localAppData 'Synveil\installer'
+$sentinel = Join-Path $localAppData 'Synveil\state-sentinel\p025.txt'
+
+foreach ($name in @('USERPROFILE','LOCALAPPDATA','APPDATA','ProgramData','PUBLIC','TEMP','TMP')) {
+    if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+        throw "P025_PROFILE_PATH_FAILURE: $name could not be resolved for the standard user"
+    }
+}
 
 Add-Type -TypeDefinition @'
 using System;
@@ -68,7 +112,7 @@ function Get-HklmRegistrationCount {
 function Get-SynveilServiceCount { return @((Get-Service -Name '*Synveil*' -ErrorAction SilentlyContinue)).Count }
 function Get-SynveilTaskCount { return @((Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -match 'Synveil' -or $_.TaskPath -match 'Synveil' })).Count }
 
-$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$identity = $profileIdentity
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $token = [SynveilTokenEvidence]::Current()
