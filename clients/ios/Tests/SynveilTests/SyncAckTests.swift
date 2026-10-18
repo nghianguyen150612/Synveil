@@ -23,9 +23,13 @@ final class SyncAckTests: XCTestCase {
         let requests = await f.transport.requests()
         let request = try XCTUnwrap(requests.last)
         XCTAssertEqual(request.method, .post)
+        let expectedPath = [
+            "api", "v1", "devices", f.scope.deviceId.rawValue, "libraries",
+            f.scope.libraryId.rawValue, "changes", "ack",
+        ].joined(separator: "/")
         XCTAssertEqual(
             request.url.path,
-            "/synveil/api/v1/devices/\(f.scope.deviceId.rawValue)/libraries/\(f.scope.libraryId.rawValue)/changes/ack"
+            "/" + expectedPath
         )
         XCTAssertNil(request.url.query)
         XCTAssertFalse(request.url.absoluteString.contains(receipt.evidence.token))

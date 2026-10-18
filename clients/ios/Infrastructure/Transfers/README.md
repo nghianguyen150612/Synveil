@@ -1,11 +1,12 @@
 # Synveil iOS — Transfer Engine Infrastructure (`clients/ios/Infrastructure/Transfers/`)
 
 ## Purpose & Ownership
-Implements `TransferEngineProtocol` to manage background file downloads and 4 MiB resumable uploads.
+Implements the foreground file download and 4 MiB resumable upload flows. Authenticated background file transfers remain capability-off under the P051 redirect security gate.
 
 ### Responsibilities
 - Managing transfer job queues (`queued`, `preparing`, `running`, `paused`, `completed`, `failed`, `cancelled`).
-- Slicing files into 4 MiB chunks and sending `PATCH /api/v1/uploads/{session_id}` requests.
+- Creating immutable create/replace operations with `POST /api/v1/upload-sessions`, then slicing files into 4 MiB chunks and sending `PATCH /api/v1/upload-sessions/{upload_session_id}` requests.
+- Querying `GET /api/v1/upload-sessions/{upload_session_id}` for authoritative offset reconciliation.
 - Reconciling remote server `Upload-Offset` after network interruptions.
 - Emitting progress events independent of SwiftUI view lifetimes.
 

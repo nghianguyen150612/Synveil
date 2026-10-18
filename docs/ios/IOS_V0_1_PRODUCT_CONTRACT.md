@@ -13,7 +13,7 @@ The Synveil Android client (v0.1) serves as the primary behavioral reference for
 This section provides an exhaustive feature inventory of the Android v0.1 client, citing specific source code files and modules.
 
 ### 1.1 Onboarding & Setup Flow
-* **Server Profile Creation**: Supports generating opaque UUIDv7 profile IDs, human-readable labels, canonical origin validation (rejecting trailing slashes, credentials, paths, queries, fragments, LAN names, or malformed ports), and transport policy assignment.
+* **Server Profile Creation**: Supports generating opaque UUIDv7 profile IDs, human-readable labels, canonical origin validation (rejecting credentials, non-root paths, queries, fragments, LAN names for HTTP, and malformed ports), and transport policy assignment. A missing root slash and an explicit `/` are both accepted and emitted as the canonical trailing `/`.
   * *Files*: `clients/android/app/src/main/java/com/synveil/android/core/model/ServerProfile.kt`, `clients/android/app/src/main/java/com/synveil/android/data/profile/ServerProfileRepository.kt`, `clients/android/app/src/main/java/com/synveil/android/feature/profile/ProfileScreens.kt`
 * **First-Run State Machine**: Manages startup states: `NoProfiles`, `SelectedUnconfigured`, `Testing`, `Enrolled`, `NotEnrolled`, `EnrollmentRecoveryRequired`, `AuthenticationFailed`, `DeviceRevoked`.
   * *Files*: `clients/android/app/src/main/java/com/synveil/android/feature/startup/StartupState.kt`, `clients/android/app/src/main/java/com/synveil/android/app/navigation/SynveilNavHost.kt`
@@ -67,7 +67,7 @@ This section provides an exhaustive feature inventory of the Android v0.1 client
 ### 1.8 Resumable Uploads & Replace Content
 * **File Creation & Content Replacement**: Stages picked SAF input streams in app-private `filesDir/transfer-staging` to obtain exact length and SHA-256 hash.
   * *Files*: `clients/android/app/src/main/java/com/synveil/android/data/transfer/ContentOperationEngine.kt`
-* **Idempotent Resumable Upload**: Creates upload session via `POST /api/v1/libraries/{library_id}/uploads` (or replace via `POST /api/v1/nodes/{node_id}/upload-session`), appends 4 MiB raw chunks via `PATCH`. Queries server offset after ambiguous responses to resume cleanly.
+* **Idempotent Resumable Upload**: Creates a frozen create/replace upload operation via `POST /api/v1/upload-sessions`, appends 4 MiB raw chunks via `PATCH /api/v1/upload-sessions/{upload_session_id}`, and queries the same session route for its authoritative offset after ambiguous responses.
   * *Files*: `clients/android/app/src/main/java/com/synveil/android/data/transfer/ContentOperationEngine.kt`
 * **Storage Pressure Protection**: Bounded staging storage (512 MiB limit with 64 MiB free space reserve). Fails deterministically on low space before making network requests.
   * *Files*: `clients/android/app/src/main/java/com/synveil/android/data/transfer/ContentOperationEngine.kt`
@@ -79,7 +79,7 @@ This section provides an exhaustive feature inventory of the Android v0.1 client
   * *Files*: `clients/android/app/src/main/java/com/synveil/android/feature/library/NodeBrowserScreen.kt`, `clients/android/app/src/main/java/com/synveil/android/data/connectivity/ConnectivityObserver.kt`
 
 ### 1.10 Inbound Synchronization & Rebaseline Recovery
-* **Journal Feed & Signed ACKs**: Consumes inbound change feed (`GET /api/v1/libraries/{library_id}/sync/feed`), applies updates in Room transactions, and sends signed ACK tokens (`POST /api/v1/libraries/{library_id}/sync/ack`). Replays pending ACK tokens on recovery.
+* **Journal Feed & Signed ACKs**: Consumes the device-scoped inbound change feed (`GET /api/v1/devices/{device_id}/libraries/{library_id}/changes`), applies updates in Room transactions, and sends signed ACK tokens (`POST /api/v1/devices/{device_id}/libraries/{library_id}/changes/ack`). Replays pending ACK tokens on recovery.
   * *Files*: `clients/android/app/src/main/java/com/synveil/android/data/sync/SyncEngine.kt`, `clients/android/app/src/main/java/com/synveil/android/data/sync/SyncModels.kt`
 * **Rebaseline Snapshot Recovery**: When change history is expired, downloads manifest pages, stages rebaseline snapshots in Room, and atomically swaps active projection upon complete manifest verification.
   * *Files*: `clients/android/app/src/main/java/com/synveil/android/data/sync/SyncEngine.kt`
@@ -97,7 +97,7 @@ This section provides an exhaustive feature inventory of the Android v0.1 client
   * *Files*: `clients/android/app/src/main/java/com/synveil/android/data/transfer/TransferOperations.kt`
 
 ### 1.13 Settings & Diagnostics
-* **Sync Settings**: User-configurable periodic background sync enable/disable, network constraint selection (ANY vs UNMETERED), and battery constraint toggle.
+* **Sync Settings**: Android exposes enable/disable, ANY vs UNMETERED, a minimum 15-minute period, and a battery-not-low toggle. iOS exposes enable/disable and Wi-Fi-only vs Wi-Fi/cellular eligibility; iOS controls delivery, gates Low Power Mode, and has no direct user-selectable battery-not-low or interval control.
   * *Files*: `clients/android/app/src/main/java/com/synveil/android/data/settings/SyncSettings.kt`, `clients/android/app/src/main/java/com/synveil/android/feature/home/SyncSettingsScreen.kt`
 
 ---
@@ -175,11 +175,11 @@ The native iOS v0.1 client requires the following native Apple frameworks and sy
 * **Uniform Type Identifiers (`UTType`)**: Used for file type identification, document picking, export, and preview handling.
 
 ### 4.2 Credential & Data Security
-* **Keychain Services (`Security.framework`)**: For hardware-backed secure storage of `svd1_` device credentials, matching Android Keystore behavior. Access control configured with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`.
+* **Keychain Services (`Security.framework`)**: `svd1_` generic-password credentials with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` device-only protection. This is the iOS-native secure-storage equivalent; the current implementation does not create a Secure Enclave key.
 
 ### 4.3 Networking & Background Transfers
 * **URLSession**: Standard async HTTP networking, custom TLS policy configuration, and bounded streaming.
-* **Background URLSession (`URLSessionConfiguration.background`)**: For background resumable chunk uploads and streaming file downloads that continue when the app is suspended.
+* **Background URLSession (`URLSessionConfiguration.background`)**: The API exists, but authenticated background uploads and downloads are deliberately capability-off after P051 redirect review. Foreground upload/download flows remain available and verified; background file transfer is not v0.1 parity.
 
 ### 4.4 Filesystem & Previews
 * **App Sandbox Filesystem**: App-private `Library/Caches` and `tmp` directories for staging 4 MiB upload chunks and temporary download staging.
@@ -187,7 +187,7 @@ The native iOS v0.1 client requires the following native Apple frameworks and sy
 * **Share Sheet (`ShareLink` / `UIActivityViewController`)**: System export and file sharing.
 
 ### 4.5 Background Execution & Scheduling
-* **BackgroundTasks (`BGAppRefreshTask`)**: Periodic background metadata synchronization matching WorkManager periodic sync (bounded by iOS system battery and usage scheduling).
+* **BackgroundTasks (`BGAppRefreshTask`)**: Default-off, bounded opportunistic metadata synchronization. It is an iOS-native equivalent for background refresh, but has no fixed cadence or Android WorkManager constraint controls.
 
 ### 4.6 Explicitly Excluded / Deferred Apple Frameworks for v0.1
 * **File Provider (`NSFileProviderReplicatedExtension`)**: *DEFERRED AFTER V0.1*. Files app virtual directory integration is out of scope for baseline parity.
@@ -263,7 +263,7 @@ To achieve feature parity with Android v0.1, the iOS client must satisfy this co
 
 1. **Onboarding & Connection**:
    * Users can enter server label, origin URL, and policy.
-   * Invalid origins (path, query, LAN name, trailing slash, invalid port) are rejected with clear error feedback.
+   * Invalid origins (non-root path, query, non-loopback cleartext host, invalid port) are rejected with clear error feedback. An explicit root slash is accepted and canonicalized.
    * Health check verifies `/health/live` and `/health/ready` before committing profile.
 
 2. **Enrollment & Authentication**:
@@ -289,7 +289,7 @@ To achieve feature parity with Android v0.1, the iOS client must satisfy this co
    * Maintains local SQLite cache of libraries, nodes, sync feed checkpoints, and mutation queue.
    * Consumes change feed, applies updates in local DB transaction, and replays signed ACK tokens.
    * Handles rebaseline snapshot staging and atomic cache swap upon complete manifest download.
-   * Performs periodic background sync via `BGAppRefreshTask`.
+   * Offers default-off, opportunistic metadata refresh via `BGAppRefreshTask`; iOS determines delivery and no cadence is guaranteed. Background file-content transfers remain disabled by the P051 security decision.
    * Surfaces offline status and preserves local data safely.
 
 6. **Conflict & Security Boundary**:
@@ -306,11 +306,11 @@ To achieve feature parity with Android v0.1, the iOS client must satisfy this co
 ### 7.2 Background Execution Restrictions on iOS
 * Unlike Android WorkManager, iOS `BGAppRefreshTask` execution timing is entirely controlled by iOS system heuristics (battery level, app usage habits). Background sync cannot guarantee fixed 15-minute intervals.
 
-### 7.3 Background URLSession Staging Lifecycle
-* iOS background `URLSession` requires upload source files to remain untouched in the app sandbox until transfer completion. Staged 4 MiB chunk files in `Library/Caches` must be protected from OS eviction during low-disk states.
+### 7.3 Foreground URLSession Staging Lifecycle
+* Foreground transfer intents and chunk files are durable, but authenticated background `URLSession` upload/download is disabled under P051 because the OS follows redirects without the app's origin-validation callback. The client must reconcile the saved upload session after interruption before retry.
 
 ### 7.4 Simulator vs Physical Device Keychain Gaps
-* The iOS Simulator Keychain behaves differently from physical device Secure Enclave hardware (e.g. simulator Keychain persists across app re-installs unless reset). Automated tests on simulators must account for this behavior.
+* Simulator Keychain tests do not qualify physical-device `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` behavior. The current generic-password implementation does not create a Secure Enclave key.
 
 ### Prompt028 — Authentication Error UX
 
@@ -327,12 +327,36 @@ secret-shaped identifiers, bearer/grant values, envelopes, or OSStatus details.
 
 ## P048 implementation record
 
-Native opportunistic background metadata refresh is implemented on the P048 feature branch and
-pending review/integration. It is disabled by default, binds explicit opt-in to the current
+P048 was merged into `ios-app` through PR #131 on 2026-10-14. The native opportunistic
+background metadata refresh remains disabled by default, binds explicit opt-in to the current
 authenticated endpoint/account/device/credential, and uses BGAppRefreshTask with a bounded workload.
 Only new inbound pages and their normal initial ACK can run; unknown ACK recovery, outbound
 mutations, rebaseline and file-content transfers remain separate authorized actions. iOS controls
 delivery and no periodic interval is guaranteed. SQLite v9 and P046 upload ownership are retained.
+P049–P058 are subsequent implemented milestones; P059 records current parity and regression evidence.
 
-See [P048 manifest](manifests/PROMPT048_MANIFEST.md) for budgets, native evidence, restrictions,
-physical-device NOT_AVAILABLE status and the open review gate. P049 has not been started.
+See [P048 manifest](manifests/PROMPT048_MANIFEST.md) for its original implementation evidence,
+budgets, restrictions, and physical-device NOT_AVAILABLE status.
+
+## P059 source-audit reconciliation
+
+The inventory above records the original Android parity intent. The following corrections are
+based on the current Android and iOS source, OpenAPI, and merged P022–P058 implementation records.
+
+| Area | Current source-audited status |
+| --- | --- |
+| Server origin policy | Android accepts an absent path or `/`, canonicalizes to `/`, rejects other paths, rejects all whitespace and backslashes, caps input at 2,048 UTF-8 bytes, requires HTTPS except explicitly enabled numeric loopback HTTP. P059 aligns iOS validation and transport defaults to that policy. |
+| Upload routes | Create/replace uses one immutable operation request at `POST /api/v1/upload-sessions`; chunk append and status use `PATCH`/`GET /api/v1/upload-sessions/{upload_session_id}`, followed by `/complete` or `/abort`. |
+| Sync routes | Feed, checkpoint, ACK, and rebaseline are device-scoped under `/api/v1/devices/{device_id}/libraries/{library_id}`; the active feed paths end in `/changes` and `/changes/ack`. |
+| Implemented and verified host-app behavior | Enrollment and Keychain session recovery/logout; paginated library/node browsing; metadata mutations with durable SQLite queueing; foreground resumable upload, verified download and export; offline projection; feed/ACK/rebaseline; notification preferences; bounded opportunistic background metadata refresh. Each claim is backed by source and the milestone tests/CI recorded in P022–P058 and the P059 verification section. |
+| Valid iOS-native equivalents | SwiftUI replaces Compose; Keychain replaces Android Keystore/DataStore; app-private SQLite replaces Room; security-scoped document picker URLs and share sheets replace SAF/content URIs and Android intents; `NWPathMonitor` and `BGAppRefreshTask` provide platform-native connectivity and best-effort refresh. Delivery timing and OS grants are not identical. |
+| Android-only mechanisms | WorkManager, Android Doze constraints, Room, DataStore, Android Keystore APIs, SAF `content://` URIs, and Android notification channels do not apply on iOS. The native equivalents above preserve supported product behavior where one exists. |
+| Product-deferred or capability-off | Files app provider registration/content operations remain outside v0.1; iOS File Provider source stays unregistered and fail-closed, and P055 PR #139 remains unmerged and excluded. Authenticated background file transfers remain disabled by P051. PhotoKit work P056–P058 is opt-in and outside the original Android v0.1 parity inventory; it uploads ordinary FileVersions but has no verified PhotoAsset/Live Photo binding or BackupSnapshot membership/retention proof. |
+| Missing or awaiting product/device evidence | iOS setup has no human-readable server profile label, profile list, or Android-style switcher; the product/access-group decision remains unresolved. Physical-device Keychain and background-scheduling evidence is unavailable. PhotoKit and Files remain post-baseline/deferred. P059 does not claim these as verified or start the P060 release gate. |
+
+P059 also corrects the earlier iOS-only endpoint defect: before this audit, Swift accepted arbitrary
+HTTP hosts and user-supplied API base paths even though the transport restricted cleartext to
+loopback. The validated source now rejects non-loopback HTTP and non-root paths before session
+configuration, with regression cases for policy bypasses and malformed ports. Foreground file-content
+transports retain a stricter HTTPS-only policy, including debug loopback; this is a debug-only
+capability difference and does not affect production HTTPS behavior.

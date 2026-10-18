@@ -757,7 +757,7 @@ private func mutationPrepared(
     validator: any RustBridgeProtocol = MutationTestValidator()
 ) async throws -> PreparedClientMutation {
     let endpoint =
-        try endpoint ?? ServerEndpoint(validating: "https://mutation.example:8443/synveil")
+        try endpoint ?? ServerEndpoint(validating: "https://mutation.example:8443")
     let scope = ClientMutationScope(
         serverEndpoint: endpoint, ownerUserId: mutationUUID(owner),
         deviceId: try await ClientMutationDeviceId.validated(
@@ -849,9 +849,12 @@ final class ClientMutationRepositoryTests: XCTestCase {
         XCTAssertEqual(requests.count, 1)
         let request = try XCTUnwrap(requests.first)
         XCTAssertEqual(request.method, .post)
+        let expectedPath = [
+            "api", "v1", "devices", mutationUUID(91), "libraries", mutationUUID(80), "mutations",
+        ].joined(separator: "/")
         XCTAssertEqual(
             request.url.absoluteString,
-            "https://mutation.example:8443/synveil/api/v1/devices/\(mutationUUID(91))/libraries/\(mutationUUID(80))/mutations"
+            "https://mutation.example:8443/" + expectedPath
         )
         XCTAssertEqual(request.body, op.requestBody)
         XCTAssertEqual(request.headers["Authorization"], "Bearer " + mutationBearer)
@@ -1219,7 +1222,7 @@ final class ClientMutationRepositoryTests: XCTestCase {
         authorizer: (any ClientMutationPreparationAuthorizerProtocol)? = MutationTestAuthorizer(),
         validator: any RustBridgeProtocol = MutationTestValidator()
     ) throws -> Fixture {
-        let endpoint = try ServerEndpoint(validating: "https://mutation.example:8443/synveil")
+        let endpoint = try ServerEndpoint(validating: "https://mutation.example:8443")
         let session = try mutationSession(endpoint: endpoint)
         let store = MutationTestStore(session)
         let controller = SessionController(

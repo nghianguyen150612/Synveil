@@ -27,7 +27,7 @@ struct QueueValidator: RustBridgeProtocol {
 
 func queueScope(
     device: Int = 91, library: Int = 80, owner: Int = 90,
-    endpoint: String = "https://queue.example:8443/synveil"
+    endpoint: String = "https://queue.example:8443"
 ) async throws -> ClientMutationScope {
     ClientMutationScope(
         serverEndpoint: try ServerEndpoint(validating: endpoint), ownerUserId: queueUUID(owner),

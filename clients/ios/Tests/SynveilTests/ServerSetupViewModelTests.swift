@@ -29,7 +29,10 @@ final class ServerSetupViewModelTests: XCTestCase {
         let result = viewModel.submit()
 
         XCTAssertFalse(result)
-        XCTAssertEqual(viewModel.validationError, "Please enter a server address.")
+        XCTAssertEqual(
+            viewModel.validationError,
+            "Server address must not contain whitespace or control characters."
+        )
         XCTAssertEqual(controller.state, .needsServerProfile)
     }
 
@@ -66,7 +69,7 @@ final class ServerSetupViewModelTests: XCTestCase {
         XCTAssertFalse(result)
         XCTAssertEqual(
             viewModel.validationError,
-            "Unsupported URL scheme 'ftp'. Synveil requires 'https' or 'http'."
+            "Unsupported URL scheme 'ftp'. Synveil requires HTTPS."
         )
         XCTAssertEqual(controller.state, .needsServerProfile)
     }
@@ -149,24 +152,44 @@ final class ServerSetupViewModelTests: XCTestCase {
     }
 
     @MainActor
-    func testValidHTTPLocalDevInputSucceeds() {
+    func testValidHTTPLoopbackInputSucceedsInDebugPolicy() {
         let controller = SessionController()
         controller.showServerProfileSetup()
 
         let viewModel = ServerSetupViewModel(
             sessionController: controller,
-            initialInput: "http://192.168.1.100:8443"
+            initialInput: "http://127.0.0.1:8443",
+            allowLoopbackTestHTTP: true
         )
         let result = viewModel.submit()
 
         XCTAssertTrue(result)
         XCTAssertNil(viewModel.validationError)
-        XCTAssertEqual(controller.serverEndpoint?.urlString, "http://192.168.1.100:8443/")
+        XCTAssertEqual(controller.serverEndpoint?.urlString, "http://127.0.0.1:8443/")
         XCTAssertEqual(controller.state, .readyForServerValidation)
     }
 
     @MainActor
-    func testWhitespaceTrimmingAndNormalizationSucceeds() {
+    func testLANHTTPInputIsRejectedEvenWithDebugPolicy() {
+        let controller = SessionController()
+        controller.showServerProfileSetup()
+
+        let viewModel = ServerSetupViewModel(
+            sessionController: controller,
+            initialInput: "http://192.168.1.100:8443",
+            allowLoopbackTestHTTP: true
+        )
+        XCTAssertFalse(viewModel.submit())
+        XCTAssertEqual(
+            viewModel.validationError,
+            "Cleartext HTTP is limited to 127.0.0.1 or ::1 in debug builds. "
+                + "Use HTTPS for other servers."
+        )
+        XCTAssertEqual(controller.state, .needsServerProfile)
+    }
+
+    @MainActor
+    func testWhitespaceAroundServerAddressIsRejected() {
         let controller = SessionController()
         controller.showServerProfileSetup()
 
@@ -176,10 +199,12 @@ final class ServerSetupViewModelTests: XCTestCase {
         )
         let result = viewModel.submit()
 
-        XCTAssertTrue(result)
-        XCTAssertNil(viewModel.validationError)
-        XCTAssertEqual(controller.serverEndpoint?.urlString, "https://synveil.example.com/")
-        XCTAssertEqual(controller.state, .readyForServerValidation)
+        XCTAssertFalse(result)
+        XCTAssertEqual(
+            viewModel.validationError,
+            "Server address must not contain whitespace or control characters."
+        )
+        XCTAssertEqual(controller.state, .needsServerProfile)
     }
 
     @MainActor

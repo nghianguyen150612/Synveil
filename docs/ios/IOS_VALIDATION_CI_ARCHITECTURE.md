@@ -22,7 +22,7 @@ This architecture governs:
 2. **Unsigned-First CI**: Automated CI pipelines must operate without requiring private Apple Developer signing certificates or provisioning profiles. Signing is restricted strictly to release packaging and physical-device validation.
 3. **Decoupled Architecture Verification**: Presentation (SwiftUI), Application Services, Infrastructure/Networking (`URLSession`), Storage (`Keychain`/SQLite), and Domain Logic (Shared Rust via FFI) must be testable in isolation using fakes, mocks, and synthetic transports. SwiftUI view lifetimes must not gate background operations or transfer engines.
 4. **Progressive Evidence Hierarchy**: Validation moves systematically from low-cost, highly deterministic static and unit tests (Tier 0–1) up through integration, simulator, physical-device, and signed release tiers (Tier 2–6).
-5. **No Concealment of Device Gaps**: Features that depend on physical hardware capabilities (e.g., Secure Enclave, physical background refresh, PhotoKit asset library access, or live File Provider extension sync) must maintain an explicit physical-device evidence matrix rather than fabricating simulator passes.
+5. **No Concealment of Device Gaps**: Features that depend on physical hardware capabilities (e.g., device-protected Keychain behavior, physical background refresh, PhotoKit asset library access, or live File Provider extension sync) must maintain an explicit physical-device evidence matrix rather than fabricating simulator passes.
 6. **Strict Signal Isolation**: iOS PR validation must provide clear, actionable signal quality. Failures in unrelated desktop or server subsystems must be systematically categorized with baseline evidence rather than ignored or silently suppressed.
 
 ---
@@ -36,7 +36,7 @@ To avoid ambiguity across documentation, CI job definitions, and prompt delivera
 | `LINUX_VERIFIABLE` | Tasks, tests, or static checks that execute natively on an x86_64/AArch64 Ubuntu Linux environment (e.g., Jules developer container or Linux GitHub Actions runner). Includes Rust domain unit tests (`cargo test`), static repository structure inspection, documentation contract verification, JSON/YAML schema validation, and forbidden dependency scanning. |
 | `MACOS_CI_VERIFIABLE` | Tasks or builds requiring macOS host capabilities and official Apple command-line tools (`xcodebuild`, `swiftc`, `xcrun`, `simctl`, `swift-driver`). Includes Swift package resolution, native iOS SDK compilation, Swift unit tests, Swift ↔ Rust FFI bridge binding compilation, and macOS host-side integration tests. |
 | `SIMULATOR_VERIFIABLE` | Headless or interactive UI, lifecycle, and functional tests executing inside an Apple iOS Simulator instance (`iphonesimulator` SDK) hosted on macOS CI runners or macOS developer workstations. Covers SwiftUI view rendering, navigation flows, mock-server networking, in-sandbox file operations, and functional Keychain API operations. |
-| `PHYSICAL_DEVICE_ONLY` | Capabilities or scenarios that strictly require physical iPhone/iPad hardware running iOS 17.0+. Includes Secure Enclave key generation, real `BGTaskScheduler` background execution, physical cellular/Wi-Fi network interface transitions, PhotoKit library authorization/scanning, File Provider extension daemon integration, and real storage pressure/thermal throttling. |
+| `PHYSICAL_DEVICE_ONLY` | Capabilities or scenarios that require physical iPhone/iPad hardware running iOS 17.0+. Includes device Keychain protection qualification, real `BGTaskScheduler` background execution, physical cellular/Wi-Fi network interface transitions, PhotoKit library authorization/scanning, File Provider extension daemon integration, and real storage pressure/thermal throttling. |
 | `SIGNING_REQUIRED` | Tasks or artifacts requiring Apple Developer Team provisioning profiles, code-signing identities (Development, AdHoc, or Apple Distribution), and entitlement matching. Includes physical device deployment, App Store / TestFlight archive creation (`xcodebuild archive`), App Group shared sandbox provisioning, and File Provider extension provisioning. |
 
 ---
@@ -88,7 +88,7 @@ Tier 6: Signed Distribution & Archive      (SIGNING_REQUIRED)
 - **Execution**: `xcodebuild test -destination 'platform=iOS Simulator,name=iPhone 15,OS=17.2'` on macOS CI.
 
 ### Tier 5 — Physical-Device Validation (`PHYSICAL_DEVICE_ONLY`)
-- **Focus**: Hardware Secure Enclave properties, real iOS background task scheduling (`BGAppRefreshTask`), File Provider extension system process registration, PhotoKit permission prompts and full photo library scanning, live cellular/Wi-Fi transitions, and large transfer (multi-gigabyte) performance under real iOS memory pressure.
+- **Focus**: Device Keychain protection, real iOS background task scheduling (`BGAppRefreshTask`), File Provider extension system process registration, PhotoKit permission prompts and full photo library scanning, live cellular/Wi-Fi transitions, and large transfer performance under real iOS memory pressure.
 - **Execution**: Manual or automated test runner connected to physical iPhone/iPad running iOS 17.0+.
 
 ### Tier 6 — Signed / Distribution Validation (`SIGNING_REQUIRED`)
@@ -99,7 +99,7 @@ Tier 6: Signed Distribution & Archive      (SIGNING_REQUIRED)
 
 ## 5. Dedicated iOS CI Strategy
 
-To keep iOS validation clean, reliable, and independent of desktop/server noise, dedicated iOS workflows will be introduced in Phase B (P007–P009) and expanded through Phase H (P059–P060).
+To keep iOS validation clean, reliable, and independent of desktop/server noise, dedicated iOS workflows were introduced in Phase B (P007–P009) and expanded through later milestones. P059 uses them for parity regression evidence; P060 owns release validation.
 
 ```text
 .github/workflows/ios.yml
@@ -127,9 +127,9 @@ To keep iOS validation clean, reliable, and independent of desktop/server noise,
    - Triggers: FFI header changes or Rust bridge modifications.
    - Actions: Verify C headers (generated via `cbindgen`), compile Rust static library (`synveil-ios-ffi`), run Swift integration unit tests verifying memory safety, string/byte buffer conversion, panic safety, and async concurrency rules.
 
-5. **Release Validation Workflow (`ios-release-validation.yml` — Evolution in P059–P060)**:
-   - Triggers: Release tags or manual `workflow_dispatch`.
-   - Actions: Aggregate evidence from static, unit, FFI, and simulator test runs, perform unsigned release packaging, verify symbol maps, and generate `SYNVEIL-IOS-RELEASE-MANIFEST.json`.
+5. **Release Validation Workflow (P060 only)**:
+   - P059 is the source-audited Android–iOS parity and regression-hardening milestone. It does not sign, package, or declare release readiness.
+   - P060 owns the release-gate decision, evidence aggregation, unsigned packaging, symbol-map checks, and any release manifest. No P060 work is included in P059.
 
 ---
 
@@ -189,10 +189,10 @@ The iOS Simulator is a high-fidelity x86_64/AArch64 Darwin process execution env
 - Basic background suspension/resume application lifecycle events (`sceneDidEnterBackground`).
 
 ### Simulator Limitations (Requires `PHYSICAL_DEVICE_ONLY`):
-- **Secure Enclave**: Hardware key generation (`kSecAttrAccessControl` with biometric flags) behaves differently or falls back to software in Simulator.
+- **Device Keychain Protection**: Simulator does not qualify the physical-device behavior of `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`. The current generic-password implementation does not create a Secure Enclave key.
 - **Real Background Scheduling**: `BGAppRefreshTask` and `BGProcessingTask` execution depends on iOS system discretion, battery level, and thermal state; Simulator only supports forced manual trigger via `e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateLaunchForTaskWithIdentifier:...]`.
 - **PhotoKit Asset Library**: Simulator contains synthetic sample media; real photo library performance, iCloud photo sync state, and photo authorization dialogs require physical device testing.
-- **File Provider Extension Daemon**: The live `NSFileProviderReenumerateWithCompletionHandler` sync engine integration with iOS `Files.app` has system-daemon quirks in Simulator.
+- **File Provider Extension Daemon**: Live `NSFileProviderReplicatedExtension` integration with iOS `Files.app` has system-daemon behavior that simulator tests cannot qualify.
 - **Cellular / Network Switching**: Simulator shares host Mac network interfaces; cannot simulate real LTE/5G cellular dropouts or captive portal redirections naturally.
 
 ---
@@ -205,14 +205,14 @@ For capabilities that cannot be conclusively validated in CI or Simulator, a **C
 
 | Feature | Reason Device Required | Minimum Evidence | Pre-Merge Req | Pre-P060 Req | Result Artifact |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Secure Enclave Keys** | Hardware isolation & biometric authorization | Verified Keychain hardware flag execution | No (Deferred) | Yes | Device Test Log / Screenshot |
+| **Device Keychain Protection** | Device-only Keychain data protection | Verify the credential item accessibility behavior on a physical device | No (Deferred) | Yes | Device Test Log / Screenshot |
 | **Background Refresh (`BGTaskScheduler`)** | Real iOS power/thermal execution scheduling | Device execution log showing background wake & transfer | No (Deferred) | Yes | Device Console Log (`.logarchive`) |
-| **PhotoKit Library Sync** | Access to real user media database & iCloud photo state | Photo library scan timing & change observer log | No (Deferred) | Yes | Test Output Log |
-| **File Provider Extension** | Live integration with system `Files.app` daemon | Files.app directory browse & upload video capture | No (Deferred) | Yes | Screen Recording (`.mp4`/`.webm`) |
+| **PhotoKit Library Sync** | Access to real user media database & iCloud photo state | Photo library scan timing & change observer log | No (Post-baseline) | No (Post-baseline) | Test Output Log |
+| **File Provider Extension** | Live integration with system `Files.app` daemon | Files.app directory browse & upload video capture | No (Deferred) | No (Deferred) | Screen Recording (`.mp4`/`.webm`) |
 | **Network Interface Transition** | Switching between Wi-Fi and LTE mid-transfer | Resumable upload completion after network swap log | No (Deferred) | Yes | Transfer Engine Audit Log |
 | **Large File Thermal / Storage Pressure** | 5 GB transfer under low disk space conditions | Memory profile trace & staging cleanup verification | No (Deferred) | Yes | Xcode Instruments Trace (`.trace`) |
 
-*Rule*: Physical-device gaps during P006–P058 may be temporarily deferred provided they are recorded in the prompt manifest, but **all physical device gates become mandatory before P060 release sign-off**.
+*Rule*: Physical-device evidence is required before P060 only for functionality included in the v0.1 release contract. File Provider and PhotoKit remain post-baseline/deferred and are not P060 release gates unless product scope changes.
 
 ---
 
@@ -345,27 +345,28 @@ Local SQLite database storage (`GRDB` or SQLite C API) manages node metadata, tr
 
 - **Foreground ↔ Background Transitions**: Application state preserved when app is suspended.
 - **Background Refresh (`BGAppRefreshTask`)**: Testing background sync registration and task completion within Apple's allotted execution time (~30 seconds).
-- **Relaunch Recovery**: App relaunch after forced crash checks transfer queue in SQLite and resumes pending downloads/uploads.
+- **Relaunch Recovery**: App relaunch checks durable transfer records in SQLite. Foreground work must reconcile ambiguous server state before retry; authenticated background file transfer is capability-off under P051.
 
 ---
 
 ## 20. File Provider Validation (P053–P055 Boundary)
 
-The iOS File Provider Extension (`NSFileProviderExtension`) exposes Synveil files directly inside iOS `Files.app`.
+The `NSFileProviderReplicatedExtension` source is isolated and fail-closed. Production File Provider domain registration and user-visible Files integration remain disabled; P055 PR #139 is unmerged.
 
-- **Domain Registration**: Registering `NSFileProviderDomain` with system.
-- **App Group Sandboxing**: Extension and main application share local database and file staging directory via `containerURL(forSecurityApplicationGroupIdentifier:)`.
-- **Enumeration & Fetching**: Validating `NSFileProviderEnumerator` directory listing and item download on demand.
+- **Domain Registration**: No production domain is registered by app startup.
+- **App Group Sandboxing**: The entitlement-gated container is reserved for the extension boundary; app-private SQLite and credentials are not shared with the extension.
+- **Enumeration & Fetching**: Isolated callbacks fail closed when no authorized snapshot exists; no live Files browsing or content materialization is claimed.
 
 ---
 
 ## 21. PhotoKit Validation (P056–P058 Boundary)
 
-PhotoKit auto-upload integrates with Apple `PHPhotoLibrary`:
+The host app's post-baseline PhotoKit feature uses Apple `PHPhotoLibrary` for opt-in discovery and foreground upload orchestration. Server asset binding and backup-retention proof are not implemented:
 
-- **Authorization State Handling**: Testing app behavior under `.authorized`, `.limited`, `.denied`, and `.restricted` permissions.
-- **Asset Change Observers**: `PHPhotoLibraryChangeObserver` detecting new camera roll photos and queuing background upload tasks.
-- **Deduplication**: SHA-256 or local asset identifier check preventing duplicate uploads of previously backed-up media.
+- **Authorization State Handling**: Tests cover `.authorized`, `.limited`, `.denied`, and `.restricted` permission states.
+- **Asset Change Observers**: `PHPhotoLibraryChangeObserver` persists bounded metadata observations and candidate work; it does not prove remote backup.
+- **Foreground Upload**: Default-off consent enables a bounded foreground worker that reuses verified P045 FileVersion upload operations.
+- **Binding Boundary**: SHA-256 verifies extracted bytes; PhotoKit local identity and resource revision scope candidate work. No PhotoAsset/Live Photo binding or BackupSnapshot retention proof exists.
 
 ---
 
@@ -489,7 +490,8 @@ This matrix maps all 60 roadmap prompts to their required minimum validation env
 | **P048–P052** (Phase G) | Platform Integration (Quick Look, BG Tasks) | `SIMULATOR_VERIFIABLE`, `PHYSICAL_DEVICE_ONLY` | In-app file preview and simulated background task launch mandatory. |
 | **P053–P055** (Phase G) | File Provider Extension | `SIMULATOR_VERIFIABLE`, `PHYSICAL_DEVICE_ONLY`, `SIGNING_REQUIRED` | **P053+: File Provider Subsystem Gate newly mandatory.** Shared App Group sandbox validation mandatory. |
 | **P056–P058** (Phase G) | PhotoKit Auto-Upload Subsystem | `SIMULATOR_VERIFIABLE`, `PHYSICAL_DEVICE_ONLY` | **P056+: PhotoKit Asset Library Gate newly mandatory.** Deduplication & authorization matrix mandatory. |
-| **P059–P060** (Phase H) | Hardening, Parity & v0.1 Release | `MACOS_CI_VERIFIABLE`, `SIMULATOR_VERIFIABLE`, `PHYSICAL_DEVICE_ONLY`, `SIGNING_REQUIRED` | **P059/P060: Aggregated Release Gate newly mandatory.** Complete test suite pass & signed archive validation mandatory. |
+| **P059** (Phase H) | Android–iOS parity audit and regression hardening | `LINUX_VERIFIABLE`, `MACOS_CI_VERIFIABLE`, `SIMULATOR_VERIFIABLE` | Source-audited behavior matrix, regression tests, exact-head native CI. P059 does not sign or declare release readiness. |
+| **P060** (Phase H) | iOS v0.1 release gate | `MACOS_CI_VERIFIABLE`, `SIMULATOR_VERIFIABLE`, `PHYSICAL_DEVICE_ONLY`, `SIGNING_REQUIRED` | Release evidence aggregation, physical-device matrix, and signed archive decision. |
 
 ---
 
@@ -521,4 +523,5 @@ Before a release claim (P060) can be finalized:
 - **P025**: Enforce Keychain mock unit tests and secrets redaction assertions.
 - **P038**: Enforce transfer engine resumable upload integration tests.
 - **P053–P058**: Implement File Provider and PhotoKit extension tests.
-- **P059–P060**: Produce release manifest and aggregate validation evidence.
+- **P059**: Record parity categories, defects, and exact-head regression evidence.
+- **P060**: Produce release manifest and aggregate release validation evidence.

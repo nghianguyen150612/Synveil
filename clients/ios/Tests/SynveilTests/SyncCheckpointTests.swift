@@ -159,9 +159,12 @@ final class SyncCheckpointTests: XCTestCase {
         let requests = await f.transport.requests()
         let request = try XCTUnwrap(requests.first)
         XCTAssertEqual(request.method, .get)
+        let expectedPath = [
+            "api", "v1", "devices", queueUUID(91), "libraries", queueUUID(80), "checkpoint",
+        ].joined(separator: "/")
         XCTAssertEqual(
             request.url.absoluteString,
-            "https://queue.example:8443/synveil/api/v1/devices/\(queueUUID(91))/libraries/\(queueUUID(80))/checkpoint"
+            "https://queue.example:8443/" + expectedPath
         )
         XCTAssertEqual(request.headers["Authorization"], "Bearer " + queueBearer)
         XCTAssertNil(request.url.query)

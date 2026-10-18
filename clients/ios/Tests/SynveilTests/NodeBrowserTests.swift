@@ -322,7 +322,7 @@ final class NodeBrowserTests: XCTestCase {
         XCTAssertFalse(request.url.absoluteString.contains(nodeBearer))
         XCTAssertEqual(request.url.host, fixture.endpoint.host)
         XCTAssertEqual(request.url.port, fixture.endpoint.port)
-        XCTAssertEqual(request.url.path, "/synveil/api/v1/libraries/\(nodeId(7000))/nodes")
+        XCTAssertEqual(request.url.path, "/api/v1/libraries/\(nodeId(7000))/nodes")
         XCTAssertEqual(
             URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems,
             [URLQueryItem(name: "limit", value: "100")])
@@ -1134,7 +1134,7 @@ final class NodeBrowserTests: XCTestCase {
 
     func testSingleCleartextEndpointSendsNoRequest() async throws {
         let endpoint = try ServerEndpoint(
-            validating: "http://127.0.0.1:8080/synveil")
+            validating: "http://127.0.0.1:8080")
         let fixture = try fixture(responses: [], endpoint: endpoint)
         let result = try await singleRead(fixture)
         XCTAssertEqual(result, .failed(.originMismatch))
@@ -1291,7 +1291,7 @@ final class NodeBrowserTests: XCTestCase {
         XCTAssertNil(request.body)
         XCTAssertEqual(
             request.url.absoluteString,
-            "https://node.example:8443/synveil/api/v1/nodes/" + nodeId(1))
+            "https://node.example:8443/api/v1/nodes/" + nodeId(1))
         XCTAssertNil(request.url.query)
         XCTAssertEqual(request.headers["Authorization"], "Bearer " + nodeBearer)
         XCTAssertFalse(request.url.absoluteString.contains(nodeBearer))
@@ -1618,7 +1618,7 @@ final class NodeBrowserTests: XCTestCase {
         endpoint: ServerEndpoint? = nil, validator: (any RustBridgeProtocol)? = nil
     ) throws -> Fixture {
         let endpoint =
-            try endpoint ?? ServerEndpoint(validating: "https://node.example:8443/synveil")
+            try endpoint ?? ServerEndpoint(validating: "https://node.example:8443")
         let session = try nodeSession(endpoint: endpoint)
         let store = NodeTestStore(session)
         let controller = SessionController(

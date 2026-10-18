@@ -767,8 +767,8 @@ final class NodeProjectionSQLiteTests: XCTestCase {
         }
         let requests = await f.transport.requests()
         XCTAssertEqual(requests.count, 3)
-        XCTAssertEqual(requests[1].url.path, "/synveil/api/v1/nodes/\(node.id.rawValue)")
-        XCTAssertEqual(requests[2].url.path, "/synveil/api/v1/nodes/\(parent.id.rawValue)")
+        XCTAssertEqual(requests[1].url.path, "/api/v1/nodes/\(node.id.rawValue)")
+        XCTAssertEqual(requests[2].url.path, "/api/v1/nodes/\(parent.id.rawValue)")
         XCTAssertTrue(
             requests.allSatisfy { $0.method == .get && !$0.url.path.hasSuffix("/content") })
         XCTAssertTrue(requests.allSatisfy { $0.headers["Cookie"] == nil })

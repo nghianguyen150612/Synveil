@@ -1,10 +1,13 @@
 # Photos architecture
 
-Status: **PLANNED subsystem blueprint**
+Status: **Server Photos subsystem planned; native iOS PhotoKit client work exists after v0.1**
 
 Synveil Photos is a replaceable media projection over canonical files. It is
-not an independent storage silo and this document does not claim an
-implementation exists. Originals use the same upload, integrity, version,
+not an independent storage silo. The iOS host app implements opt-in PhotoKit
+discovery and foreground resource upload orchestration in P056–P058, but those
+uploads are ordinary FileVersions and are not yet bound to PhotoAsset or backup
+retention evidence. The server-side Photos subsystem described here remains
+planned. Originals use the same upload, integrity, version,
 authorization, retention, and object-store contracts as every other file.
 
 Canonical entity fields are defined in [DOMAIN_MODEL.md](DOMAIN_MODEL.md); API
@@ -14,10 +17,10 @@ sync, and backup behavior remain governed by [STORAGE.md](STORAGE.md),
 
 Photos client projections follow the platform contract: Windows, macOS, Linux
 Desktop, and Linux Server are first-class host boundaries where the relevant
-client or import workflow is supported; Android, iPhone, and iPad remain future
-mobile targets with explicit background-transfer and photo-library capability
-negotiation. No mobile or OS-specific behavior changes the canonical server
-storage model.
+client or import workflow is supported. The iOS host app has the P056–P058
+PhotoKit discovery and foreground upload flow; Android/iPad and server-side
+PhotoAsset bindings remain separate product work. No mobile or OS-specific
+behavior changes the canonical server storage model.
 
 ## Scope and status
 
@@ -31,7 +34,7 @@ The following server-side Photos capabilities are `PLANNED`:
 - exact-duplicate suggestions;
 - deterministic metadata search and optional AI-enriched search;
 - source-device/import and backup state; and
-- production PhotoAsset import binding, Live Photo group binding, and backup-manifest association.
+- production PhotoAsset import binding, Live Photo group binding, and backup-manifest association for the iOS foreground uploads.
 
 The following are `EXPERIMENTAL` until separate privacy and quality gates pass:
 

@@ -207,9 +207,13 @@ final class CommittedProjectionAckTests: XCTestCase {
         let requests = await f.transport.requests()
         let request = try XCTUnwrap(requests.last)
         XCTAssertEqual(request.method, .post)
+        let expectedPath = [
+            "api", "v1", "devices", f.scope.deviceId.rawValue, "libraries",
+            f.scope.libraryId.rawValue, "changes", "ack",
+        ].joined(separator: "/")
         XCTAssertEqual(
             request.url.path,
-            "/synveil/api/v1/devices/\(f.scope.deviceId.rawValue)/libraries/\(f.scope.libraryId.rawValue)/changes/ack"
+            "/" + expectedPath
         )
         XCTAssertNil(request.headers["Cookie"])
         XCTAssertFalse(request.headers.keys.contains { $0.lowercased().contains("csrf") })

@@ -17,13 +17,18 @@ final class ServerEndpointTests: XCTestCase {
     }
 
     func testValidHTTPEndpointForLocalDev() throws {
-        let endpoint = try ServerEndpoint(validating: "http://192.0.2.1:8080")
+        let endpoint = try ServerEndpoint(
+            validating: "http://127.0.0.1:8080", allowLoopbackTestHTTP: true)
         XCTAssertEqual(endpoint.scheme, "http")
-        XCTAssertEqual(endpoint.host, "192.0.2.1")
+        XCTAssertEqual(endpoint.host, "127.0.0.1")
         XCTAssertEqual(endpoint.port, 8080)
         XCTAssertEqual(endpoint.path, "/")
-        XCTAssertEqual(endpoint.urlString, "http://192.0.2.1:8080/")
+        XCTAssertEqual(endpoint.urlString, "http://127.0.0.1:8080/")
         XCTAssertFalse(endpoint.isSecureScheme)
+
+        let ipv6Endpoint = try ServerEndpoint(
+            validating: "http://[::1]", allowLoopbackTestHTTP: true)
+        XCTAssertEqual(ipv6Endpoint.urlString, "http://[::1]/")
     }
 
     func testValidEndpointWithExplicitPort() throws {
@@ -34,28 +39,23 @@ final class ServerEndpointTests: XCTestCase {
         XCTAssertEqual(endpoint.urlString, "https://cloud.example.com:8443/")
     }
 
-    func testValidEndpointWithSubpath() throws {
-        let endpoint = try ServerEndpoint(validating: "https://example.com/synveil")
-        XCTAssertEqual(endpoint.path, "/synveil")
-        XCTAssertEqual(endpoint.urlString, "https://example.com/synveil")
-    }
-
-    func testWhitespaceTrimmingAndTrailingSlashNormalization() throws {
-        let endpoint = try ServerEndpoint(validating: "  https://example.com/  \n")
-        XCTAssertEqual(endpoint.urlString, "https://example.com/")
-
-        let endpointWithPath = try ServerEndpoint(validating: "https://example.com/api/v1/")
-        XCTAssertEqual(endpointWithPath.path, "/api/v1")
-        XCTAssertEqual(endpointWithPath.urlString, "https://example.com/api/v1")
+    func testRootSlashNormalizationAndWhitespaceRejection() throws {
+        XCTAssertEqual(
+            try ServerEndpoint(validating: "https://example.com/").urlString,
+            "https://example.com/"
+        )
+        for value in [" https://example.com", "https://example.com ", "https://example.com\n"] {
+            XCTAssertThrowsError(try ServerEndpoint(validating: value))
+        }
     }
 
     func testCaseNormalizationForSchemeAndHost() throws {
-        let endpoint = try ServerEndpoint(validating: "HTTPS://SERVER.EXAMPLE:8443/Path")
+        let endpoint = try ServerEndpoint(validating: "HTTPS://SERVER.EXAMPLE:8443/")
         XCTAssertEqual(endpoint.scheme, "https")
         XCTAssertEqual(endpoint.host, "server.example")
         XCTAssertEqual(endpoint.port, 8443)
-        XCTAssertEqual(endpoint.path, "/Path")
-        XCTAssertEqual(endpoint.urlString, "https://server.example:8443/Path")
+        XCTAssertEqual(endpoint.path, "/")
+        XCTAssertEqual(endpoint.urlString, "https://server.example:8443/")
     }
 
     // MARK: - Invalid Endpoint Tests
@@ -66,7 +66,7 @@ final class ServerEndpointTests: XCTestCase {
         }
 
         XCTAssertThrowsError(try ServerEndpoint(validating: "   \n\t ")) { error in
-            XCTAssertEqual(error as? EndpointValidationError, .empty)
+            XCTAssertEqual(error as? EndpointValidationError, .controlOrWhitespace)
         }
     }
 
@@ -113,6 +113,64 @@ final class ServerEndpointTests: XCTestCase {
         let fragmentURL = "https://example.com/#section"
         XCTAssertThrowsError(try ServerEndpoint(validating: fragmentURL)) { error in
             XCTAssertEqual(error as? EndpointValidationError, .fragmentNotAllowed)
+        }
+    }
+
+    func testRejectsNonOriginPathsAndEmptyQueryOrFragment() {
+        for value in [
+            "https://example.com/api/v1", "https://example.com?", "https://example.com#",
+        ] {
+            XCTAssertThrowsError(try ServerEndpoint(validating: value))
+        }
+    }
+
+    func testHTTPRequiresExplicitDebugPolicyAndNumericLoopback() {
+        XCTAssertThrowsError(
+            try ServerEndpoint(
+                validating: "http://127.0.0.1", allowLoopbackTestHTTP: false
+            )
+        ) { error in
+            XCTAssertEqual(error as? EndpointValidationError, .httpsRequired)
+        }
+
+        for value in [
+            "http://localhost",
+            "http://192.168.1.10",
+            "http://10.0.0.1",
+        ] {
+            XCTAssertThrowsError(
+                try ServerEndpoint(validating: value, allowLoopbackTestHTTP: true)
+            ) { error in
+                XCTAssertEqual(error as? EndpointValidationError, .loopbackHTTPNotAllowed)
+            }
+        }
+    }
+
+    func testRejectsMalformedAndOutOfRangePorts() {
+        for value in [
+            "https://example.com:",
+            "https://example.com:0",
+            "https://example.com:65536",
+            "https://example.com:abc",
+        ] {
+            XCTAssertThrowsError(try ServerEndpoint(validating: value))
+        }
+    }
+
+    func testRejectsMalformedNumericIPv4Hosts() {
+        for value in [
+            "https://999.999.999.999",
+            "https://127.1",
+            "https://127.0.0.1.",
+        ] {
+            XCTAssertThrowsError(try ServerEndpoint(validating: value))
+        }
+    }
+
+    func testRejectsOriginsOverAndroidByteLimit() {
+        let longHost = String(repeating: "a", count: 2_049)
+        XCTAssertThrowsError(try ServerEndpoint(validating: "https://\(longHost)")) { error in
+            XCTAssertEqual(error as? EndpointValidationError, .tooLong)
         }
     }
 

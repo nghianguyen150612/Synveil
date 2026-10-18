@@ -91,7 +91,7 @@ Phase H: Hardening, Validation, & v0.1 Release Readiness
 * **Validation**: Simulator UI automation tests on macOS CI.
 
 ### Phase H: Hardening, Validation, and v0.1 Release
-* **Goal**: Finalize test coverage, performance optimization, accessibility audit, security redaction checks, and release packaging.
+* **Goal**: P059 closes the Android–iOS parity audit and regression hardening. P060 separately decides v0.1 release readiness and owns release packaging. This roadmap phase does not move release-gate work into P059.
 * **Key Tasks**:
   * Accessibility (VoiceOver) labels and dynamic type support.
   * Memory leak and bearer logging audit.
@@ -102,25 +102,25 @@ Phase H: Hardening, Validation, & v0.1 Release Readiness
 ## Owner-authorized post-baseline extensions
 
 The v0.1 release roadmap and feature claims remain defined by the product contract. After that
-baseline, the owner authorized a separate P053–P055 File Provider workstream. P053 creates an
-isolated, fail-closed `NSFileProviderReplicatedExtension` foundation; it does not provide
-production Apple Files integration or change v0.1 release eligibility. P054 may add authorized
-remote enumeration and metadata change propagation after its own authorization. P055 content
-materialization and Files-originated mutations remain subject to a separate safety design and
-roadmap confirmation. PhotoKit P056/P057 is a separate owner-authorized workstream. P056 adds
-metadata observation; P057 implements explicitly selected local resource preparation and
-foreground P045 upload, with native CI and review pending. Automatic camera-roll upload,
-background upload, silent iCloud retrieval, remote deletion, and P058 remain deferred.
+baseline, the owner authorized a separate P053–P055 File Provider workstream. P053–P054 add
+isolated, fail-closed `NSFileProviderReplicatedExtension` infrastructure; production Apple Files
+registration and content operations remain disabled. P055 PR #139 is still open and unmerged.
+PhotoKit P056–P058 is a separate owner-authorized post-baseline workstream, merged through P058
+PR #142 at `c0c4c42`. The host app implements opt-in metadata discovery and foreground upload
+orchestration over ordinary FileVersions. Server PhotoAsset/Live Photo binding, BackupSnapshot
+membership and retention proof remain absent. Background upload, silent iCloud retrieval, remote
+deletion, and treating these PhotoKit flows as v0.1 release parity remain deferred.
 
 
 ## P048 implementation record
 
-Native opportunistic background metadata refresh is implemented on the P048 feature branch and
-pending review/integration. It is disabled by default, binds explicit opt-in to the current
+P048 was merged into `ios-app` through PR #131 on 2026-10-14. The native opportunistic
+background metadata refresh remains disabled by default, binds explicit opt-in to the current
 authenticated endpoint/account/device/credential, and uses BGAppRefreshTask with a bounded workload.
 Only new inbound pages and their normal initial ACK can run; unknown ACK recovery, outbound
 mutations, rebaseline and file-content transfers remain separate authorized actions. iOS controls
 delivery and no periodic interval is guaranteed. SQLite v9 and P046 upload ownership are retained.
+P049–P058 are subsequent implemented milestones; P059 records current parity and regression evidence.
 
-See [P048 manifest](manifests/PROMPT048_MANIFEST.md) for budgets, native evidence, restrictions,
-physical-device NOT_AVAILABLE status and the open review gate. P049 has not been started.
+See [P048 manifest](manifests/PROMPT048_MANIFEST.md) for its original implementation evidence,
+budgets, restrictions, and physical-device NOT_AVAILABLE status.

@@ -10,9 +10,13 @@ final class RebaselineTransportTests: XCTestCase {
         try await snapshotStart(f)
         let observed24 = await f.transport.requests().last
         let request = try XCTUnwrap(observed24)
+        let expectedPath = [
+            "api", "v1", "devices", f.scope.deviceId.rawValue, "libraries",
+            f.scope.libraryId.rawValue, "rebaseline",
+        ].joined(separator: "/")
         XCTAssertEqual(
             request.url.path,
-            "/synveil/api/v1/devices/\(f.scope.deviceId.rawValue)/libraries/\(f.scope.libraryId.rawValue)/rebaseline"
+            "/" + expectedPath
         )
         XCTAssertEqual(request.method, .post)
         XCTAssertEqual(request.body, Data("{}".utf8))

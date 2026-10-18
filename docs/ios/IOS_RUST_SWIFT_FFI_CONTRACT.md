@@ -87,7 +87,7 @@ The Rust FFI layer MUST NOT attempt to own, manage, or invoke Apple system APIs.
 * Keychain Services (`Security.framework`)
 * Network Transport (`URLSession`)
 * User Interface (`SwiftUI` / `UIKit`)
-* File Provider Extension (`NSFileProviderExtension`)
+* File Provider Extension (`NSFileProviderReplicatedExtension`)
 * Camera Roll Access (`PhotoKit`)
 * Background Scheduling (`BackgroundTasks`)
 * Connectivity Monitoring (`NWPathMonitor`)

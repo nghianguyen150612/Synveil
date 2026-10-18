@@ -2,12 +2,16 @@
 
 ## Integration status
 
+> **Post-merge status update (2026-10-18):** The closeout state below records the state before
+> review/merge. PR #142 was later merged into `ios-app` at `c0c4c42ed41f589f5c7782e697824d89c4f8e907`.
+> P059 now audits the merged source. P055 PR #139 remains open and unmerged.
+
 - Verified starting `ios-app` baseline: `82e3e53eb690942089401c005c0c28c1f0bd6921` (merged P057 PR #141).
 - P055 PR #139 remains separate and unmerged; this branch does not include or change it.
 - Feature branch: `ios/p058-photokit-backup-orchestration`.
-- P058 PR #142 targets `ios-app` and remains open; it is not merged. P059 has not started.
+- At P058 closeout, PR #142 was open and P059 had not started; the post-merge status update above supersedes that snapshot.
 - Current feature code head: `9d740a265f20d5823cdaad3f82f8d93c7783351b` (the subsequent manifest-only commit does not change iOS source).
-- Completion decision: `IMPLEMENTED_PENDING_REVIEW_OR_MERGE`; all four required native iOS workflows passed on the final P058 source head, while independent review and merge remain pending.
+- Completion decision at P058 closeout: `IMPLEMENTED_PENDING_REVIEW_OR_MERGE`; all four required native iOS workflows passed on the final P058 source head before PR #142 was merged.
 
 ## Server capability audit
 
