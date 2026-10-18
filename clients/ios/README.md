@@ -4,11 +4,13 @@
 `clients/ios/` is the canonical home of the native Synveil iOS client (`v0.1`). It establishes a clean, production-grade Swift application layout adhering strictly to ADR-058 (`docs/adr/ADR-058-ios-v0.1-client-architecture.md`), `IOS_ARCHITECTURE.md`, and `IOS_VALIDATION_CI_ARCHITECTURE.md`.
 
 ## 2. Current Project Status
-- **Status**: Native iOS v0.1 implementation milestones P022–P058 are recorded in `docs/ios/manifests/`; P058 merged through PR #142 at `c0c4c42`. P059 performs the full Android parity audit and regression hardening. P060 remains the separate release gate.
+- **Status**: P059 is merged through PR #143 at `40080e3`. P060 is the final v0.1 release gate. The current release decision is `BLOCKED_RELEASE`: labeled server profiles and isolated multi-profile switching remain blocked, and physical-device, live-server, signing, and distribution evidence is outstanding. See the [release report](../../docs/ios/IOS_V0_1_RELEASE_REPORT.md), [device validation matrix](../../docs/ios/IOS_V0_1_DEVICE_VALIDATION.md), and [known limitations](../../docs/ios/IOS_V0_1_KNOWN_LIMITATIONS.md).
 - **CI**: Dedicated GitHub Actions static validation (`.github/workflows/ios-static-validation.yml`), build (`.github/workflows/ios-build.yml`), Simulator test (`.github/workflows/ios-simulator-tests.yml`), and Rust Apple artifact (`.github/workflows/ios-rust-apple-build.yml`) workflows are established.
 - **Application Target**: `Synveil` (Swift + SwiftUI, bundle identifier `com.synveil.ios`, deployment target iOS 17.0).
 - **Test Target**: `SynveilTests` (XCTest Unit Testing Bundle, bundle identifier `com.synveil.ios.tests`).
 - **Signing Policy**: Configured for unsigned Simulator builds (`CODE_SIGNING_ALLOWED=NO`, zero committed team IDs or provisioning profiles).
+
+P060 does not authorize TestFlight or public distribution. Machine-readable release state is in `release-status.json`. P055 PR #139 remains separate and unmerged. Background content transfers remain disabled; PhotoKit is an optional foreground host-app flow; BGAppRefresh remains bounded and opt-in by default.
 
 ## 3. Configuration & Server Endpoint Architecture (Prompt011)
 
