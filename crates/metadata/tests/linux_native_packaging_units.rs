@@ -640,6 +640,7 @@ fn packaged_binary_matches_release_sha() {
         ),
         ("synveil-client", "usr/bin/synveil-client"),
         ("synveil-desktop", "usr/bin/synveil-desktop"),
+        ("synveil-host-helper", "usr/libexec/synveil-host-helper"),
     ] {
         let src = repo_root().join(format!("target/release/{name}"));
         assert!(
@@ -678,6 +679,10 @@ fn packaged_units_match_authoritative_sources() {
             "usr/lib/systemd/system/synveil-scheduled-maintenance.service",
         ),
         (
+            "deploy/systemd/synveil-host-inspector.service",
+            "usr/lib/systemd/system/synveil-host-inspector.service",
+        ),
+        (
             "deploy/systemd-user/synveil-client.service",
             "usr/lib/systemd/user/synveil-client.service",
         ),
@@ -702,6 +707,18 @@ fn packaged_units_match_authoritative_sources() {
         (
             "deploy/tmpfiles.d/synveil.conf",
             "usr/lib/tmpfiles.d/synveil.conf",
+        ),
+        (
+            "deploy/server/prepare-host-runtime.py",
+            "usr/libexec/synveil-host/prepare-host-runtime.py",
+        ),
+        (
+            "deploy/server/register-host-inputs.py",
+            "usr/libexec/synveil-host/register-host-inputs.py",
+        ),
+        (
+            "deploy/polkit/org.synveil.host.policy",
+            "usr/share/polkit-1/actions/org.synveil.host.policy",
         ),
         (
             "deploy/config/synveil-scheduled-maintenance.env.example",
@@ -737,13 +754,18 @@ fn deb_rpm_normalized_payload_parity() {
         "usr/bin/synveil-client",
         "usr/bin/synveil-desktop",
         "usr/bin/synveil-scheduled-maintenance-once",
+        "usr/libexec/synveil-host-helper",
+        "usr/libexec/synveil-host/prepare-host-runtime.py",
+        "usr/libexec/synveil-host/register-host-inputs.py",
         "usr/lib/systemd/user/synveil-client.service",
+        "usr/lib/systemd/system/synveil-host-inspector.service",
         "usr/lib/systemd/system/synveil-scheduled-maintenance.service",
         "usr/lib/systemd/system/synveil-scheduled-maintenance.timer",
         "usr/lib/sysusers.d/synveil.conf",
         "usr/lib/tmpfiles.d/synveil.conf",
         "usr/share/applications/synveil.desktop",
         "usr/share/icons/hicolor/scalable/apps/synveil.svg",
+        "usr/share/polkit-1/actions/org.synveil.host.policy",
         "usr/share/doc/synveil/LICENSE",
         "usr/share/doc/synveil/NOTICE",
         "usr/share/synveil/synveil-scheduled-maintenance.env.example",
@@ -868,18 +890,26 @@ fn payload_file_modes_follow_contract() {
             .mode()
             & 0o777
     };
-    for rel in ["usr/bin/synveil-client", "usr/bin/synveil-desktop"] {
+    for rel in [
+        "usr/bin/synveil-client",
+        "usr/bin/synveil-desktop",
+        "usr/libexec/synveil-host-helper",
+        "usr/libexec/synveil-host/prepare-host-runtime.py",
+        "usr/libexec/synveil-host/register-host-inputs.py",
+    ] {
         assert_eq!(mode(rel), 0o755, "mode for {rel}");
     }
     assert_eq!(mode("usr/bin/synveil-scheduled-maintenance-once"), 0o755);
     for rel in [
         "usr/lib/systemd/user/synveil-client.service",
+        "usr/lib/systemd/system/synveil-host-inspector.service",
         "usr/lib/systemd/system/synveil-scheduled-maintenance.service",
         "usr/lib/systemd/system/synveil-scheduled-maintenance.timer",
         "usr/lib/sysusers.d/synveil.conf",
         "usr/lib/tmpfiles.d/synveil.conf",
         "usr/share/applications/synveil.desktop",
         "usr/share/icons/hicolor/scalable/apps/synveil.svg",
+        "usr/share/polkit-1/actions/org.synveil.host.policy",
         "usr/share/doc/synveil/LICENSE",
         "usr/share/doc/synveil/NOTICE",
         "usr/share/synveil/synveil-scheduled-maintenance.env.example",
