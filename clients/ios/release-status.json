@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "product": "Synveil iOS",
+  "roadmapVersion": "0.1",
+  "milestone": "P060",
+  "releaseDecision": "BLOCKED_RELEASE",
+  "sourceCodeBase": "40080e3e7ed17bafb4f5ee89b8637b1954bc626a",
+  "appVersion": null,
+  "buildNumber": null,
+  "parityBlockers": [
+    "PAR-03 / CAP-13A: persistent labeled server profiles",
+    "PAR-04 / CAP-13B: isolated multi-profile switching"
+  ],
+  "physicalDeviceAcceptance": "NOT_EXECUTED",
+  "liveAuthenticatedServerAcceptance": "NOT_EXECUTED",
+  "signedDistributionArtifact": "NOT_PRODUCED",
+  "distributionSubmitted": false
+}

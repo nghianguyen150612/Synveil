@@ -91,13 +91,17 @@ Phase H: Hardening, Validation, & v0.1 Release Readiness
 * **Validation**: Simulator UI automation tests on macOS CI.
 
 ### Phase H: Hardening, Validation, and v0.1 Release
-* **Goal**: P059 closes the Android–iOS parity audit and regression hardening. P060 separately decides v0.1 release readiness and owns release packaging. This roadmap phase does not move release-gate work into P059.
+* **Goal**: P059 records the Android–iOS parity audit and regression hardening. P060 is the final v0.1 release gate and owns release packaging and evidence-based certification. This roadmap phase does not move release-gate work into P059.
 * **Key Tasks**:
   * Accessibility (VoiceOver) labels and dynamic type support.
   * Memory leak and bearer logging audit.
   * End-to-end acceptance testing against live/mock Synveil server on macOS CI runner.
   * Production IPA release build setup.
 * **Validation**: Complete macOS CI test suite pass, clean security/privacy audit, testable v0.1 release artifact.
+
+### P060 final release gate status
+
+P060 closes the engineering assessment with `BLOCKED_RELEASE`. PAR-03/CAP-13A (persistent labeled profiles) and PAR-04/CAP-13B (multi-profile switching with isolated sessions) remain blocked; no owner-approved scope revision was supplied. Physical-device acceptance, live authenticated-server acceptance, explicit release version/build and privacy review, and a signed distribution artifact remain outstanding. P059 parity totals are unchanged. Do not distribute or integrate `ios-app` into `main` until the release and integration gates are satisfied. See `IOS_V0_1_RELEASE_REPORT.md` and `manifests/PROMPT060_MANIFEST.md`.
 
 ## Owner-authorized post-baseline extensions
 
