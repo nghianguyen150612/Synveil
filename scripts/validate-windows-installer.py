@@ -211,6 +211,12 @@ def main() -> int:
                      "p027-obsolete-owned.txt", "downgrade-fixture", "reinstall-production",
                      "startup_preference_preserved", "authorized_scope"):
         require(evidence in lifecycle_test, f"P027 native lifecycle evidence: {evidence}")
+    for evidence in ("GetFolderPath([Environment+SpecialFolder]::UserProfile)",
+                     "$env:LOCALAPPDATA = $localAppData", "$env:APPDATA = $roamingAppData",
+                     "$env:TEMP = Join-Path $localAppData 'Temp'", "P027_PROFILE_PATH_FAILURE"):
+        require(evidence in lifecycle_test, f"P027 standard-user profile environment: {evidence}")
+    require(lifecycle_test.index("P027_PROFILE_PATH_FAILURE") < lifecycle_test.index("$root = Join-Path"),
+            "P027 profile paths are validated before deriving installer paths")
     for evidence in ("Interrupt-UpgradeAfterOwnedPayloadCopy", "NewerLicenseHash",
                      "LIFECYCLE_INTERRUPTION_FAILURE", "process_termination='forced'",
                      "prior_manifest_and_registration_matched"):
