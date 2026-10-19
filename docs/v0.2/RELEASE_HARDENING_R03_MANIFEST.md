@@ -2,11 +2,12 @@
 
 ## Closeout status
 
-**R03_SOURCE_COMPLETE_WITH_BLOCKERS** is the target closeout classification for
-this source work. No supported product artifact, production signature, P036
-inventory, stable channel, or native installation result is claimed. The
-classification is valid only if the final PR head passes its source checks;
-the exact-head CI state and final Git references are recorded in the handoff.
+**R03_SOURCE_COMPLETE_WITH_BLOCKERS** is the closeout classification. Exact
+CI-produced unsigned candidates now exist for Windows Setup, Windows portable
+ZIP, Ubuntu DEB, Fedora RPM, and AppImage. No signed product artifact,
+authenticated P036 inventory, stable channel, or full native installation
+qualification is claimed. The selected candidate files and their evidence are
+recorded below; none is an official release.
 
 ## A. Starting state and integration base
 
@@ -89,11 +90,13 @@ Expected producer commands are `./deploy/packages/build.sh --format=all`,
 --staging-dir=target/windows-installer-runtime`,
 `./scripts/build-windows-installer.ps1`, and
 `./scripts/build-host-server-input.sh target/host-server-candidate` on each
-declared Ubuntu/Fedora OS. The AppImage workflow runs its producer twice and
-requires byte identity. The Linux workflow independently rebuilds packages
-and validates DEB/RPM metadata and installation behavior. Windows installer
-checks its exact manifest and reproducible unsigned build. None of those
-product artifact commands could run in this local environment.
+declared Ubuntu/Fedora OS. The AppImage workflow ran its producer twice and
+required byte identity. The Linux package workflow independently rebuilt the
+DEB/RPM, inspected metadata and contents, and passed Ubuntu APT and Fedora 42
+DNF install/launch/removal/preservation checks. The Windows installer workflow
+produced a reproducible Setup candidate and portable ZIP; its standard-user
+lifecycle evidence is bound to the selected Setup digest. These product builds
+ran in CI because the local executor lacks Qt and Windows packaging tools.
 
 ## C. Local external runtime evidence
 
@@ -119,16 +122,57 @@ The actual AppImageKit runtime input was acquired to the ignored local path
   digest. No separate organization-provisioned bootstrap root for this upstream
   key is configured.
 
-This proves the runtime build input only. The Synveil AppImage, repeated build,
-AppDir inspection, runtime execution, manifest, and final product digest are
-still absent.
+This proves the runtime build input only. The Synveil AppImage was separately
+built and verified by the dedicated AppImage workflow; its exact bytes and
+manifest are recorded in the next subsection.
+
+### CI-produced product candidates
+
+All five selected product candidates have `source_commit`
+`7f88d114e272ac220056db216030acda84be90e1`, a real GitHub pull-request test
+merge commit whose parents are R02 head
+`f6f2591f44caf54ff13de2b0fd869257674de655` and R03 code head
+`7bee96edf2509eb26cea4b5fd352761f5e72d458`. This is not an integration merge:
+PR #150 remains open. Product file hashes and sizes below were independently
+recomputed from downloaded GitHub Actions artifacts and matched their release
+manifests.
+
+| Product candidate | Size / SHA-256 | Build and verification evidence | GitHub Actions artifact |
+| --- | --- | --- | --- |
+| Windows Setup `SynveilSetup.exe` | 32,815,179 bytes; `6030cb810afd029732090148e76d872d61fb36af20cbde30e56251d4cfe335ac` | Windows installer workflow built twice byte-identically. Candidate manifest matched. `asInvoker`, runtime closure negatives, disposable standard-user install, repair, synthetic upgrade recovery, downgrade rejection, uninstall/reinstall, and state preservation passed. No Authenticode signature. | [Run 39254944703 / artifact 12190505013](https://github.com/nghianguyen150612/Synveil/actions/runs/39254944703/artifacts/12190505013); archive 135,154,302 bytes, SHA-256 `dc296076a931555f790b2b7f3307434bf2771bb09e4bf37bbf9cb90c56df1459` |
+| Windows portable ZIP `synveil-0.2.0-windows-x86_64.zip` | 51,621,495 bytes; `139ed73ff48eff11198a9c73a28b10b086e25455fcbffbabf4ca4241a83a772b` | Outer release manifest matched. Embedded inventory had 1,358 files; every size and SHA-256 matched, both packaged executables are x86_64 PE, and no unsafe paths or links were found. Contents are unsigned. Rust CI independently built its own ZIP twice byte-identically, but that output (`51,620,638` bytes; `51c054eb14ead62c790528c69872bf88e7d936a52eb28c3db0421d7ebf53801`) differs from this selected file; cross-workflow equivalence is not claimed. | Same Windows installer artifact as above |
+| Ubuntu DEB `synveil_0.2.0_amd64.deb` | 17,511,662 bytes; `63243220397df76b766f2c1ea2ae3f13a3b9f60270ebde9ba380b00e9c1b2578` | Independent builds byte-identical; package metadata, contents, provenance, and manifest validated. Ubuntu 24.04 APT install, non-root launch, removal, and durable-state preservation passed. Unsigned. | [Run 39254944698 / artifact 12191351453](https://github.com/nghianguyen150612/Synveil/actions/runs/39254944698/artifacts/12191351453); archive 34,839,225 bytes, SHA-256 `381cc643f99a065760924c1f9629ebd82c3da7c48d39c4608a2ee5557efa2108` |
+| Fedora RPM `synveil-0.2.0-1.x86_64.rpm` | 17,525,400 bytes; `eb701f7c60b1cd15ecfc23f248be548aae1e6567494f0ece14e9c5f531cf6048` | Independent builds byte-identical; RPM metadata, contents, dependencies, provenance, and manifest validated. Fedora 42 DNF install, non-root launch, erase, and durable-state preservation passed. No RPM OpenPGP signature. | Same Linux package artifact as above |
+| AppImage `Synveil-0.2.0-x86_64.AppImage` | 49,125,880 bytes; `a0a10f8770d7441a5e89a1dff18d82df2b34b28f4c8fb86cfa75843fd9a9859a` | Dedicated workflow acquired the verified runtime, built twice byte-identically, inspected AppDir/runtime/manifest, passed host-decontaminated QML smoke and current-user lifecycle tests. The product and manifest are unsigned. | [Run 39254945008 / artifact 12186709692](https://github.com/nghianguyen150612/Synveil/actions/runs/39254945008/artifacts/12186709692); archive 49,004,027 bytes, SHA-256 `cf9d3e14bdaa3377978454ca8a75250f4d90d78774aab3d830b0f1e06520e6c4` |
+
+The dedicated candidate-producing workflows are selected above. Auxiliary
+acceptance workflows built distinct bytes from the same source commit and are
+not interchangeable with those candidates. The Linux acceptance bundle's DEB,
+RPM, and AppImage hashes were respectively `3b2c67dcfade955c6cecf8389b38ef4c0ea96e8d0d3727342d171c60e3dfc544`,
+`06279cffb42d6ed9b3f5952fa206d135fc2aa651e21eb4b1bcabd37707b06555`, and
+`985ffd7f3c6521d05ca760d6da777612dbf05202c5e1ae48e6f82740f4281a5c`; the
+dedicated package and AppImage workflows above provide the selected reproducible
+outputs. The Windows native-acceptance workflow separately produced a test-only
+Setup with SHA-256
+`9c8c03f71ac35851920981abdd8137f3f83b2d940c94278c98ea9e6040b97001`; it is
+not the selected release Setup. Candidate copies are staged locally under the
+ignored `target/r03-candidate-artifacts/` directory. GitHub Actions artifacts
+are temporary staging links, not a public download origin.
+
+Rust CI run [39254944713](https://github.com/nghianguyen150612/Synveil/actions/runs/39254944713)
+also uploaded its separate reproducible Windows ZIP as artifact 12193965592
+(archive 51,045,744 bytes, SHA-256
+`af8df97ee906b310b58962386ea6b47be8c6ed8e0d24f5a47aa96d7882349d07`). Its
+two ZIP builds matched at 51,620,638 bytes, SHA-256
+`51c054eb14ead62c790528c69872bf88e7d936a52eb28c3db0421d7ebf53801`; this
+does not reproduce the selected Windows installer workflow ZIP above.
 
 ## D. Signing and trust boundaries
 
 | Boundary | Producer / signer integration | Verifier | Current trust input state |
 | --- | --- | --- | --- |
 | AppImage runtime | Pinned upstream AppImageKit release signer | GPG signature + pinned primary fingerprint, release API digest, tag commit | Runtime bytes and upstream license evidence verified locally |
-| Release manifest and channel | `scripts/sign_release_metadata.py`, Ed25519 | Existing `release_signature.py`, `release_download.py`, and `release_channel.py` | No approved release key; missing secret `SYNVEIL_RELEASE_ED25519_PRIVATE_KEY_B64` and public variable `SYNVEIL_RELEASE_ED25519_PUBLIC_TRUST_POLICY_B64` |
+| Synveil product manifests and stable channel | `scripts/sign_release_metadata.py`, Ed25519 | Existing `release_signature.py`, `release_download.py`, and `release_channel.py` | Candidate manifests are unsigned; no approved release key. Missing secret `SYNVEIL_RELEASE_ED25519_PRIVATE_KEY_B64` and public variable `SYNVEIL_RELEASE_ED25519_PUBLIC_TRUST_POLICY_B64` |
 | RPM package | `scripts/sign_rpm_candidate.py`, OpenPGP RPM signature | `rpmkeys --checksig` with an isolated database containing only configured public key | Missing `SYNVEIL_RPM_SIGNING_PRIVATE_KEY_B64`, `SYNVEIL_RPM_TRUSTED_PUBLIC_KEY_B64`, and independently approved `SYNVEIL_RPM_SIGNER_FINGERPRINT` |
 | Windows executables and Setup | `scripts/sign-windows-candidate.ps1`, Authenticode with SHA-256 and timestamp | `signtool verify /pa /all /tw` plus exact certificate thumbprint | Missing protected PFX/password, signer thumbprint, approved HTTPS timestamp URL, and reviewed timestamp host. `windows-signing-policy-v1.json` currently has an empty allowlist |
 | Managed Host component artifacts | Existing component detached-signature contracts; P036 inventory signing helper | R02 runtime registrar and P036 validator against independent GPG keyring/fingerprints | No inventory, component signatures, public keyring, or fingerprints supplied |
@@ -205,8 +249,11 @@ unsigned inventory as accepted; then it signs the exact inventory bytes and
 runs the normal validator against the independent keyring. Source staleness
 checks still reject code changes; they permit only the explicit P036 inventory
 and release-evidence documentation paths to follow the bound product source.
-The inventory and all actual files remain absent, so P036 is blocked and no
-signature is produced.
+The P036 inventory, detached signature, trusted keyring, approved fingerprints,
+and eight authenticated platform/component entries remain absent. The
+server-self-host workflow failed closed at `Materialize approved public
+publisher keyring` because `SYNVEIL_P036_TRUSTED_KEYRING_B64` and its five
+fingerprint variables were empty. P036 is blocked and no signature is produced.
 
 No publisher-controlled domain or approved public distribution origin is
 configured. The workflow can create a retained GitHub Actions candidate
@@ -217,33 +264,53 @@ until the real published manifests and origin exist.
 
 ## F. Validation and environment limits
 
-Source-level suites required by R03 cover release manifest creation and
-negative cases, download authentication and staging, channel rollback/freshness,
-AppImage input acquisition, candidate assembly, RPM signing blockers, Ed25519
-signing, and P036 schema/signing blockers. The Python source suites passed 36
-manifest tests, 79 release-download tests, 101 release-channel tests, 14
-AppImage/candidate/signing tests, and 12 P036 inventory/source-identity tests
-(242 total). The complete Rust install-engine crate passed 531/531 tests,
-including all 124 Linux package integration cases; the Linux package
-  validation script also passed its 27 metadata packaging tests. YAML parsing,
-Python bytecode compilation, shell syntax checks, workspace version identity,
-Windows installer/security validators, AppImage static validation, Rust
-formatting and Clippy, and documentation validation also passed. Native product
-builds remain unavailable in this executor; P036 runtime artifact validation
-returns its expected external-input blocker.
+Local source-level suites passed: 36 manifest tests, 79 release-download tests,
+101 release-channel tests, 14 AppImage/candidate/signing tests, and 12 P036
+inventory/source-identity tests (242 total). The Rust install-engine crate
+passed 531/531 tests, including 124 Linux package integration tests. The local
+Linux package metadata suite passed 27 tests; five artifact-dependent cases
+were skipped before CI artifacts existed. YAML parsing, Python bytecode
+compilation, shell syntax, workspace identity, Windows installer/security
+validators, AppImage static validation, Rust formatting/Clippy, and docs
+validation passed.
 
-The local executor is Linux x86_64. A temporary stable Rust 1.99.1 toolchain
-was installed outside the repository, and the full install-engine suite passed
-531/531 tests (124 Linux package integration tests); the separate Linux package
-metadata suite passed 27/27 tests, with five artifact-dependent checks skipped
-because no DEB/RPM output was built. Qt 6 build tools,
-`rpmsign`, RPM verification tools, and
-PowerShell are unavailable, so the five desktop artifacts, Ubuntu/Fedora server
-inputs, native package signatures, Windows signatures, and Windows native
-acceptance could not be produced here. `dpkg-deb` and GPG are available. No
-production secret or trust variable was present. Native tests that need a
-desktop session, polkit, Windows GUI, or disposable managed-host runner remain
-for R04.
+On R03 code head `7bee96edf2509eb26cea4b5fd352761f5e72d458`, 16 of the 18
+exact-head PR workflows succeeded. The Windows native-acceptance workflow
+failed closed with an expected environment blocker, and the server self-host
+workflow remained queued. Passing release gates included AppImage
+build/reproduction/smoke/lifecycle, Linux DEB/RPM reproducibility and
+Ubuntu/Fedora package lifecycle tests, Windows Setup reproducibility and
+standard-user lifecycle, PostgreSQL 17, all three iOS workflows, installer
+security hardening, and Rust CI. Rust CI independently rebuilt the Windows
+client and desktop binaries byte-identically (SHA-256
+`0a6ef56ebf07b7359e4d6da64c6ab6c0e6a2dfbac49fdb66a00ead93b6d9c81c` and
+`83db59d040c6ca98b09926d6e79b1833cb2914b4c78b58920da0b4487f9c31f7`),
+reproduced its own ZIP twice at SHA-256
+`51c054eb14ead62c790528c69872bf88e7d936a52eb28c3db0421d7ebf53801`, and
+passed release-manifest validation, QML module/PE checks, packaged QML smoke,
+and artifact upload. That ZIP differs from the selected Windows installer
+workflow ZIP in the candidate table; exact selected-ZIP reproduction remains
+an open gate. The Windows native-acceptance
+workflow passed its disposable standard-user install but failed closed with
+explicit `BLOCKED` evidence for interactive GUI, genuine new logon, and
+named-pipe acceptance. The server self-host workflow failed closed because the
+approved P036 public keyring variable was absent; its three custom self-hosted
+runner jobs remained queued.
+
+The Linux clean-machine PR workflow's static contract and artifact-build jobs
+passed, but its native VM and evidence-gate jobs were skipped because those
+jobs run only for `workflow_dispatch`. This is not Linux clean-machine
+acceptance. The Ubuntu APT and Fedora 42 DNF userspace lifecycle jobs in the
+dedicated package workflow did run and passed; R04 still owns VM-based
+clean-machine qualification on the signed final bytes.
+
+The local executor is Linux x86_64. Qt 6 build tools, `rpmsign`, RPM query and
+verification tools, and PowerShell are unavailable locally; CI produced the
+five unsigned product candidates. No production secret, signing certificate,
+trusted publisher keyring, or authorized fingerprint was supplied. The
+repository has no configured native P036 self-hosted runners. No test result
+from the local executor or hosted userspace tests is promoted to a claim about
+Windows GUI/new-logon/named-pipe acceptance or P036 native registration.
 
 ## G. R04/R05 handoff
 
