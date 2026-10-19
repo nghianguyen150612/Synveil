@@ -127,7 +127,7 @@ def main() -> int:
         if token not in builder:
             fail(f"static builder contract missing: {token}")
     for token in (
-        'local icon_source="$WORK/$1/synveil-icon.svg"',
+        'local icon_source="$WORK/$1/synveil.svg"',
         'install -m0644 "$REPO_ROOT/deploy/icons/hicolor/scalable/apps/synveil.svg" "$icon_source"',
         '--icon-file "$icon_source"',
     ):

@@ -92,7 +92,7 @@ printf '%s  %s\n' "$RUNTIME_SHA256" "$WORK/appimage-runtime" | sha256sum --check
 export LDAI_RUNTIME_FILE="$WORK/appimage-runtime"
 build_one() {
   local label=$1 appdir="$WORK/$1/Synveil.AppDir" destination="$WORK/$1/$ARTIFACT"
-  local icon_source="$WORK/$1/synveil-icon.svg"
+  local icon_source="$WORK/$1/synveil.svg"
   mkdir -p "$appdir/usr/bin"
   install -m0755 "$DESKTOP_BINARY" "$appdir/usr/bin/synveil-desktop"
   install -m0755 "$CLIENT_BINARY" "$appdir/usr/bin/synveil-client"
