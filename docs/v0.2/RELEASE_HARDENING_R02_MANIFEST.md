@@ -4,7 +4,7 @@
 
 **R02_SOURCE_COMPLETE_WITH_BLOCKERS.** The source implementation, local regression work, fail-closed artifact contract, and executable acceptance harnesses are complete. Managed Host production qualification is not complete: no authentic production runtime bundle, publisher trust inputs, authorized native runners, or disposable VM were available. No native Host journey, boot/reboot, or P036 acceptance pass is claimed. No release tag or GitHub Release was created.
 
-Source validation was performed on **0bed7c034aca35d5db51df001f6067a49867742b**. It contains the implementation commit **8a5d5c9** and the separately scoped PostgreSQL scheduler fixture repair **0bed7c0**. This manifest and tracker are documentation closeout changes after that source-validation SHA; they do not change implementation code. The 66e2cee documentation closeout head is documented above; the subsequent Windows fixture cleanup and this evidence update are the final follow-up commit. Its containing SHA is reported in the final handoff because a commit cannot embed its own hash.
+Source validation was performed on **0bed7c034aca35d5db51df001f6067a49867742b**. It contains implementation commit **8a5d5c9** and the separately scoped PostgreSQL scheduler fixture repair **0bed7c0**. Follow-up commit **045dc1e17cf6e980bc83ceca7c77a830e967ea28** adds only Windows-safe test teardown and records the observed CI failure; it does not change production behavior. The current documentation closeout head is reported in the final handoff because a commit cannot embed its own hash.
 
 ## A. Starting state and integration base
 
@@ -212,12 +212,12 @@ Implementation source commit **8a5d5c9** changed:
 - scripts/validate-p036-production-artifacts.py
 - scripts/validate-server-service-installation.py
 
-Scheduler fixture commit **0bed7c0** changed **crates/metadata/tests/scheduled_maintenance_cycle_runner_postgres.rs** and **crates/client-sync/src/host.rs** (Windows fixture teardown correction). Documentation closeout changes **docs/v0.2/RELEASE_HARDENING_R02_MANIFEST.md** and **docs/v0.2/RELEASE_HARDENING_TRACKER.md**.
+Scheduler fixture commit **0bed7c0** changed **crates/metadata/tests/scheduled_maintenance_cycle_runner_postgres.rs**. Follow-up commit **045dc1e** changed **crates/client-sync/src/host.rs** for Windows fixture teardown and updated **docs/v0.2/RELEASE_HARDENING_R02_MANIFEST.md** and **docs/v0.2/RELEASE_HARDENING_TRACKER.md**.
 
 ## Final Git and qualification state
 
 - Final branch: **feat/v02-managed-host-production-readiness**.
 - R02 PR: **#149**, target **fix/v02-release-ci-stabilization**, open and unmerged at documentation closeout. PR URL: https://github.com/nghianguyen150612/Synveil/pull/149.
 - R01 PR #148 remains open and unmerged; R01 merge SHA: **none**. R02 merge SHA: **none**.
-- Source implementation validation SHA: **0bed7c034aca35d5db51df001f6067a49867742b**. The final documentation closeout SHA is the final branch/PR head reported with this manifest; this file records its source validation parent because a commit cannot contain its own hash.
+- Source implementation validation SHA: **0bed7c034aca35d5db51df001f6067a49867742b**. Windows test cleanup follow-up source SHA: **045dc1e17cf6e980bc83ceca7c77a830e967ea28**. The final documentation closeout SHA is reported in the final handoff; a commit cannot contain its own hash.
 - Final R02 status: **R02_SOURCE_COMPLETE_WITH_BLOCKERS**.
