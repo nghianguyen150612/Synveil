@@ -35,12 +35,42 @@ def contains(root: Path, pattern: str) -> bool:
     return any(path.is_file() for path in root.glob(pattern))
 
 
+def validate_appdir_icon(appdir: Path) -> None:
+    icon = appdir / "synveil.svg"
+    bundled_icon = appdir / "usr/share/icons/hicolor/scalable/apps/synveil.svg"
+    source_icon = ROOT / "deploy/icons/hicolor/scalable/apps/synveil.svg"
+    if bundled_icon.is_symlink() or not bundled_icon.is_file():
+        fail("APPIMAGE-4–8: bundled Synveil SVG is missing from the hicolor icon directory")
+    bundled_bytes = bundled_icon.read_bytes()
+    if bundled_bytes != source_icon.read_bytes():
+        fail("APPIMAGE-4–8: bundled Synveil SVG differs from the reviewed source icon")
+    if icon.is_symlink():
+        link_target = Path(os.readlink(icon))
+        if link_target.is_absolute():
+            fail("APPIMAGE-4–8: AppDir icon symlink must be relative")
+        try:
+            resolved_icon = icon.resolve(strict=True)
+            resolved_bundle = bundled_icon.resolve(strict=True)
+        except OSError:
+            fail("APPIMAGE-4–8: AppDir icon symlink is dangling")
+        if resolved_icon != resolved_bundle:
+            fail("APPIMAGE-4–8: AppDir icon symlink does not target the bundled Synveil SVG")
+        icon_bytes = resolved_bundle.read_bytes()
+    elif icon.is_file():
+        icon_bytes = icon.read_bytes()
+    else:
+        fail("APPIMAGE-4–8: required AppDir file missing: synveil.svg")
+    if icon_bytes != bundled_bytes:
+        fail("APPIMAGE-4–8: AppDir icon bytes differ from the reviewed Synveil SVG")
+
+
 def validate_appdir(appdir: Path) -> None:
-    required = ["AppRun", "synveil.desktop", "synveil.svg", "usr/bin/synveil-desktop", "usr/bin/synveil-client", "usr/bin/synveil-appimage-integration", "usr/share/doc/synveil/APPIMAGE-RUNTIME-LICENSE.txt"]
+    required = ["AppRun", "synveil.desktop", "usr/bin/synveil-desktop", "usr/bin/synveil-client", "usr/bin/synveil-appimage-integration", "usr/share/doc/synveil/APPIMAGE-RUNTIME-LICENSE.txt"]
     for relative in required:
         path = appdir / relative
         if path.is_symlink() or not path.is_file():
             fail(f"APPIMAGE-4–8: required AppDir file missing: {relative}")
+    validate_appdir_icon(appdir)
     runtime_license = appdir / "usr/share/doc/synveil/APPIMAGE-RUNTIME-LICENSE.txt"
     expected_license = ROOT / "deploy/packages/appimage/APPIMAGE-RUNTIME-LICENSE.txt"
     if runtime_license.read_bytes() != expected_license.read_bytes():
