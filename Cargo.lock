@@ -3173,6 +3173,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "synveil-auth",
+ "synveil-client",
  "synveil-core",
  "synveil-metadata",
  "synveil-server-bootstrap",
@@ -3209,6 +3210,7 @@ dependencies = [
  "sha2",
  "synveil-server-config",
  "tempfile",
+ "url",
  "uuid",
  "zeroize",
 ]

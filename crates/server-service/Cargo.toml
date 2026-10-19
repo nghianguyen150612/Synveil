@@ -12,6 +12,7 @@ serde_json.workspace = true
 sha2.workspace = true
 synveil-server-config.workspace = true
 uuid.workspace = true
+url.workspace = true
 zeroize.workspace = true
 object = { version = "0.37", default-features = false, features = ["read", "std", "elf"] }
 

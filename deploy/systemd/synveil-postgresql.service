@@ -6,11 +6,13 @@ StartLimitIntervalSec=120
 StartLimitBurst=3
 
 [Service]
-Type=notify
+Type=forking
 User=synveil-postgres
 Group=synveil-postgres
-ExecStart=/opt/synveil/postgresql/17/current/bin/postgres -D /var/lib/synveil/postgresql/17/data -c config_file=/etc/synveil/postgresql/postgresql.conf
-ExecReload=/bin/kill -HUP $MAINPID
+PIDFile=/var/lib/synveil/postgresql/17/data/postmaster.pid
+ExecStart=/opt/synveil/postgresql/17/current/bin/pg_ctl start -D /var/lib/synveil/postgresql/17/data -s -w -t 60 -o "-c config_file=/etc/synveil/postgresql/postgresql.conf" -l /run/synveil/postgresql/server.log
+ExecReload=/opt/synveil/postgresql/17/current/bin/pg_ctl reload -D /var/lib/synveil/postgresql/17/data -s
+ExecStop=/opt/synveil/postgresql/17/current/bin/pg_ctl stop -D /var/lib/synveil/postgresql/17/data -s -m fast -w -t 60
 KillSignal=SIGINT
 TimeoutStartSec=90
 TimeoutStopSec=90

@@ -371,6 +371,9 @@ pub fn verify_runtime(root: &Path, expected: &str, os: &str) -> Result<RuntimeMa
                 return Err("runtime executable platform/architecture mismatch");
             }
         }
+        if file.path == "PROVENANCE" {
+            manifest.validate_provenance(&bytes)?;
+        }
     }
     Ok(manifest)
 }

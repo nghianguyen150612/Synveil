@@ -28,7 +28,27 @@ for unit in ("synveil-api.service", "synveil-worker.service", "synveil-server-mi
     if "Environment=DATABASE_URL=" in value or "EnvironmentFile=" in value: errors.append(f"{path}: plaintext-capable secret delivery")
 require("deploy/systemd/synveil-api.service", "LoadCredential=rebaseline-token-key:", "After=synveil-server-migrate.service")
 require("deploy/systemd/synveil-worker.service", "SYNVEIL_GC_WORKER_ENABLED=1", "After=synveil-server-migrate.service synveil-api.service")
-require("deploy/systemd/synveil-postgresql.service", "User=synveil-postgres", "RestrictAddressFamilies=AF_UNIX AF_INET", "InaccessiblePaths=/etc/synveil/credentials")
+edge_unit = read("deploy/systemd/synveil-edge.service")
+for required in ("Type=notify", "User=synveil-edge", "Group=synveil-edge",
+                 "LoadCredential=network-tls-key:", "StartLimitIntervalSec=120",
+                 "StartLimitBurst=3", "Restart=on-failure", "TimeoutStartSec=90",
+                 "TimeoutStopSec=30", "NoNewPrivileges=yes", "ProtectSystem=strict",
+                 "CapabilityBoundingSet=CAP_NET_BIND_SERVICE",
+                 "AmbientCapabilities=CAP_NET_BIND_SERVICE",
+                 "InaccessiblePaths=/etc/synveil/credentials"):
+    if required not in edge_unit: errors.append(f"deploy/systemd/synveil-edge.service: missing {required}")
+if [line for line in edge_unit.splitlines() if line.startswith("CapabilityBoundingSet=")] != [
+        "CapabilityBoundingSet=CAP_NET_BIND_SERVICE"]:
+    errors.append("managed HTTPS edge has unexpected capabilities")
+postgres_unit = read("deploy/systemd/synveil-postgresql.service")
+for required in ("Type=forking", "User=synveil-postgres", "Group=synveil-postgres",
+                 "PIDFile=/var/lib/synveil/postgresql/17/data/postmaster.pid",
+                 "pg_ctl start -D /var/lib/synveil/postgresql/17/data -s -w -t 60",
+                 "pg_ctl stop -D /var/lib/synveil/postgresql/17/data -s -m fast -w -t 60",
+                 "RestrictAddressFamilies=AF_UNIX AF_INET", "InaccessiblePaths=/etc/synveil/credentials"):
+    if required not in postgres_unit: errors.append(f"deploy/systemd/synveil-postgresql.service: missing {required}")
+if "Type=notify" in postgres_unit or "ExecStart=.*postgres -D" in postgres_unit:
+    errors.append("managed PostgreSQL must use bounded pg_ctl readiness, not an unsupported notify contract")
 require("deploy/systemd/synveil-server.target", "WantedBy=multi-user.target")
 require("deploy/server/systemd-managed/synveil-server.target.conf", "Wants=synveil-postgresql.service")
 require("deploy/server/systemd-managed/synveil-server-migrate.service.conf", "Requires=synveil-postgresql.service")
