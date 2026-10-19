@@ -4,7 +4,7 @@
 
 **R02_SOURCE_COMPLETE_WITH_BLOCKERS.** The source implementation, local regression work, fail-closed artifact contract, and executable acceptance harnesses are complete. Managed Host production qualification is not complete: no authentic production runtime bundle, publisher trust inputs, authorized native runners, or disposable VM were available. No native Host journey, boot/reboot, or P036 acceptance pass is claimed. No release tag or GitHub Release was created.
 
-Source validation was performed on **0bed7c034aca35d5db51df001f6067a49867742b**. It contains the implementation commit **8a5d5c9** and the separately scoped PostgreSQL scheduler fixture repair **0bed7c0**. This manifest and tracker are documentation closeout changes after that source-validation SHA; they do not change implementation code. The final R02 branch/PR head is the documentation closeout commit shown by the PR and final report.
+Source validation was performed on **0bed7c034aca35d5db51df001f6067a49867742b**. It contains the implementation commit **8a5d5c9** and the separately scoped PostgreSQL scheduler fixture repair **0bed7c0**. This manifest and tracker are documentation closeout changes after that source-validation SHA; they do not change implementation code. The 66e2cee documentation closeout head is documented above; the subsequent Windows fixture cleanup and this evidence update are the final follow-up commit. Its containing SHA is reported in the final handoff because a commit cannot embed its own hash.
 
 ## A. Starting state and integration base
 
@@ -65,7 +65,7 @@ Inspection of the requested roadmap, completion, dependency, service installatio
 
 R01 exact-head PostgreSQL workflow [#39171826358](https://github.com/nghianguyen150612/Synveil/actions/runs/39171826358) failed in **runner_scheduler_failure_boundary** at **crates/metadata/tests/scheduled_maintenance_cycle_runner_postgres.rs:924**. The fixture used two independent clock_timestamp() calls for effective_from and updated_at. That could make effective_from later than updated_at, violating the existing **backup_schedules_effective_time_order** CHECK before the intended application-level timezone corruption reached the runner. This was an invalid test fixture, not evidence of an application, schema, or migration regression.
 
-R02 commit **0bed7c034aca35d5db51df001f6067a49867742b** sets both times deterministically after effective_from by one microsecond. The database CHECK stays enabled and valid; only the application-level corrupt timezone state is exercised. Focused live PostgreSQL 17 test: **PASS_SIMULATED, 1/1** against a disposable official PG17 container. The exact-head GitHub PostgreSQL workflow for this repaired source was queued at the latest snapshot below, so R01 is not marked CI-closed. No production constraint was relaxed.
+R02 commit **0bed7c034aca35d5db51df001f6067a49867742b** sets both times deterministically after effective_from by one microsecond. The database CHECK stays enabled and valid; only the application-level corrupt timezone state is exercised. Focused live PostgreSQL 17 test: **PASS_SIMULATED, 1/1** against a disposable official PG17 container. The 0bed7c source snapshot below recorded the workflow as queued. The later exact-head run on 66e2cee passed overall and passed the runner failure boundary; the Windows test cleanup follow-up now requires a fresh exact-head PostgreSQL run before that evidence is carried forward. No production constraint was relaxed.
 
 ## D. Source verification and evidence
 
@@ -123,6 +123,40 @@ Fetched for source SHA **0bed7c034aca35d5db51df001f6067a49867742b** at **2026-10
 
 These are source-head results, not final documentation-head workflow results. The PR source head at the time of this snapshot was **0bed7c034aca35d5db51df001f6067a49867742b**. R01's earlier exact-head results and external blockers remain in [RELEASE_HARDENING_R01_MANIFEST.md](RELEASE_HARDENING_R01_MANIFEST.md); they are not rewritten or closed by R02.
 
+## Final PR-head workflow follow-up and Windows fixture repair
+
+The documentation closeout head **66e2ceed22740339bad1bb607e1c0c94313319c0** was checked again at **2026-10-19 02:32 UTC**. This exact head is stacked on the same verified R01 base. Its workflow evidence is recorded separately from the earlier 0bed7c source snapshot above.
+
+| Workflow | Run | Exact observed state |
+|---|---|---|
+| Server self-host acceptance / P036 | [#39188222635](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222635) | Not terminal. Contract/source passed; artifact identity failed closed because the approved public publisher keyring and fingerprints were absent; Ubuntu, Fedora and interruption jobs remained queued. Native acceptance did not run. |
+| Prompt 034 server network reachability | [#39188222708](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222708) | PASS. |
+| iOS Simulator Tests | [#39188222532](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222532) | PASS. |
+| Linux clean-machine acceptance | [#39188222562](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222562) | FAILED at Build AppImage because the type-2 runtime and trusted SHA were absent; contract gate passed and downstream acceptance was skipped. BLOCKED_EXTERNAL_INPUT, R03/R04 dependency. |
+| PostgreSQL 17 scheduled maintenance | [#39188222540](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222540) | PASS overall. All PG17 jobs passed, including Prompt 68 runner_scheduler_failure_boundary (step 30/50), which passed with the repaired schema-valid fixture. This closes the reported R01 scheduler test failure on head 66e2cee. |
+| Installation resilience hardening | [#39188222512](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222512) | PASS. |
+| Rust CI | [#39188222505](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222505) | IN_PROGRESS at snapshot; Test (windows-latest) failed while the remaining jobs were still running. The failure and follow-up are described below. |
+| Installer security hardening | [#39188222497](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222497) | PASS. |
+| Windows Installer | [#39188222462](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222462) | IN_PROGRESS. |
+| Windows native acceptance | [#39188222464](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222464) | IN_PROGRESS; no GUI, new-logon, or named-pipe qualification result yet. R04 remains open. |
+| iOS Rust Apple Build | [#39188222603](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222603) | PASS. |
+| Linux native packages (DEB + RPM) | [#39188222513](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222513) | IN_PROGRESS; systemd 249 validation passed, package and Qt reproducibility jobs still running. Artifacts remain unsigned CI outputs. |
+| Prompt 033 server services | [#39188222448](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222448) | PASS_STATIC; parser validation passed, no service started. |
+| Connection setup simplification | [#39188222443](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222443) | PASS. |
+| Prompt 035 server first-admin bootstrap | [#39188222447](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222447) | PASS. |
+| Installation-to-sync progress | [#39188222445](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222445) | PASS. |
+| Linux AppImage | [#39188222570](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222570) | FAILED closed: exact type-2 runtime file and independently trusted SHA-256 are required before acquisition/build. Nine AppImage integration tests passed; build and artifact smoke were skipped. BLOCKED_EXTERNAL_INPUT, R03 handoff. |
+| Library first-run wizard | [#39188222549](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222549) | PASS. |
+| Repair and recovery UX | [#39188222460](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222460) | PASS. |
+| Authentication UX polish | [#39188222551](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222551) | PASS. |
+| iOS Build | [#39188222440](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222440) | PASS. |
+
+#### Windows workspace test failure and repair
+
+Rust CI run **#39188222505**, job **Test (windows-latest)**, ran 25 client-sync host tests: 24 passed and **host33_root_loss_fences_queued_observation_without_losing_durable_work** failed at fixture cleanup with Windows error 32 (“file is being used by another process”). The test shut down the host and dropped its observer/source, but kept the **DesktopSyncHost** value alive while removing the profiled fixture directory. That host still owned the configured filesystem replica. Unix permits removing an open directory tree, which hid the missing test teardown; Windows correctly refused it. This is a test fixture cleanup defect, not a production database/storage overwrite or a service behavior change.
+
+R02 now drops the host before fixture cleanup in host33 and the related host35 multi-library case. Rust formatting passed; the two focused tests passed locally, 1/1 each. The exact Windows CI rerun on the new follow-up head is pending, so Windows CI is not yet marked fixed. The full relevant Windows native GUI/new-logon/named-pipe gate remains the separate R04 acceptance.
+
 ## E. Remaining external inputs and acceptance blockers
 
 1. **Authentic managed runtimes:** Provide version-pinned production PostgreSQL 17 and Caddy runtime payloads for Ubuntu 24.04/Fedora 42 x86_64, signed runtime manifests and detached signatures, closed payload inventories, exact upstream source revision/source URL, version probes, license and notice bytes, and approved independent publisher public keyrings/fingerprints. Provide a signed server package input from the approved build process. The runtime registration scripts then verify and bind the bytes; do not fetch arbitrary executables or provide operator-invented checksums.
@@ -131,11 +165,11 @@ These are source-head results, not final documentation-head workflow results. Th
 4. **Native host runners:** Provision authorized, disposable runners with the exact Ubuntu/Fedora labels listed above, root/sudo and systemd, x86_64, package/build dependencies, graphical session and polkit agent, and correctly permissioned disposable marker. The actual production artifact set must also be available on those runs. Current queue state does not establish runner availability.
 5. **Interruption VM:** Provision the labeled disposable libvirt runner and guest with root-owned marker, exact UUID/name, approved file-backed disk locations, SSH identity, pinned known_hosts, and a completed native Host journey. Current environment has no such marker or guest.
 6. **GUI acceptance:** Add/execute a real graphical wizard automation on supported desktop runners. The implemented native harness invokes actual backend coordinator/controller paths; it does not automate the GUI wizard itself.
-7. **Exact-head CI:** The source-head PG17 run #39187655094 and all queued/in-progress workflows above must reach terminal outcomes. If R01 merges while PR #149 remains open, merge updated main into R02 with a normal merge commit, retarget PR #149 to main, and rerun affected validation. Do not use squash or history rewriting.
+7. **Exact-head CI:** The exact-head PG17 run #39188222540 passed on 66e2cee, including the repaired runner failure-boundary test. The follow-up Windows fixture cleanup change requires fresh exact-head Rust and PG17 reruns; those results must be reviewed on the final pushed head. If R01 merges while PR #149 remains open, merge updated main into R02 with a normal merge commit, retarget PR #149 to main, and rerun affected validation. Do not use squash or history rewriting.
 
 ## F. R01/R03/R04/R05 handoff
 
-- **R01:** Keep PR #148 open until its exact-head workflows are reviewed. The R02 scheduler fixture repair is available on the stacked branch and passes local PG17, but the corresponding R02 exact-head workflow is pending. Other R01 outcomes remain visible in the historical R01 manifest.
+- **R01:** Keep PR #148 open until its exact-head workflows are reviewed. The R02 scheduler fixture repair passed the full exact-head PG17 workflow [#39188222540](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222540), including runner failure boundary; a subsequent client-sync test cleanup follow-up awaits its own exact-head PG17 rerun. Other R01 outcomes remain visible in the historical R01 manifest.
 - **R03 AppImage:** Supply genuine AppImageKit type-2 **runtime-x86_64** bytes and an independently trusted SHA-256 using the existing **SYNVEIL_APPIMAGE_RUNTIME_FILE** and **SYNVEIL_APPIMAGE_RUNTIME_SHA256** contract. Rebuild/reproduce the exact artifact and verify its final artifact/manifest identity. Do not use a downloaded runtime with an unreviewed digest.
 - **R03 DEB/RPM:** Build exact reproducible `.deb` and `.rpm` artifacts with source/provenance and independently verified final digests; supply approved package/repository signing keys and repository publication credentials. Current package workflow produces unsigned CI artifacts and does not prove repository release signing.
 - **R03 Windows/signatures/manifests:** Supply approved Authenticode identity/private signing service, timestamp service, public trust bootstrap/fingerprints, and signing/rotation/revocation policy. Sign installer, payload executables and uninstaller; calculate manifest digests over final signed bytes. P036 inventory signer inputs and secret bindings must come from approved release operations.
@@ -178,7 +212,7 @@ Implementation source commit **8a5d5c9** changed:
 - scripts/validate-p036-production-artifacts.py
 - scripts/validate-server-service-installation.py
 
-Scheduler fixture commit **0bed7c0** changed **crates/metadata/tests/scheduled_maintenance_cycle_runner_postgres.rs**. Documentation closeout changes **docs/v0.2/RELEASE_HARDENING_R02_MANIFEST.md** and **docs/v0.2/RELEASE_HARDENING_TRACKER.md**.
+Scheduler fixture commit **0bed7c0** changed **crates/metadata/tests/scheduled_maintenance_cycle_runner_postgres.rs** and **crates/client-sync/src/host.rs** (Windows fixture teardown correction). Documentation closeout changes **docs/v0.2/RELEASE_HARDENING_R02_MANIFEST.md** and **docs/v0.2/RELEASE_HARDENING_TRACKER.md**.
 
 ## Final Git and qualification state
 

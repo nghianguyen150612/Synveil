@@ -4834,6 +4834,9 @@ mod tests {
         host.shutdown().await.expect("root-loss host shutdown");
         drop(observer);
         drop(source);
+        // The host retains its configured replica until it is dropped.
+        // Windows refuses fixture cleanup while that handle remains open.
+        drop(host);
         fixture.close().await;
     }
 
@@ -4956,6 +4959,8 @@ mod tests {
         );
         assert!(healthy_executor.calls() >= 1);
         host.shutdown().await.expect("multi-library host shutdown");
+        // Release the watched replicas before Windows-safe fixture cleanup.
+        drop(host);
         fixture.close().await;
     }
 
