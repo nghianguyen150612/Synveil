@@ -92,17 +92,22 @@ printf '%s  %s\n' "$RUNTIME_SHA256" "$WORK/appimage-runtime" | sha256sum --check
 export LDAI_RUNTIME_FILE="$WORK/appimage-runtime"
 build_one() {
   local label=$1 appdir="$WORK/$1/Synveil.AppDir" destination="$WORK/$1/$ARTIFACT"
+  local icon_source="$WORK/$1/synveil-icon.svg"
   mkdir -p "$appdir/usr/bin"
   install -m0755 "$DESKTOP_BINARY" "$appdir/usr/bin/synveil-desktop"
   install -m0755 "$CLIENT_BINARY" "$appdir/usr/bin/synveil-client"
   install -m0755 "$INTEGRATION_BINARY" "$appdir/usr/bin/synveil-appimage-integration"
   install -m0644 "$SCRIPT_DIR/appimage/synveil.desktop" "$appdir/synveil.desktop"
   install -m0644 "$REPO_ROOT/deploy/icons/hicolor/scalable/apps/synveil.svg" "$appdir/synveil.svg"
+  # linuxdeploy may relocate the --icon-file input into the FHS icon directory.
+  # Give it a disposable copy outside AppDir so the root icon used by AppRun
+  # stays present in both the inspected AppDir and the generated image.
+  install -m0644 "$REPO_ROOT/deploy/icons/hicolor/scalable/apps/synveil.svg" "$icon_source"
   install -Dm0644 "$SCRIPT_DIR/appimage/APPIMAGE-RUNTIME-LICENSE.txt" "$appdir/usr/share/doc/synveil/APPIMAGE-RUNTIME-LICENSE.txt"
   install -m0755 "$SCRIPT_DIR/appimage/AppRun" "$appdir/AppRun"
   QML_SOURCES_PATHS="$REPO_ROOT/crates/desktop/qml" "$LINUXDEPLOY" --appdir "$appdir" \
     --executable "$appdir/usr/bin/synveil-desktop" --executable "$appdir/usr/bin/synveil-client" --executable "$appdir/usr/bin/synveil-appimage-integration" \
-    --desktop-file "$appdir/synveil.desktop" --icon-file "$appdir/synveil.svg" \
+    --desktop-file "$appdir/synveil.desktop" --icon-file "$icon_source" \
     --custom-apprun "$SCRIPT_DIR/appimage/AppRun" --plugin qt
   # The Qt plugin adds an optional platform-theme hook. linuxdeploy wraps a
   # custom AppRun when that hook exists, replacing Synveil's reviewed entrypoint.

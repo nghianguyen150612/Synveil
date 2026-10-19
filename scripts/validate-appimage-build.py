@@ -126,6 +126,13 @@ def main() -> int:
     for token in ("synveil_cargo_version", "SOURCE_DATE_EPOCH", "x86_64", "sha256sum --check", "cmp -s", "--custom-apprun"):
         if token not in builder:
             fail(f"static builder contract missing: {token}")
+    for token in (
+        'local icon_source="$WORK/$1/synveil-icon.svg"',
+        'install -m0644 "$REPO_ROOT/deploy/icons/hicolor/scalable/apps/synveil.svg" "$icon_source"',
+        '--icon-file "$icon_source"',
+    ):
+        if token not in builder:
+            fail(f"AppDir icon must remain available to AppRun after linuxdeploy: {token}")
     if builder.count("--custom-apprun") < 2:
         fail("static builder contract must preserve the reviewed AppRun during deployment and output")
     for workflow_relative in (
