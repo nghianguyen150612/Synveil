@@ -58,11 +58,12 @@ function Assert-Under([string]$Child, [string]$Parent, [string]$Kind) {
     $relative = [IO.Path]::GetRelativePath([IO.Path]::GetFullPath($Parent), [IO.Path]::GetFullPath($Child))
     try { Assert-SafeRelativeIdentity $relative } catch { Fail $Kind "path escapes its trusted root" }
 }
-function Assert-CompilerEngineVersion([string]$Compiler, [string]$TempRoot, [string]$Expected) {
+function Assert-CompilerEngineVersion([string]$Compiler, [string]$TempRoot, [string]$Expected, [string]$ProductVersion) {
     # Upstream ISCC's PE resource is a placeholder, not the engine identity.
     # Compile a fixed Output=no probe: ISCC reports ISCmplr's actual version.
     $probe = Join-Path $TempRoot ('compiler-probe-' + [guid]::NewGuid().ToString('N') + '.iss')
-    [IO.File]::WriteAllText($probe, "#define EngineVersionProbe 1`n[Setup]`nAppName=Synveil compiler identity probe`nAppVersion=0.1.0`nDefaultDirName={tmp}`nPrivilegesRequired=lowest`nOutput=no`n")
+    $probeSource = "#define EngineVersionProbe 1`n[Setup]`nAppName=Synveil compiler identity probe`nAppVersion=$ProductVersion`nDefaultDirName={tmp}`nPrivilegesRequired=lowest`nOutput=no`n"
+    [IO.File]::WriteAllText($probe, $probeSource)
     Assert-NoReparseAncestry (Join-Path (Split-Path $Compiler) 'ISCmplr.dll') $true
     Assert-NoReparseAncestry (Join-Path (Split-Path $Compiler) 'ISPP.dll') $true
     $info = [Diagnostics.ProcessStartInfo]::new()
@@ -85,14 +86,14 @@ function Assert-CompilerEngineVersion([string]$Compiler, [string]$TempRoot, [str
         }
     } finally { $process.Dispose(); Remove-Item -LiteralPath $probe -Force }
 }
-function Get-InnoCompiler($Lock, [string]$Provided, [string]$TempRoot) {
+function Get-InnoCompiler($Lock, [string]$Provided, [string]$TempRoot, [string]$ProductVersion) {
     if ($Provided) {
         $dir = [IO.Path]::GetFullPath($Provided)
         $compiler = Join-Path $dir $Lock.compiler
         Assert-Under $compiler $dir "TOOLCHAIN_INTEGRITY_FAILURE"
         if (!(Test-Path -LiteralPath $compiler -PathType Leaf)) { Fail "TOOLCHAIN_INTEGRITY_FAILURE" "offline compiler is missing" }
         Assert-NoReparseAncestry $compiler $true
-        Assert-CompilerEngineVersion $compiler $TempRoot $Lock.version
+        Assert-CompilerEngineVersion $compiler $TempRoot $Lock.version $ProductVersion
         return $compiler
     }
     $distribution = Join-Path $TempRoot 'innosetup-6.7.3.exe'
@@ -111,7 +112,7 @@ function Get-InnoCompiler($Lock, [string]$Provided, [string]$TempRoot) {
     $install = Join-Path $TempRoot 'inno'
     $args = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CURRENTUSER',('/DIR=' + $install),'/NOICONS')
     Invoke-Checked $distribution $args "TOOLCHAIN_ACQUISITION_FAILURE"
-    return Get-InnoCompiler $Lock $install $TempRoot
+    return Get-InnoCompiler $Lock $install $TempRoot $ProductVersion
 }
 function Read-Payload([string]$Stage, [string]$Generated) {
     Assert-NoReparseAncestry $Stage
@@ -181,7 +182,10 @@ try {
     Read-Payload $stage $generated
     $manifestHash = (Get-FileHash -LiteralPath (Join-Path $stage 'SYNVEIL-MANIFEST.txt') -Algorithm SHA256).Hash.ToLowerInvariant()
     $upgradePolicy = Get-Content -LiteralPath (Join-Path $repo 'deploy/release/windows-upgrade-policy.json') -Raw | ConvertFrom-Json
-    if ($upgradePolicy.schema_version -ne 1 -or $upgradePolicy.product_version -cne (Get-WorkspaceVersion (Join-Path $repo 'Cargo.toml')).Product) { Fail "PAYLOAD_IDENTITY_FAILURE" "unknown Windows upgrade policy" }
+    $upgradePolicyFields = @($upgradePolicy.PSObject.Properties.Name | Sort-Object)
+    if ($upgradePolicy.schema_version -ne 1 -or
+        (Compare-Object $upgradePolicyFields @('schema_version','upgrade_from')) -or
+        $null -eq $upgradePolicy.upgrade_from) { Fail "PAYLOAD_IDENTITY_FAILURE" "unknown Windows upgrade policy" }
     $sources = @($upgradePolicy.upgrade_from)
     foreach ($source in $sources) {
         if ($source -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' -or [version]$source -ge [version]$version.Product) { Fail "PAYLOAD_IDENTITY_FAILURE" "invalid upgrade source" }
@@ -210,7 +214,7 @@ try {
     )
     if ($defines.Count -ne 7 -or $buildLines.Count -ne 2) { Fail "INSTALLER_COMPILE_FAILURE" "generated directive boundaries are invalid" }
     [IO.File]::WriteAllLines((Join-Path $generated 'build.iss'), $buildLines, [Text.UTF8Encoding]::new($false))
-    $lock = Read-ToolchainLock (Join-Path $repo 'deploy/windows/installer/toolchain.lock'); $compiler = Get-InnoCompiler $lock $InnoToolchainDirectory $temp
+    $lock = Read-ToolchainLock (Join-Path $repo 'deploy/windows/installer/toolchain.lock'); $compiler = Get-InnoCompiler $lock $InnoToolchainDirectory $temp $version.Product
     Remove-Item (Join-Path $output 'SynveilSetup.exe') -Force -ErrorAction SilentlyContinue
     Invoke-Checked $compiler @('/Q',(Join-Path $generated 'build.iss')) "INSTALLER_COMPILE_FAILURE"
     $setup = Join-Path $output 'SynveilSetup.exe'; if (!(Test-Path $setup -PathType Leaf) -or (Get-Item $setup).Length -le 0) { Fail "INSTALLER_VERIFY_FAILURE" "exact output is absent or empty" }

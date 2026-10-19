@@ -98,6 +98,7 @@ build_one() {
   install -m0755 "$INTEGRATION_BINARY" "$appdir/usr/bin/synveil-appimage-integration"
   install -m0644 "$SCRIPT_DIR/appimage/synveil.desktop" "$appdir/synveil.desktop"
   install -m0644 "$REPO_ROOT/deploy/icons/hicolor/scalable/apps/synveil.svg" "$appdir/synveil.svg"
+  install -Dm0644 "$SCRIPT_DIR/appimage/APPIMAGE-RUNTIME-LICENSE.txt" "$appdir/usr/share/doc/synveil/APPIMAGE-RUNTIME-LICENSE.txt"
   install -m0755 "$SCRIPT_DIR/appimage/AppRun" "$appdir/AppRun"
   QML_SOURCES_PATHS="$REPO_ROOT/crates/desktop/qml" "$LINUXDEPLOY" --appdir "$appdir" \
     --executable "$appdir/usr/bin/synveil-desktop" --executable "$appdir/usr/bin/synveil-client" --executable "$appdir/usr/bin/synveil-appimage-integration" \
@@ -133,9 +134,11 @@ if ((BUILD_ONLY == 0)); then
 fi
 cp "$WORK/primary/$ARTIFACT" "$OUTPUT_DIR/$ARTIFACT.part"
 chmod 0755 "$OUTPUT_DIR/$ARTIFACT.part"; mv "$OUTPUT_DIR/$ARTIFACT.part" "$OUTPUT_DIR/$ARTIFACT"
-COMMIT=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || printf '%040d' 0)
+COMMIT=$(git -C "$REPO_ROOT" rev-parse --verify 'HEAD^{commit}') || {
+  echo '[synveil-appimage] ERROR: a real committed source revision is required' >&2; exit 1;
+}
 python3 "$REPO_ROOT/scripts/release_manifest.py" create --artifact-root "$OUTPUT_DIR" --product-version "$VERSION" --source-commit "$COMMIT" \
   --output "$OUTPUT_DIR/SYNVEIL-RELEASE-MANIFEST.json" \
-  --artifact "{\"id\":\"appimage-linux-x86_64\",\"artifact_type\":\"appimage\",\"filename\":\"$ARTIFACT\",\"platform\":\"linux\",\"architecture\":\"x86_64\",\"role\":\"portable\",\"components\":[\"synveil-desktop\",\"synveil-client\"]}"
+  --artifact "{\"id\":\"appimage-linux-x86_64\",\"artifact_type\":\"appimage\",\"filename\":\"$ARTIFACT\",\"platform\":\"linux\",\"architecture\":\"x86_64\",\"role\":\"portable\",\"components\":[\"appimagekit-type2-runtime\",\"synveil-client\",\"synveil-desktop\"]}"
 python3 "$REPO_ROOT/scripts/validate-appimage-build.py" --artifact "$OUTPUT_DIR/$ARTIFACT" --manifest "$OUTPUT_DIR/SYNVEIL-RELEASE-MANIFEST.json"
 sha256sum "$OUTPUT_DIR/$ARTIFACT"

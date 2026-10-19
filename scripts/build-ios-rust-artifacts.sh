@@ -222,10 +222,14 @@ echo "=== Step 7: Stage Generated Header & Generate Manifest ==="
 echo "Copying generated C header into staged layout..."
 mkdir -p "${STAGING_DIR}/include"
 cp "clients/ios/Infrastructure/RustBridge/Generated/synveil_ios_ffi.h" "${STAGING_DIR}/include/synveil_ios_ffi.h"
-PKG_VERSION="$(cargo metadata --format-version 1 --no-deps | python3 -c 'import sys, json; data = json.load(sys.stdin); pkg = next((p for p in data.get("packages", []) if p.get("name") == "synveil-ios-ffi"), None); print(pkg["version"] if pkg else "0.1.0")')"
+PKG_VERSION="$(cargo metadata --format-version 1 --no-deps | python3 -c 'import sys, json; data = json.load(sys.stdin); pkg = next((p for p in data.get("packages", []) if p.get("name") == "synveil-ios-ffi"), None); pkg or sys.exit("synveil-ios-ffi is missing from Cargo metadata"); print(pkg["version"])')"
 RUSTC_VER="$(rustc --version)"
 CARGO_VER="$(cargo --version)"
-COMMIT_SHA="${GITHUB_SHA:-$(git rev-parse HEAD 2>/dev/null || echo 'unknown')}"
+COMMIT_SHA="$(git rev-parse --verify 'HEAD^{commit}')"
+if [[ -n "${GITHUB_SHA:-}" && "${GITHUB_SHA}" != "${COMMIT_SHA}" ]]; then
+    echo "GITHUB_SHA does not match the checked-out source commit." >&2
+    exit 1
+fi
 
 python3 - <<EOF
 import os, json, hashlib

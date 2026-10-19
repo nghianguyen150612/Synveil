@@ -4,6 +4,7 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -12,7 +13,7 @@ env:
   SYNVEIL_ENABLE_QMLCACHEGEN_WRAPPER: "1"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-appimage
   cancel-in-progress: true
 
 jobs:
@@ -23,6 +24,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
       # Pinned action and exact official Qt archive; all Qt host tools and
       # runtime libraries therefore come from one compatible toolchain.
       - name: Install Qt 6.7.3 toolchain
@@ -37,7 +41,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y file shellcheck pkg-config libdbus-1-dev \
-            libfuse2
+            libfuse2 gnupg
           sudo install -d -m 0777 /usr/src/synveil
       - name: Static contracts and shell checks
         run: |
@@ -45,6 +49,11 @@ jobs:
           shellcheck -S warning deploy/packages/build-appimage.sh deploy/packages/appimage/AppRun scripts/validate-appimage-build.sh
           ./scripts/validate-appimage-build.sh
           cargo test -p synveil-install-engine --test appimage_integration --locked
+      - name: Acquire pinned and signed AppImageKit type-2 runtime
+        run: >-
+          python3 scripts/acquire-appimage-runtime.py
+          --output target/appimage-runtime
+          --github-env "$GITHUB_ENV"
       - name: Build and independently reproduce AppImage
         run: ./deploy/packages/build-appimage.sh
       - name: Inspect exact artifact, manifest, and bundled runtime
@@ -77,4 +86,9 @@ jobs:
             target/packages/SYNVEIL-RELEASE-MANIFEST.json
             target/packages/ABI-SYMBOLS.txt
             target/packages/APPIMAGE-SHA256.txt
+            target/appimage-runtime/runtime-x86_64
+            target/appimage-runtime/runtime-provenance.json
+            target/appimage-runtime/runtime-x86_64.sig
+            target/appimage-runtime/signing-pubkey.asc
+            target/appimage-runtime/APPIMAGE-RUNTIME-LICENSE.txt
           if-no-files-found: error

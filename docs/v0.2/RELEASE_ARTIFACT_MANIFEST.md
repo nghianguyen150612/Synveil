@@ -20,8 +20,11 @@ URL, latest-version, or recommendation fields.
 Top-level fields are exactly `schema_version` (integer `1`), `product`
 (`Synveil`), `product_version`, full lowercase 40-hex `source_commit`, and
 `artifacts`. Unknown and missing fields, malformed identities, and every
-schema version other than `1` fail closed. The repository product version
-remains `0.1.0`; builders derive it from the workspace rather than this file.
+schema version other than `1` fail closed. The development release candidate
+version is `0.2.0`, declared once in `Cargo.toml` under
+`[workspace.package].version`. Package producers read that value; the manifest
+creator rejects any supplied version that differs. A candidate version does
+not authorize a release or a version-distinct upgrade.
 
 Each artifact has exactly these common fields: `id`, `artifact_type`, safe
 relative-basename `filename`, `platform`, normalized `architecture`, `role`,
@@ -36,24 +39,30 @@ Controlled vocabularies are:
 * platforms: `linux`, `windows`;
 * architectures: `x86_64`, `aarch64` (a schema capability is not a released
   architecture claim);
-* roles: `native_package`, `primary_installer`, `portable`;
-* components: `synveil-desktop`, `synveil-client`, `scheduled-maintenance`.
+* roles: `native_package`, `primary_installer`, `portable`, `server_runtime`,
+  `database_runtime`;
+* components: `synveil-desktop`, `synveil-client`, `scheduled-maintenance`,
+  `synveil-api`, `synveil-worker`, `synveil-server-migrate`, `postgresql-17`,
+  `appimagekit-type2-runtime`.
 
 DEB metadata contains `format`, `package_name`, `package_version`, and native
 `package_architecture`. RPM additionally contains `package_release`. Common
 architecture remains normalized while native aliases such as `amd64` stay in
 package metadata. Native package version must equal the manifest product
-version. The current Windows ZIP is explicitly `portable`, never an installer;
-a future Setup EXE uses the distinct `windows_installer` type. No installer
-technology or installation scope is selected here.
+version. The Windows ZIP is explicitly `portable`, never an installer; the
+separate Setup EXE uses the distinct `windows_installer` type. Producer code
+exists for both Windows surfaces; R03 reports no Windows artifact bytes as
+built or signed.
 
 | Type | Schema support | Current producer |
 | --- | --- | --- |
 | DEB | yes | `deploy/packages/build.sh` |
 | RPM | yes | `deploy/packages/build.sh` |
 | Windows portable ZIP | yes | `deploy/packages/build-windows.sh` |
-| AppImage | yes | no (P015) |
+| AppImage | yes | `deploy/packages/build-appimage.sh` |
 | Windows installer | yes | `scripts/build-windows-installer.ps1` |
+| Synveil server runtime bundle | yes | No release-manifest producer; `scripts/build-host-server-input.sh` creates unsigned source input only |
+| PostgreSQL runtime bundle | yes | No producer or authenticated upstream runtime input is configured |
 
 Schema support never fabricates an artifact. Production creation reads a real,
 regular, non-symlink file under the declared artifact root and derives its size

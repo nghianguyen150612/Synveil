@@ -8,6 +8,8 @@ import hashlib
 import json
 import re
 import sys
+import subprocess
+import tomllib
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 SCHEMA_VERSION = 1
@@ -16,7 +18,7 @@ TYPES = {"deb", "rpm", "appimage", "windows_installer", "windows_portable_zip", 
 PLATFORMS = {"linux", "windows"}
 ARCHITECTURES = {"x86_64", "aarch64"}
 ROLES = {"native_package", "primary_installer", "portable", "server_runtime", "database_runtime"}
-COMPONENTS = {"synveil-desktop", "synveil-client", "scheduled-maintenance", "synveil-api", "synveil-worker", "synveil-server-migrate", "postgresql-17"}
+COMPONENTS = {"synveil-desktop", "synveil-client", "scheduled-maintenance", "synveil-api", "synveil-worker", "synveil-server-migrate", "postgresql-17", "appimagekit-type2-runtime"}
 TOP_FIELDS = {"schema_version", "product", "product_version", "source_commit", "artifacts"}
 ARTIFACT_FIELDS = {"id", "artifact_type", "filename", "platform", "architecture", "role", "product_version", "size_bytes", "sha256", "components", "package_metadata"}
 REQUIRED_ARTIFACT_FIELDS = ARTIFACT_FIELDS - {"package_metadata"}
@@ -192,6 +194,23 @@ def artifact_from_spec(root: Path, version: str, raw: str) -> dict:
 
 
 def command_create(args: argparse.Namespace) -> None:
+    cargo = Path(__file__).resolve().parents[1] / "Cargo.toml"
+    try:
+        expected_version = tomllib.loads(cargo.read_text(encoding="utf-8"))["workspace"]["package"]["version"]
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError, KeyError, TypeError) as error:
+        fail("cannot determine the authoritative Cargo workspace version")
+    if args.product_version != expected_version:
+        fail("requested product version differs from Cargo workspace version")
+    try:
+        head = subprocess.run(
+            ["git", "-C", str(cargo.parent), "rev-parse", "--verify", "HEAD^{commit}"],
+            check=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            timeout=10,
+        ).stdout.decode("ascii", "strict").strip()
+    except (OSError, UnicodeError, subprocess.SubprocessError):
+        fail("cannot determine a real source commit for this checkout")
+    if not re.fullmatch(r"[0-9a-f]{40}", head) or args.source_commit != head:
+        fail("source_commit must equal this checkout's full real Git HEAD; arbitrary hashes are not release identities")
     root = Path(args.artifact_root)
     artifacts = sorted((artifact_from_spec(root, args.product_version, raw) for raw in args.artifact), key=lambda x: x["id"])
     write(Path(args.output), {"schema_version": 1, "product": PRODUCT, "product_version": args.product_version, "source_commit": args.source_commit, "artifacts": artifacts})

@@ -94,7 +94,10 @@ class ReleaseDownloadTests(unittest.TestCase):
         finally: outside.unlink(missing_ok=True)
     def test_35_unknown_auth_mode(self): self.error("UNSUPPORTED_AUTHENTICATION",download.authenticate_manifest,self.raw,download.ReleaseTrustPolicy(frozenset(),frozenset(),authentication_method="magic"))
     def signature_policy(self, schemes=frozenset({"ed25519"}), keys=frozenset({"test-key"})): return download.ReleaseTrustPolicy(frozenset(),frozenset(),authentication_method="detached_signature",trusted_key_ids=keys,allowed_signature_schemes=schemes)
-    def descriptor(self,scheme="ed25519",key="test-key"): return {"signatures":[{"scheme":scheme,"key_id":key,"signature_filename":"manifest.sig"}]}
+    def descriptor(self,scheme="ed25519",key="test-key"):
+        return {"schema_version":1,"manifest_filename":"SYNVEIL-RELEASE-MANIFEST.json",
+                "manifest_size_bytes":len(self.raw),"manifest_sha256":hashlib.sha256(self.raw).hexdigest(),
+                "signatures":[{"scheme":scheme,"key_id":key,"signature_filename":"manifest.sig"}]}
     def test_36_unknown_scheme(self): self.error("UNSUPPORTED_AUTHENTICATION",download.authenticate_manifest,self.raw,self.signature_policy(),signature_descriptor=self.descriptor("rsa"))
     def test_37_unknown_key(self): self.error("UNSUPPORTED_AUTHENTICATION",download.authenticate_manifest,self.raw,self.signature_policy(),signature_descriptor=self.descriptor(key="remote-key"))
     def test_38_unavailable_verifier(self): self.error("UNSUPPORTED_AUTHENTICATION",download.authenticate_manifest,self.raw,self.signature_policy(),signature_descriptor=self.descriptor())
@@ -104,6 +107,16 @@ class ReleaseDownloadTests(unittest.TestCase):
         self.assertNotIn("token",json.dumps(result).lower()); self.assertEqual([],result["diagnostics_redacted"])
     def test_41_invalid_signature(self): self.error("MANIFEST_AUTH_FAILED",download.authenticate_manifest,self.raw,self.signature_policy(),signature_descriptor=self.descriptor(),verifier=lambda *_:False)
     def test_42_mock_valid_signature(self): self.assertEqual("AUTHENTICATED_SIGNATURE",download.authenticate_manifest(self.raw,self.signature_policy(),signature_descriptor=self.descriptor(),verifier=lambda *_:True).state)
+    def test_42a_descriptor_must_bind_exact_manifest_size_and_digest(self):
+        descriptor=self.descriptor(); descriptor["manifest_size_bytes"]+=1
+        self.error("MANIFEST_AUTH_FAILED",download.authenticate_manifest,self.raw,self.signature_policy(),signature_descriptor=descriptor,verifier=lambda *_:True)
+        descriptor=self.descriptor(); descriptor["manifest_sha256"]="0"*64
+        self.error("MANIFEST_AUTH_FAILED",download.authenticate_manifest,self.raw,self.signature_policy(),signature_descriptor=descriptor,verifier=lambda *_:True)
+    def test_42b_descriptor_schema_and_filename_are_closed(self):
+        descriptor=self.descriptor(); descriptor["manifest_filename"]="other.json"
+        self.error("UNSUPPORTED_AUTHENTICATION",download.authenticate_manifest,self.raw,self.signature_policy(),signature_descriptor=descriptor,verifier=lambda *_:True)
+        descriptor=self.descriptor(); descriptor["unknown"]="field"
+        self.error("UNSUPPORTED_AUTHENTICATION",download.authenticate_manifest,self.raw,self.signature_policy(),signature_descriptor=descriptor,verifier=lambda *_:True)
     def test_43_manifest_fetch_limit(self): self.error("MANIFEST_TOO_LARGE",download.fetch_https,"https://release.example/x",self.policy.allowed_manifest_origins,2,transport=Opener([Response(b"abc")]))
     def test_44_unauthenticated_cannot_stage(self):
         context=download.AuthenticatedManifest(self.raw,self.manifest,download.ManifestAuthentication("UNAUTHENTICATED","none",self.pin,len(self.raw)))
@@ -152,7 +165,9 @@ class ReleaseDownloadTests(unittest.TestCase):
         self.error("DESTINATION_CONFLICT",download.download_artifact,"https://release.example",self.root,self.selection,self.policy,transport=transport); self.assertEqual([],transport.calls)
     def rotation_descriptor(self, reverse=False):
         entries=[{"scheme":"ed25519","key_id":"old","signature_filename":"old.sig"},{"scheme":"ed25519","key_id":"new","signature_filename":"new.sig"}]
-        return {"signatures":list(reversed(entries)) if reverse else entries}
+        return {"schema_version":1,"manifest_filename":"SYNVEIL-RELEASE-MANIFEST.json",
+                "manifest_size_bytes":len(self.raw),"manifest_sha256":hashlib.sha256(self.raw).hexdigest(),
+                "signatures":list(reversed(entries)) if reverse else entries}
     def test_57_rotation_old_only(self):
         auth=download.authenticate_manifest(self.raw,self.signature_policy(keys=frozenset({"old"})),signature_descriptor=self.rotation_descriptor(),verifier=lambda *_:True); self.assertEqual("old",auth.key_id)
     def test_58_rotation_new_only(self):

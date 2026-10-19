@@ -508,6 +508,9 @@ def verify_source_commit(source_commit: str, current_commit: str) -> None:
         "acceptance/p036/production-artifacts.json",
         "acceptance/p036/production-artifacts.json.sig",
         "docs/v0.2/RELEASE_HARDENING_R02_MANIFEST.md",
+        "docs/v0.2/RELEASE_HARDENING_R03_MANIFEST.md",
+        "docs/v0.2/RELEASE_ARTIFACT_MATRIX.md",
+        "docs/v0.2/HOST_RUNTIME_INPUTS.md",
         "docs/v0.2/RELEASE_HARDENING_TRACKER.md",
     }
     if set(changed) - allowed:
@@ -516,15 +519,17 @@ def verify_source_commit(source_commit: str, current_commit: str) -> None:
 
 def validate_files(data: dict, artifact_root: Path, selected_platform: str | None,
                    trust_keyring_path: str, inventory_path: Path,
-                   inventory_signature: Path, signers: dict[str, str]) -> list[dict]:
+                   inventory_signature: Path, signers: dict[str, str],
+                   *, verify_inventory_signature: bool = True) -> list[dict]:
     artifact_root = artifact_root.resolve(strict=True)
     with tempfile.TemporaryDirectory(prefix="synveil-p036-trust-") as temporary:
         trust_dir = Path(temporary)
         keyring = copy_keyring(trust_keyring_path, trust_dir)
         expected_inventory = os.environ.get("SYNVEIL_P036_INVENTORY_FINGERPRINT", "")
         regular_file(inventory_path, 2 * 1024 * 1024)
-        regular_file(inventory_signature, 16 * 1024 * 1024)
-        verify_signature(keyring, inventory_signature, inventory_path, expected_inventory)
+        if verify_inventory_signature:
+            regular_file(inventory_signature, 16 * 1024 * 1024)
+            verify_signature(keyring, inventory_signature, inventory_path, expected_inventory)
 
         selected = [entry for entry in data["artifacts"] if selected_platform is None or entry["platform"] == selected_platform]
         normalized = []
@@ -586,6 +591,8 @@ def main() -> int:
     parser.add_argument("--artifact-root", type=Path, default=ROOT / "acceptance/p036/artifacts")
     parser.add_argument("--platform", choices=PLATFORMS)
     parser.add_argument("--print-json", action="store_true")
+    parser.add_argument("--pre-signing-check", action="store_true",
+                        help="validate all real component signatures and bytes before creating the inventory signature")
     args = parser.parse_args()
     try:
         if not args.inventory.is_file():
@@ -602,7 +609,8 @@ def main() -> int:
             raise ExternalInputError("independently trusted P036 publisher keyring is not configured")
         signers = {component: os.environ.get(f"SYNVEIL_P036_{component.upper()}_FINGERPRINT", "") for component in COMPONENTS}
         normalized = validate_files(validated, args.artifact_root, args.platform, keyring,
-                                    args.inventory.resolve(strict=True), inventory_signature, signers)
+                                    args.inventory.resolve(strict=True), inventory_signature, signers,
+                                    verify_inventory_signature=not args.pre_signing_check)
     except ExternalInputError as error:
         print(f"BLOCKED_BY_EXTERNAL_INPUT: {error}", file=sys.stderr)
         return 2
@@ -611,6 +619,8 @@ def main() -> int:
         return 1
     if args.print_json:
         print(json.dumps({"schema_version": 1, "source_commit": validated["source_commit"], "artifacts": normalized}, sort_keys=True))
+    elif args.pre_signing_check:
+        print(f"P036 component inputs pre-signing checks passed: {len(normalized)} artifacts; inventory is not authenticated")
     else:
         print(f"P036 production artifact inventory verified: {len(normalized)} artifacts for {args.platform or 'selected platforms'}")
     return 0

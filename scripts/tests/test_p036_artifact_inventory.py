@@ -4,6 +4,8 @@ from pathlib import Path
 import unittest
 import jsonschema
 import tomllib
+from unittest.mock import patch
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[2]
 PRODUCT_VERSION = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["version"]
@@ -134,6 +136,31 @@ class InventoryContractTests(unittest.TestCase):
         for value in ("../outside", "artifacts//file", "artifacts/./file", "artifacts\\file"):
             with self.subTest(value=value), self.assertRaises(inventory.InventoryError):
                 inventory.relative_path(value, "artifact")
+
+    def test_source_commit_allows_only_release_inventory_and_documentation_followups(self):
+        commit = "f" * 40
+        for path in (
+            "acceptance/p036/production-artifacts.json",
+            "acceptance/p036/production-artifacts.json.sig",
+            "docs/v0.2/RELEASE_HARDENING_R02_MANIFEST.md",
+            "docs/v0.2/RELEASE_HARDENING_R03_MANIFEST.md",
+            "docs/v0.2/RELEASE_ARTIFACT_MATRIX.md",
+            "docs/v0.2/HOST_RUNTIME_INPUTS.md",
+            "docs/v0.2/RELEASE_HARDENING_TRACKER.md",
+        ):
+            with self.subTest(path=path), patch.object(inventory.subprocess, "run", side_effect=[
+                SimpleNamespace(returncode=0, stdout=b""),
+                SimpleNamespace(returncode=0, stdout=(path + "\n").encode()),
+            ]):
+                inventory.verify_source_commit(commit, commit)
+
+    def test_source_commit_rejects_changes_outside_metadata_allowlist(self):
+        commit = "f" * 40
+        with patch.object(inventory.subprocess, "run", side_effect=[
+            SimpleNamespace(returncode=0, stdout=b""),
+            SimpleNamespace(returncode=0, stdout=b"scripts/validate-p036-production-artifacts.py\n"),
+        ]), self.assertRaisesRegex(inventory.InventoryError, "stale against changed source"):
+            inventory.verify_source_commit(commit, commit)
 
 
 if __name__ == "__main__":

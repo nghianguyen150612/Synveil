@@ -27,6 +27,7 @@ MAX_REDIRECTS = 5
 NETWORK_TIMEOUT_SECONDS = 30
 CHUNK_SIZE = 1024 * 1024
 AUTHENTICATED_STATES = {"AUTHENTICATED_PINNED_DIGEST", "AUTHENTICATED_SIGNATURE"}
+MANIFEST_FILENAME = "SYNVEIL-RELEASE-MANIFEST.json"
 
 
 class AcquisitionError(ValueError):
@@ -297,6 +298,20 @@ def authenticate_manifest(raw: bytes, policy: ReleaseTrustPolicy, *,
             raise AcquisitionError("MANIFEST_AUTH_FAILED", "manifest digest does not match trusted pin")
         return ManifestAuthentication("AUTHENTICATED_PINNED_DIGEST", "pinned_sha256", digest, len(raw))
     if policy.authentication_method == "detached_signature":
+        if (not isinstance(signature_descriptor, dict)
+                or set(signature_descriptor) != {"schema_version", "manifest_filename", "manifest_size_bytes", "manifest_sha256", "signatures"}
+                or type(signature_descriptor.get("schema_version")) is not int
+                or signature_descriptor.get("schema_version") != 1
+                or signature_descriptor.get("manifest_filename") != MANIFEST_FILENAME):
+            raise AcquisitionError("UNSUPPORTED_AUTHENTICATION", "invalid detached signature descriptor")
+        descriptor_size = signature_descriptor.get("manifest_size_bytes")
+        descriptor_digest = signature_descriptor.get("manifest_sha256")
+        if (type(descriptor_size) is not int or not 1 <= descriptor_size <= policy.max_manifest_bytes
+                or descriptor_size != len(raw)
+                or not isinstance(descriptor_digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", descriptor_digest)
+                or not hmac.compare_digest(descriptor_digest, digest)):
+            raise AcquisitionError("MANIFEST_AUTH_FAILED", "signature descriptor does not bind exact manifest bytes")
         entries = signature_descriptor.get("signatures", []) if isinstance(signature_descriptor, dict) else []
         if (not isinstance(entries, list) or not 1 <= len(entries) <= 16
                 or any(not isinstance(entry, dict)

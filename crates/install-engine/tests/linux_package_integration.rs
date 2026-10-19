@@ -142,8 +142,8 @@ fn product_version_preserved() {
     assert_eq!(
         LinuxPackageContract::from_json(&source())
             .unwrap()
-            .product_version,
-        "0.1.0"
+            .product_version(),
+        env!("CARGO_PKG_VERSION")
     );
 }
 #[test]
@@ -508,9 +508,9 @@ fn live_path_symlink_escape_is_rejected() {
 }
 
 #[test]
-fn wrong_but_valid_product_version_rejected() {
+fn wrong_product_version_source_rejected() {
     let mut v = value();
-    v["product_version"] = json!("0.1.1");
+    v["product_version_source"] = json!("untrusted-version.json");
     assert_eq!(parse(v), Err(LinuxPackageError::InvalidIdentity));
 }
 

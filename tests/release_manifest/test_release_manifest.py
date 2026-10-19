@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -14,7 +15,8 @@ SPEC = importlib.util.spec_from_file_location("release_manifest", ROOT / "script
 manifest = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(manifest)
-COMMIT = "a" * 40
+PRODUCT_VERSION = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["version"]
+COMMIT = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
 
 
 class ReleaseManifestTests(unittest.TestCase):
@@ -32,17 +34,17 @@ class ReleaseManifestTests(unittest.TestCase):
         item = {"id": identity, "artifact_type": kind, "filename": filename,
                 "platform": "windows" if kind.startswith("windows_") else "linux",
                 "architecture": "x86_64", "role": "native_package",
-                "product_version": "0.1.0", "size_bytes": path.stat().st_size,
+                "product_version": PRODUCT_VERSION, "size_bytes": path.stat().st_size,
                 "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
                 "components": ["synveil-desktop", "synveil-client"]}
-        if kind == "deb": item["package_metadata"] = {"format":"deb", "package_name":"synveil", "package_version":"0.1.0", "package_architecture":"amd64"}
-        if kind == "rpm": item["package_metadata"] = {"format":"rpm", "package_name":"synveil", "package_version":"0.1.0", "package_release":"1", "package_architecture":"x86_64"}
+        if kind == "deb": item["package_metadata"] = {"format":"deb", "package_name":"synveil", "package_version":PRODUCT_VERSION, "package_architecture":"amd64"}
+        if kind == "rpm": item["package_metadata"] = {"format":"rpm", "package_name":"synveil", "package_version":PRODUCT_VERSION, "package_release":"1", "package_architecture":"x86_64"}
         if kind == "windows_portable_zip": item["role"] = "portable"
         if kind == "windows_installer": item["role"] = "primary_installer"
         return item
 
     def document(self, artifacts=None):
-        return {"schema_version":1, "product":"Synveil", "product_version":"0.1.0", "source_commit":COMMIT, "artifacts":artifacts or []}
+        return {"schema_version":1, "product":"Synveil", "product_version":PRODUCT_VERSION, "source_commit":COMMIT, "artifacts":artifacts or []}
 
     def rejected(self, data, text=None, **kwargs):
         with self.assertRaises(manifest.ManifestError) as caught: manifest.validate(data, **kwargs)
@@ -75,7 +77,7 @@ class ReleaseManifestTests(unittest.TestCase):
     def test_20_invalid_architecture(self): a=self.artifact(); a["architecture"]="amd64"; self.rejected(self.document([a]),"invalid architecture")
     def test_21_invalid_type(self): a=self.artifact(); a["artifact_type"]="msi"; self.rejected(self.document([a]),"unknown artifact_type")
     def test_22_wrong_native_metadata(self): a=self.artifact(); a["package_metadata"]["format"]="rpm"; self.rejected(self.document([a]),"combination")
-    def test_23_version_inconsistency(self): a=self.artifact(); a["product_version"]="0.2.0"; self.rejected(self.document([a]),"product_version mismatch")
+    def test_23_version_inconsistency(self): a=self.artifact(); a["product_version"]="0.2.1"; self.rejected(self.document([a]),"product_version mismatch")
     def test_24_native_version_inconsistency(self): a=self.artifact(); a["package_metadata"]["package_version"]="2.0.0"; self.rejected(self.document([a]),"native package version")
     def test_25_source_commit_mode(self): self.rejected(self.document(),"source_commit mismatch",source_commit="b"*40)
     def test_26_order_rejected(self): self.rejected(self.document([self.artifact("rpm","z.rpm","z"),self.artifact("rpm","a.rpm","a")]),"not sorted")
@@ -83,10 +85,10 @@ class ReleaseManifestTests(unittest.TestCase):
         spec=json.dumps({k:v for k,v in self.artifact().items() if k not in {"product_version","size_bytes","sha256"}})
         outputs=[]
         for name in ("one.json","two.json"):
-            subprocess.run([sys.executable,str(ROOT/"scripts/release_manifest.py"),"create","--artifact-root",str(self.root),"--product-version","0.1.0","--source-commit",COMMIT,"--output",str(self.root/name),"--artifact",spec],check=True); outputs.append((self.root/name).read_bytes())
+            subprocess.run([sys.executable,str(ROOT/"scripts/release_manifest.py"),"create","--artifact-root",str(self.root),"--product-version",PRODUCT_VERSION,"--source-commit",COMMIT,"--output",str(self.root/name),"--artifact",spec],check=True); outputs.append((self.root/name).read_bytes())
         self.assertEqual(outputs[0],outputs[1])
     def test_28_merge_mismatched_version(self):
-        a=self.document(); b=self.document(); b["product_version"]="0.2.0"
+        a=self.document(); b=self.document(); b["product_version"]="0.2.1"
         for name,data in (("a.json",a),("b.json",b)): (self.root/name).write_text(json.dumps(data))
         result=subprocess.run([sys.executable,str(ROOT/"scripts/release_manifest.py"),"merge","--output",str(self.root/"out"),str(self.root/"a.json"),str(self.root/"b.json")],capture_output=True,text=True)
         self.assertNotEqual(result.returncode,0); self.assertIn("mismatched product_version",result.stderr)
@@ -118,5 +120,19 @@ class ReleaseManifestTests(unittest.TestCase):
         artifact["role"] = "database_runtime"
         artifact["components"] = ["postgresql-17"]
         manifest.validate(self.document([artifact]))
+
+    def test_35_create_rejects_non_authoritative_version(self):
+        spec=json.dumps({k:v for k,v in self.artifact().items() if k not in {"product_version","size_bytes","sha256"}})
+        result=subprocess.run([sys.executable,str(ROOT/"scripts/release_manifest.py"),"create","--artifact-root",str(self.root),"--product-version","0.1.0","--source-commit",COMMIT,"--output",str(self.root/"wrong-version.json"),"--artifact",spec],capture_output=True,text=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn("differs from Cargo workspace version",result.stderr)
+        self.assertFalse((self.root/"wrong-version.json").exists())
+
+    def test_36_create_rejects_invented_source_hash(self):
+        spec=json.dumps({k:v for k,v in self.artifact().items() if k not in {"product_version","size_bytes","sha256"}})
+        result=subprocess.run([sys.executable,str(ROOT/"scripts/release_manifest.py"),"create","--artifact-root",str(self.root),"--product-version",PRODUCT_VERSION,"--source-commit","0"*40,"--output",str(self.root/"invented-source.json"),"--artifact",spec],capture_output=True,text=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn("full real Git HEAD",result.stderr)
+        self.assertFalse((self.root/"invented-source.json").exists())
 
 if __name__ == "__main__": unittest.main()

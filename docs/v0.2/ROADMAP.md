@@ -606,8 +606,11 @@ terminal alternatives cannot substitute for a failed primary journey.
 ## Scope and baseline discipline
 
 Prompt001 is documentation only: no runtime behavior, dependencies, migrations,
-installer code, host provisioning, version bump, tag or published assets.
-Version remains `0.1.0`; server migrations `36`, client migrations `7`,
+installer code, host provisioning, version bump, tag or published assets. At
+that contract baseline the workspace version was `0.1.0`. R03 records the
+development candidate as `0.2.0` in the Cargo workspace source; this does not
+create a tag, publish assets, or assert a supported v0.1.0-to-v0.2.0 upgrade.
+Server migrations remain `36`, client migrations `7`, and
 `LOCAL_SCHEMA_VERSION = 7`. Each later prompt explicitly determines whether
 schema/version changes are authorized rather than inheriting authority here.
 

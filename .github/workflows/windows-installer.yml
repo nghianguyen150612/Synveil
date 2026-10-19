@@ -4,6 +4,7 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -12,7 +13,7 @@ env:
   SYNVEIL_ENABLE_QMLCACHEGEN_WRAPPER: "1"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-windows-installer
   cancel-in-progress: true
 
 jobs:
@@ -167,11 +168,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-installer-p025
+          name: synveil-windows-release-candidate
           if-no-files-found: error
           retention-days: 7
           path: |
             target/windows-installer/SynveilSetup.exe
             target/windows-installer/SYNVEIL-RELEASE-MANIFEST.json
+            target/windows-installer-runtime/
+            target/windows-packages/*.zip
+            target/windows-packages/SYNVEIL-RELEASE-MANIFEST.json
             target/windows-installer/SynveilSetup.manifest.xml
             target/windows-per-user-evidence

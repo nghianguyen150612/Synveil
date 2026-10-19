@@ -32,7 +32,7 @@
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "components": {
           "type": "array", "uniqueItems": true,
-          "items": { "enum": ["synveil-desktop", "synveil-client", "scheduled-maintenance", "synveil-api", "synveil-worker", "synveil-server-migrate", "postgresql-17"] }
+          "items": { "enum": ["synveil-desktop", "synveil-client", "scheduled-maintenance", "synveil-api", "synveil-worker", "synveil-server-migrate", "postgresql-17", "appimagekit-type2-runtime"] }
         },
         "package_metadata": {
           "oneOf": [

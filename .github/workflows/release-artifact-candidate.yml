@@ -1,0 +1,440 @@
+name: v0.2 release artifact candidate pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      sign_candidate:
+        description: Run protected production signing jobs (main branch only; requires approved inputs).
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: synveil-v02-release-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-source:
+    name: Verify committed source and authoritative version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Verify exact source, workspace versions, package policy, and no release tag
+        env:
+          SIGN_CANDIDATE: ${{ inputs.sign_candidate }}
+        run: |
+          set -euo pipefail
+          python3 scripts/validate-release-version.py --expected-version 0.2.0 --source-commit "$GITHUB_SHA"
+          if git show-ref --verify --quiet refs/tags/v0.2.0; then
+            echo 'R03 must not consume or create the final v0.2.0 tag.' >&2
+            exit 1
+          fi
+          if [[ "$SIGN_CANDIDATE" == true && "$GITHUB_REF" != refs/heads/main ]]; then
+            echo 'BLOCKED_SIGNING_INPUT: production signing is permitted only from a reviewed main commit.' >&2
+            exit 2
+          fi
+          python3 scripts/release_manifest.py --help >/dev/null
+          python3 scripts/release_channel.py --help >/dev/null
+
+  linux-packages:
+    name: Build Ubuntu DEB and Fedora RPM candidates
+    needs: verify-source
+    permissions:
+      contents: read
+    uses: ./.github/workflows/linux-packages.yml
+
+  appimage:
+    name: Build reproducible AppImage candidate
+    needs: verify-source
+    permissions:
+      contents: read
+    uses: ./.github/workflows/appimage.yml
+
+  windows:
+    name: Build Windows Setup and portable candidates
+    needs: verify-source
+    permissions:
+      contents: read
+    uses: ./.github/workflows/windows-installer.yml
+
+  host-server-ubuntu:
+    name: Build unsigned Ubuntu 24.04 server input
+    needs: verify-source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install server build prerequisites
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libdbus-1-dev
+      - name: Build source-bound unsigned server input
+        run: ./scripts/build-host-server-input.sh target/host-server-candidate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synveil-host-server-ubuntu24-candidate
+          path: target/host-server-candidate/
+          if-no-files-found: error
+          retention-days: 14
+
+  host-server-fedora:
+    name: Build unsigned Fedora 42 server input
+    needs: verify-source
+    runs-on: ubuntu-24.04
+    container: fedora:42
+    timeout-minutes: 50
+    permissions:
+      contents: read
+    steps:
+      - name: Install Fedora server build prerequisites
+        run: dnf install -y git gcc gcc-c++ make pkgconf-pkg-config dbus-devel python3
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build source-bound unsigned server input
+        run: ./scripts/build-host-server-input.sh target/host-server-candidate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synveil-host-server-fedora42-candidate
+          path: target/host-server-candidate/
+          if-no-files-found: error
+          retention-days: 14
+
+  sign-rpm:
+    name: Sign RPM with the independently trusted publisher key
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.sign_candidate && github.ref == 'refs/heads/main' }}
+    needs: linux-packages
+    runs-on: ubuntu-24.04
+    environment: synveil-release-signing
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      SYNVEIL_RPM_SIGNING_PRIVATE_KEY_B64: ${{ secrets.SYNVEIL_RPM_SIGNING_PRIVATE_KEY_B64 }}
+      SYNVEIL_RPM_TRUSTED_PUBLIC_KEY_B64: ${{ vars.SYNVEIL_RPM_TRUSTED_PUBLIC_KEY_B64 }}
+      SYNVEIL_RPM_SIGNER_FINGERPRINT: ${{ vars.SYNVEIL_RPM_SIGNER_FINGERPRINT }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install RPM signing and verification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm
+          command -v rpmsign
+          command -v rpmkeys
+      - uses: actions/download-artifact@v4
+        with:
+          name: synveil-linux-packages
+          path: target/packages
+      - name: Sign RPM and verify against the configured public key
+        run: python3 scripts/sign_rpm_candidate.py --manifest target/packages/SYNVEIL-RELEASE-MANIFEST.json --artifact-root target/packages
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synveil-linux-packages-signed
+          path: |
+            target/packages/*.deb
+            target/packages/*.rpm
+            target/packages/SYNVEIL-RELEASE-MANIFEST.json
+            target/packages/rpm-signing-evidence.json
+          if-no-files-found: error
+          retention-days: 14
+
+  sign-windows:
+    name: Sign Windows payload and Setup with Authenticode
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.sign_candidate && github.ref == 'refs/heads/main' }}
+    needs: windows
+    runs-on: windows-latest
+    environment: synveil-release-signing
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      SYNVEIL_WINDOWS_SIGNING_PFX_B64: ${{ secrets.SYNVEIL_WINDOWS_SIGNING_PFX_B64 }}
+      SYNVEIL_WINDOWS_SIGNING_PFX_PASSWORD: ${{ secrets.SYNVEIL_WINDOWS_SIGNING_PFX_PASSWORD }}
+      SYNVEIL_WINDOWS_SIGNING_THUMBPRINT: ${{ vars.SYNVEIL_WINDOWS_SIGNING_THUMBPRINT }}
+      SYNVEIL_WINDOWS_TIMESTAMP_URL: ${{ vars.SYNVEIL_WINDOWS_TIMESTAMP_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14.7"
+      - uses: actions/download-artifact@v4
+        with:
+          name: synveil-windows-release-candidate
+          path: target/windows-input
+      - name: Sign payload binaries, rebuild ZIP and Setup, and bind final bytes
+        shell: pwsh
+        run: >-
+          ./scripts/sign-windows-candidate.ps1
+          -RuntimeStagingDirectory target/windows-input/windows-installer-runtime
+          -OutputDirectory target/windows-signed
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synveil-windows-release-candidate-signed
+          path: target/windows-signed/
+          if-no-files-found: error
+          retention-days: 14
+
+  sign-p036-inventory:
+    name: Sign only a prevalidated P036 eight-entry inventory
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.sign_candidate }}
+    needs: verify-source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: synveil-release-signing
+    permissions:
+      contents: read
+    env:
+      SYNVEIL_P036_INVENTORY_SIGNING_KEY_B64: ${{ secrets.SYNVEIL_P036_INVENTORY_SIGNING_KEY_B64 }}
+      SYNVEIL_P036_INVENTORY_SIGNING_PASSPHRASE: ${{ secrets.SYNVEIL_P036_INVENTORY_SIGNING_PASSPHRASE }}
+      SYNVEIL_P036_TRUSTED_KEYRING_B64: ${{ vars.SYNVEIL_P036_TRUSTED_KEYRING_B64 }}
+      SYNVEIL_P036_INVENTORY_FINGERPRINT: ${{ vars.SYNVEIL_P036_INVENTORY_FINGERPRINT }}
+      SYNVEIL_P036_DESKTOP_FINGERPRINT: ${{ vars.SYNVEIL_P036_DESKTOP_FINGERPRINT }}
+      SYNVEIL_P036_SERVER_FINGERPRINT: ${{ vars.SYNVEIL_P036_SERVER_FINGERPRINT }}
+      SYNVEIL_P036_POSTGRESQL17_FINGERPRINT: ${{ vars.SYNVEIL_P036_POSTGRESQL17_FINGERPRINT }}
+      SYNVEIL_P036_EDGE_FINGERPRINT: ${{ vars.SYNVEIL_P036_EDGE_FINGERPRINT }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Materialize only the independently configured public keyring
+        run: python3 scripts/materialize-p036-trust-keyring.py
+      - name: Install schema dependency and run inventory negative tests
+        run: |
+          python3 -m venv "$RUNNER_TEMP/p036-venv"
+          "$RUNNER_TEMP/p036-venv/bin/pip" install --disable-pip-version-check -r scripts/requirements-p036.txt
+          "$RUNNER_TEMP/p036-venv/bin/python" -m unittest scripts.tests.test_p036_artifact_inventory -v
+      - name: Prevalidate every component signature, payload and license before inventory signing
+        run: |
+          set -euo pipefail
+          mkdir -p target/p036-signed
+          "$RUNNER_TEMP/p036-venv/bin/python" scripts/sign_p036_inventory.py \
+            --inventory acceptance/p036/production-artifacts.json \
+            --signature target/p036-signed/production-artifacts.json.sig \
+            --artifact-root acceptance/p036/artifacts
+          cp --no-clobber acceptance/p036/production-artifacts.json target/p036-signed/production-artifacts.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synveil-p036-inventory-signed
+          path: target/p036-signed/
+          if-no-files-found: error
+          retention-days: 14
+
+  p036-artifact-verification:
+    name: Independently verify signed P036 inventory and all eight entries
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.sign_candidate }}
+    needs: sign-p036-inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    env:
+      SYNVEIL_P036_TRUSTED_KEYRING_B64: ${{ vars.SYNVEIL_P036_TRUSTED_KEYRING_B64 }}
+      SYNVEIL_P036_INVENTORY_FINGERPRINT: ${{ vars.SYNVEIL_P036_INVENTORY_FINGERPRINT }}
+      SYNVEIL_P036_DESKTOP_FINGERPRINT: ${{ vars.SYNVEIL_P036_DESKTOP_FINGERPRINT }}
+      SYNVEIL_P036_SERVER_FINGERPRINT: ${{ vars.SYNVEIL_P036_SERVER_FINGERPRINT }}
+      SYNVEIL_P036_POSTGRESQL17_FINGERPRINT: ${{ vars.SYNVEIL_P036_POSTGRESQL17_FINGERPRINT }}
+      SYNVEIL_P036_EDGE_FINGERPRINT: ${{ vars.SYNVEIL_P036_EDGE_FINGERPRINT }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Materialize only the independently configured public keyring
+        run: python3 scripts/materialize-p036-trust-keyring.py
+      - uses: actions/download-artifact@v4
+        with:
+          name: synveil-p036-inventory-signed
+          path: target/p036-signed
+      - name: Verify exact inventory signature and actual platform artifacts
+        run: >-
+          python3 scripts/validate-p036-production-artifacts.py
+          --platform ubuntu-24.04
+          --inventory target/p036-signed/production-artifacts.json
+          --inventory-signature target/p036-signed/production-artifacts.json.sig
+          --artifact-root acceptance/p036/artifacts
+
+  assemble-candidate:
+    name: Independently verify and assemble final candidate bytes
+    needs:
+      - verify-source
+      - linux-packages
+      - appimage
+      - windows
+      - host-server-ubuntu
+      - host-server-fedora
+      - sign-rpm
+      - sign-windows
+    if: >-
+      ${{
+        always() &&
+        needs.verify-source.result == 'success' &&
+        needs.linux-packages.result == 'success' &&
+        needs.appimage.result == 'success' &&
+        needs.windows.result == 'success' &&
+        needs.host-server-ubuntu.result == 'success' &&
+        needs.host-server-fedora.result == 'success' &&
+        (
+          (inputs.sign_candidate && github.ref == 'refs/heads/main' && needs.sign-rpm.result == 'success' && needs.sign-windows.result == 'success') ||
+          (!inputs.sign_candidate && needs.sign-rpm.result == 'skipped' && needs.sign-windows.result == 'skipped')
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: synveil-linux-packages
+          path: target/inbox/linux
+        if: ${{ !inputs.sign_candidate }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: synveil-linux-packages-signed
+          path: target/inbox/linux
+        if: ${{ inputs.sign_candidate }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: synveil-appimage-x86_64
+          path: target/inbox/appimage
+      - uses: actions/download-artifact@v4
+        with:
+          name: synveil-windows-release-candidate
+          path: target/inbox/windows
+        if: ${{ !inputs.sign_candidate }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: synveil-windows-release-candidate-signed
+          path: target/inbox/windows-signed
+        if: ${{ inputs.sign_candidate }}
+      - name: Assemble and rehash every product artifact for the exact source commit
+        run: |
+          set -euo pipefail
+          python3 scripts/assemble_release_candidate.py \
+            --input-root target/inbox \
+            --output-root target/release-candidate \
+            --source-commit "$GITHUB_SHA"
+          python3 scripts/release_manifest.py validate \
+            --artifact-root target/release-candidate \
+            --source-commit "$GITHUB_SHA" \
+            target/release-candidate/SYNVEIL-RELEASE-MANIFEST.json
+          sha256sum target/release-candidate/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synveil-release-candidate
+          path: target/release-candidate/
+          if-no-files-found: error
+          retention-days: 14
+
+  sign-release-metadata:
+    name: Sign final-byte release manifest with protected Ed25519 key
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.sign_candidate && github.ref == 'refs/heads/main' }}
+    needs: assemble-candidate
+    runs-on: ubuntu-24.04
+    environment: synveil-release-signing
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    env:
+      SYNVEIL_RELEASE_ED25519_PRIVATE_KEY_B64: ${{ secrets.SYNVEIL_RELEASE_ED25519_PRIVATE_KEY_B64 }}
+      SYNVEIL_RELEASE_ED25519_PUBLIC_TRUST_POLICY_B64: ${{ vars.SYNVEIL_RELEASE_ED25519_PUBLIC_TRUST_POLICY_B64 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install maintained Ed25519 verification backend
+        run: python3 -m pip install --disable-pip-version-check -r scripts/requirements-installer-security.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: synveil-release-candidate
+          path: target/release-candidate
+      - name: Materialize and validate the independent public trust policy
+        run: python3 scripts/materialize-release-trust-policy.py > "$RUNNER_TEMP/release-trust-policy-path"
+      - name: Sign exact final manifest bytes and independently verify the signature
+        run: |
+          set -euo pipefail
+          trust_policy="$(cat "$RUNNER_TEMP/release-trust-policy-path")"
+          python3 scripts/sign_release_metadata.py \
+            --kind manifest \
+            --input target/release-candidate/SYNVEIL-RELEASE-MANIFEST.json \
+            --signature target/release-candidate/SYNVEIL-RELEASE-MANIFEST.sig \
+            --descriptor target/release-candidate/SYNVEIL-RELEASE-MANIFEST-AUTH.json \
+            --trust-policy "$trust_policy"
+          python3 scripts/release_download.py \
+            --trust-policy "$trust_policy" \
+            --signature-descriptor target/release-candidate/SYNVEIL-RELEASE-MANIFEST-AUTH.json \
+            --signature-directory target/release-candidate \
+            --expected-version 0.2.0 \
+            --expected-source-commit "$GITHUB_SHA" \
+            target/release-candidate/SYNVEIL-RELEASE-MANIFEST.json
+          python3 scripts/release_manifest.py validate \
+            --artifact-root target/release-candidate \
+            --source-commit "$GITHUB_SHA" \
+            target/release-candidate/SYNVEIL-RELEASE-MANIFEST.json
+          sha256sum target/release-candidate/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synveil-release-candidate-authenticated
+          path: target/release-candidate/
+          if-no-files-found: error
+          retention-days: 14
+
+  production-readiness-gate:
+    name: Block release staging unless signing and P036 are verified
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.sign_candidate }}
+    needs:
+      - assemble-candidate
+      - sign-release-metadata
+      - p036-artifact-verification
+      - sign-p036-inventory
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      ASSEMBLY_RESULT: ${{ needs.assemble-candidate.result }}
+      METADATA_SIGNING_RESULT: ${{ needs.sign-release-metadata.result }}
+      P036_RESULT: ${{ needs.p036-artifact-verification.result }}
+      P036_SIGNING_RESULT: ${{ needs.sign-p036-inventory.result }}
+    steps:
+      - name: Require every production identity gate
+        run: |
+          printf 'candidate assembly: %s\nmetadata signing: %s\nP036 signing: %s\nP036 verification: %s\n' \
+            "$ASSEMBLY_RESULT" "$METADATA_SIGNING_RESULT" "$P036_SIGNING_RESULT" "$P036_RESULT"
+          if [[ "$ASSEMBLY_RESULT" != success || "$METADATA_SIGNING_RESULT" != success || "$P036_SIGNING_RESULT" != success || "$P036_RESULT" != success ]]; then
+            echo 'BLOCKED_RELEASE_STAGING: at least one signing or P036 production input is unavailable or unverified.' >&2
+            exit 1
+          fi
+          echo 'No publication occurs in this workflow; stable channel activation and release publication remain owned by R05/P048.'

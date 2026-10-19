@@ -60,7 +60,7 @@ pub struct FormatContract {
 #[serde(deny_unknown_fields)]
 pub struct LinuxPackageContract {
     pub schema_version: u32,
-    pub product_version: String,
+    pub product_version_source: String,
     pub binary_identity: String,
     pub desktop_application_id: String,
     pub autostart: bool,
@@ -115,7 +115,7 @@ impl LinuxPackageContract {
         if self.schema_version != LINUX_PACKAGE_INTEGRATION_SCHEMA_VERSION {
             return Err(LinuxPackageError::UnsupportedSchema);
         }
-        if self.product_version != PRODUCT_VERSION
+        if self.product_version_source != PRODUCT_VERSION_SOURCE
             || self.binary_identity != BINARY_IDENTITY
             || self.desktop_application_id != DESKTOP_APPLICATION_ID
             || !valid_identity(&self.binary_identity)
@@ -205,6 +205,10 @@ impl LinuxPackageContract {
         Ok(())
     }
 
+    pub fn product_version(&self) -> &'static str {
+        PRODUCT_VERSION
+    }
+
     pub fn authorize(
         &self,
         operation: LinuxPackageOperation,
@@ -240,7 +244,8 @@ fn valid_identity(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.'))
 }
 
-const PRODUCT_VERSION: &str = "0.1.0";
+const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const PRODUCT_VERSION_SOURCE: &str = "Cargo.toml:[workspace.package].version";
 const BINARY_IDENTITY: &str = "synveil-desktop";
 const DESKTOP_APPLICATION_ID: &str = "synveil.desktop";
 const EXPECTED_SURFACES: &[(&str, &str)] = &[

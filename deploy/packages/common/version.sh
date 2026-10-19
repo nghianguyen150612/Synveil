@@ -10,7 +10,7 @@ set -euo pipefail
 PACKAGES_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGES_REPO_ROOT="$(cd "${PACKAGES_COMMON_DIR}/../../.." && pwd)"
 
-# Print raw workspace.package.version from Cargo.toml (e.g. "0.1.0").
+# Print raw workspace.package.version from Cargo.toml (X.Y.Z).
 # Fails if the version cannot be determined — never falls back to a hardcoded value.
 synveil_cargo_version() {
     local cargo_toml="${PACKAGES_REPO_ROOT}/Cargo.toml"
@@ -35,7 +35,7 @@ synveil_cargo_version() {
             continue
         fi
         if [[ "$in_section" -eq 1 ]]; then
-            # Match: version = "0.1.0" (allow spaces, single or double quotes)
+    # Match a quoted version value (allow spaces and either quote style).
             if [[ "$trimmed" == version* ]]; then
                 # Extract quoted value.
                 local value
@@ -60,7 +60,7 @@ synveil_cargo_version() {
 #   - Cargo pre-release uses '-' (e.g. 1.0.0-beta.1); DEB orders '~' before everything, so map '-' to '~'
 #     ONLY in the pre-release portion? Simplest deterministic rule that preserves ordering intent:
 #     replace '-' with '~' and '+' stays '+' (both valid in DEB). Build metadata after '+' is kept.
-#   - For plain "0.1.0" the output equals the input.
+#   - For a plain stable version the output equals the input.
 synveil_deb_version() {
     local cargo_version="$1"
     if [[ -z "$cargo_version" ]]; then
@@ -82,7 +82,7 @@ synveil_deb_version() {
 #   - RPM Version must not contain '-' (dash separates version-release). Map '-' to '~'
 #     (RPM supports '~' for pre-release ordering since rpm 4.10).
 #   - '+' is allowed in RPM Version; keep.
-#   - For plain "0.1.0" the output equals the input.
+#   - For a plain stable version the output equals the input.
 synveil_rpm_version() {
     local cargo_version="$1"
     if [[ -z "$cargo_version" ]]; then
