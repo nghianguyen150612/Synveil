@@ -3,6 +3,8 @@ Description=Synveil managed HTTPS edge
 PartOf=synveil-server.target
 Requires=synveil-api.service
 After=synveil-api.service
+StartLimitIntervalSec=120
+StartLimitBurst=3
 
 [Service]
 Type=notify
@@ -13,6 +15,8 @@ ExecReload=/opt/synveil/edge/current/caddy reload --config /etc/synveil/network/
 LoadCredential=network-tls-key:/etc/synveil/credentials/network-tls-key
 Restart=on-failure
 RestartSec=5s
+TimeoutStartSec=90
+TimeoutStopSec=30
 UMask=0077
 NoNewPrivileges=yes
 ProtectSystem=strict

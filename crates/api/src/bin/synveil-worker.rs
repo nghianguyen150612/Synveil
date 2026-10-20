@@ -19,6 +19,10 @@ use tokio::{sync::watch, time::timeout};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    if env::args().nth(1).as_deref() == Some("--version") {
+        println!("synveil-worker {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     init_tracing()?;
 
     let worker_config = GcWorkerConfig::from_env()?;

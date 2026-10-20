@@ -38,28 +38,31 @@ mkdir -p "$host_input_stage/payload/bin"
 for host_input_binary in synveil-api synveil-worker synveil-server-migrate synveil-host-helper; do
     install -m 0755 "$host_input_repo/target/release/$host_input_binary" "$host_input_stage/payload/bin/$host_input_binary"
 done
-install -m 0644 "$host_input_repo/LICENSE" "$host_input_repo/NOTICE" "$host_input_stage/payload/"
+install -m 0644 "$host_input_repo/LICENSE" "$host_input_repo/deploy/NOTICE" "$host_input_stage/payload/"
 python3 - "$host_input_repo" "$host_input_stage" "$host_input_revision" "$host_input_os" <<'PY'
 from pathlib import Path
-import hashlib, json, subprocess, sys, tomllib
+import hashlib, json, sys, tomllib
 repo, package = map(Path, sys.argv[1:3]); stage = package / "payload"; revision, os_target = sys.argv[3:]
 sha = lambda data: hashlib.sha256(data).hexdigest()
-provenance = {'schema_version': 1, 'usage': 'managed_host_production_input', 'source_revision': revision,
+version = tomllib.loads((repo / 'Cargo.toml').read_text())['workspace']['package']['version']
+provenance = {'schema_version': 1, 'component': 'server', 'version': version,
+              'source_revision': revision,
               'source_url': 'https://github.com/nghianguyen150612/Synveil/tree/' + revision,
-              'cargo_lock_sha256': sha((repo / 'Cargo.lock').read_bytes()),
-              'rustc': subprocess.check_output(['rustc', '--version'], text=True).strip(),
-              'qualified_os': os_target, 'architecture': 'x86_64', 'qa_status': 'NOT_RUN_QA_DEFERRED',
-              'release_qualification': 'NOT_ASSERTED', 'fixture': False}
+              'platform': os_target, 'architecture': 'x86_64'}
 (stage / 'PROVENANCE').write_text(json.dumps(provenance, sort_keys=True, indent=2) + '\n')
 files = [{'path': path.relative_to(stage).as_posix(), 'sha256': sha(path.read_bytes()),
           'bytes': path.stat().st_size, 'executable': bool(path.stat().st_mode & 0o111)}
          for path in sorted(stage.rglob('*')) if path.is_file()]
-version = tomllib.loads((repo / 'Cargo.toml').read_text())['workspace']['package']['version']
-manifest = {'schema_version': 1, 'kind': 'server', 'version': version, 'packaging_revision': revision,
+manifest = {'schema_version': 2, 'kind': 'server', 'version': version, 'packaging_revision': revision,
             'platform': 'linux', 'architecture': 'x86_64', 'qualified_os': os_target,
             'compatibility': 'synveil-desktop-server-v0.2', 'usage': 'managed_host_production_input',
             'upstream_url': provenance['source_url'], 'upstream_revision': revision,
-            'provenance_sha256': sha((stage / 'PROVENANCE').read_bytes()), 'files': files}
+            'provenance_sha256': sha((stage / 'PROVENANCE').read_bytes()),
+            'license': {'spdx_id': 'MIT', 'license_file': 'LICENSE',
+                        'license_sha256': sha((stage / 'LICENSE').read_bytes()),
+                        'notice_file': 'NOTICE',
+                        'notice_sha256': sha((stage / 'NOTICE').read_bytes())},
+            'files': files}
 # The signature-verifying producer expects the manifest outside the closed input
 # directory. An unsigned build is never registered as a trusted root catalog.
 (package / 'input-manifest.json').write_text(json.dumps(manifest, sort_keys=True, indent=2) + '\n')

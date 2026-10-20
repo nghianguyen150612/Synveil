@@ -136,6 +136,11 @@ pub fn units(
                     "RuntimeDirectory=synveil-postgresql",
                 );
         }
+        if *name == "synveil-edge.service"
+            && selection.mode == synveil_server_config::ReachabilityMode::PrivateLan
+        {
+            text.push_str("\n[Unit]\nWants=network-online.target\nAfter=network-online.target\n");
+        }
         if *name == "synveil-server-migrate.service"
             && selection.profile == DeploymentProfile::PersonalHomeManaged
         {
@@ -1358,8 +1363,18 @@ fn effective_unit(owner: &NativeOwners, name: &str) -> Result<()> {
             .find_map(|line| line.strip_prefix("MainPID="))
             .and_then(|value| value.parse::<u32>().ok())
             .unwrap_or(0);
+        let expected_process = if name == "synveil-postgresql.service" {
+            let runtime_id = journal
+                .runtime_intents
+                .get("postgresql")
+                .ok_or("managed PostgreSQL runtime identity missing")?;
+            runtime_root("postgresql", runtime_id).join("bin/postgres")
+        } else {
+            PathBuf::from(program)
+        };
         if pid != 0
-            && fs::read_link(format!("/proc/{pid}/exe")).ok().as_deref() != Some(Path::new(program))
+            && fs::read_link(format!("/proc/{pid}/exe")).ok().as_deref()
+                != Some(expected_process.as_path())
         {
             return Err("running service executable differs from the owned runtime");
         }
@@ -1426,6 +1441,7 @@ pub fn observe(
         unit_active("synveil-worker.service") && worker_health(owner, config).is_ok();
     Ok(())
 }
+
 fn worker_health(_owner: &NativeOwners, config: &ServerConfig) -> Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
     let (uid, _) = native::service_user("synveil")?;
@@ -1493,4 +1509,78 @@ fn worker_health(_owner: &NativeOwners, config: &ServerConfig) -> Result<()> {
         return Err("worker is unhealthy or health evidence is stale");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn managed_postgres_unit_waits_for_pg_ctl_readiness_before_dependents() {
+        let digest = "a".repeat(64);
+        let catalog = RuntimeCatalog {
+            schema_version: 1,
+            qualified_os: "ubuntu-24.04".to_owned(),
+            artifacts: BTreeMap::from([
+                ("server".to_owned(), "b".repeat(64)),
+                ("postgresql".to_owned(), digest.clone()),
+                ("caddy".to_owned(), "c".repeat(64)),
+            ]),
+        };
+        let selection = HostSelection::default();
+        let rendered = units(&catalog, &selection).expect("unit templates render");
+        let postgres = &rendered["synveil-postgresql.service"];
+
+        assert!(postgres.contains("Type=forking\n"));
+        assert!(postgres.contains("PIDFile=/var/lib/synveil/postgresql/17/data/postmaster.pid"));
+        assert!(postgres.contains(&format!(
+            "ExecStart=/opt/synveil/postgresql/17/{digest}/bin/pg_ctl start"
+        )));
+        assert!(postgres.contains("-s -w -t 60"));
+        assert!(
+            postgres.contains("ExecStop=/opt/synveil/postgresql/17/")
+                && postgres.contains(
+                    "pg_ctl stop -D /var/lib/synveil/postgresql/17/data -s -m fast -w -t 60"
+                )
+        );
+        assert!(!postgres.contains("Type=notify"));
+
+        let migrate = &rendered["synveil-server-migrate.service"];
+        assert!(migrate.contains("Requires=synveil-postgresql.service"));
+        assert!(migrate.contains("After=synveil-postgresql.service"));
+        let target = &rendered["synveil-server.target"];
+        assert!(target.contains("Wants=synveil-postgresql.service"));
+        assert!(target.contains("After=synveil-postgresql.service"));
+    }
+
+    #[test]
+    fn private_lan_edge_waits_for_network_online_and_postgres_stays_private() {
+        let catalog = RuntimeCatalog {
+            schema_version: 1,
+            qualified_os: "ubuntu-24.04".to_owned(),
+            artifacts: BTreeMap::from([
+                ("server".to_owned(), "b".repeat(64)),
+                ("postgresql".to_owned(), "a".repeat(64)),
+                ("caddy".to_owned(), "c".repeat(64)),
+            ]),
+        };
+        let selection = HostSelection {
+            profile: DeploymentProfile::PersonalHomeManaged,
+            storage_root: "/var/lib/synveil/storage".to_owned(),
+            mode: synveil_server_config::ReachabilityMode::PrivateLan,
+            interface_id: Some("eth0".to_owned()),
+            listener_address: "192.168.1.5".to_owned(),
+            canonical_origin: "https://192.168.1.5/".to_owned(),
+            external_database_target: None,
+        };
+        let rendered = units(&catalog, &selection).expect("LAN unit templates render");
+        let edge = &rendered["synveil-edge.service"];
+        assert!(edge.contains("Wants=network-online.target"));
+        assert!(edge.contains("After=network-online.target"));
+        let postgres = &rendered["synveil-postgresql.service"];
+        assert!(postgres.contains("User=synveil-postgres"));
+        assert!(postgres.contains("RestrictAddressFamilies=AF_UNIX AF_INET"));
+        assert!(!postgres.contains("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6"));
+        assert!(postgres.contains("ReadWritePaths=/var/lib/synveil/postgresql/17"));
+    }
 }

@@ -1,23 +1,27 @@
 # Managed server service installation
 
-Status: **Planning/unit foundation implemented — Prompt033; native application
-incomplete.** This contract specifies the initial Ubuntu 24.04 and Fedora 42
-x86_64 machine-service topology and the intended `INFRASTRUCTURE_READY`
-checkpoint. A contract does not qualify an installed service. The current
-source lacks the native provisioning/service reconciler; see G01-G04 in the
-[implementation audit](IMPLEMENTATION_COMPLETION.md). Native acceptance is
-separately **NOT_RUN_QA_DEFERRED**.
+Status: **Production source path implemented; authentic runtime inputs and
+native acceptance remain blocked.** This contract specifies the Ubuntu 24.04
+and Fedora 42 x86_64 machine-service topology and the intended
+`INFRASTRUCTURE_READY` checkpoint. G01-G04 in the
+[implementation audit](IMPLEMENTATION_COMPLETION.md) describe the connected
+native provisioning/service reconciler. An installed service has not been
+qualified until the signed runtimes are supplied and the P036 native gate
+passes.
 
 ## Ownership and topology
 
-The desktop package remains independent. A closed `SERVER_PACKAGE` installs
-verified siblings beneath `/opt/synveil/server/<runtime-id>/` and atomically
-selects `/opt/synveil/server/current`. It contains `synveil-api`,
-`synveil-worker`, and `synveil-server-migrate`, but no desktop/client, secret,
-database cluster, configuration, or object data. PostgreSQL runtime is another
-replaceable artifact under `/opt/synveil/postgresql/17/<runtime-id>/`; its exact
-version, provenance, license/notices, inventory, SHA-256 and compatibility are
-verified before a root-owned `current` pointer changes.
+The desktop package remains independent. Signed runtime inputs are verified
+before the reviewed Host operation copies them beneath
+`/opt/synveil/server/<runtime-id>/` and
+`/opt/synveil/postgresql/17/<runtime-id>/`. Rendered systemd units name those
+exact immutable runtime IDs; there is no mutable `current` selector. The server
+runtime contains `synveil-api`, `synveil-worker`, and
+`synveil-server-migrate`, but no desktop/client, secret, database cluster,
+configuration, or object data. PostgreSQL's exact version, provenance,
+license/notices, inventory, SHA-256 and compatibility are verified before its
+directory is installed. Runtime replacement does not move the PostgreSQL data
+directory.
 
 ~~~text
 synveil-server.target (enabled at multi-user.target)
@@ -25,22 +29,35 @@ synveil-server.target (enabled at multi-user.target)
     -> synveil-server-migrate.service (oneshot)
        -> synveil-api.service
           -> synveil-worker.service
+       -> synveil-edge.service (managed Local Only/Private LAN)
 ~~~
 
 API, migration, and worker run as persistent non-login `synveil:synveil`.
 PostgreSQL runs as separate `synveil-postgres:synveil-postgres`, with no
 supplementary privileged groups. Neither runs as root or the desktop user.
-The target starts at boot independently of login. Stop ordering reverses the
-dependency graph: worker, API, then managed PostgreSQL.
+The target starts at boot independently of login. The managed HTTPS edge starts
+after the API; Private LAN additionally orders the edge after
+`network-online.target`. Stop ordering drains worker and edge before the API,
+then stops managed PostgreSQL.
 
 ## PostgreSQL 17 and cluster identity
 
 Managed PostgreSQL listens only on `127.0.0.1` in the bounded 55432–55463
-range and uses its private `/run/synveil/postgresql` socket. SCRAM is mandatory
-for application TCP. The persisted endpoint is authoritative and an occupied
-endpoint is a repair condition, never silently reselected. AdvancedExternal
+range and uses its private `/run/synveil-postgresql` socket. Its systemd unit
+uses `pg_ctl` with a bounded `-w` startup wait and the persisted `postmaster.pid`
+so migration/API ordering follows PostgreSQL readiness; it does not rely on a
+PostgreSQL `sd_notify` implementation. SCRAM is mandatory for application TCP.
+The persisted endpoint is authoritative and an occupied endpoint is a repair
+condition, never silently reselected. AdvancedExternal
 must prove PostgreSQL major 17 and credentials, but Synveil never installs,
 starts, stops, updates, or removes that operator-owned database.
+
+On a Personal/Home Host, Caddy listens only on the reviewed loopback address in
+Local Only mode. Private LAN binds the reviewed private address and opens only
+HTTPS port 443 through the selected supported firewall manager and interface.
+The API remains on `127.0.0.1:3000`; PostgreSQL remains loopback-only in both
+modes. Advanced/Server with operator-managed PostgreSQL and edge services keeps
+those service lifecycles operator-owned.
 
 Durable state is `/var/lib/synveil/postgresql/17/data` mode 0700 owned by the
 PostgreSQL identity. The sibling `.synveil-managed-postgresql.json` binds a

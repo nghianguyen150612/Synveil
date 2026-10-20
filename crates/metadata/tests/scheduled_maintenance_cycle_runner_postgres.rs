@@ -912,8 +912,8 @@ async fn runner_scheduler_failure_boundary() {
     sqlx::query(
         "UPDATE backup_schedules
          SET current_revision_id = $3,
-             effective_from = clock_timestamp(),
-             updated_at = clock_timestamp()
+             effective_from = effective_from + interval '1 microsecond',
+             updated_at = effective_from + interval '1 microsecond'
          WHERE id = $1 AND owner_user_id = $2",
     )
     .bind(schedule.id().into_uuid())

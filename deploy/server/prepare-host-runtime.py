@@ -14,10 +14,11 @@ import shutil
 import stat
 import subprocess
 import tempfile
+from urllib.parse import urlsplit
 
 FIELDS = {"schema_version", "kind", "version", "packaging_revision", "platform",
           "architecture", "qualified_os", "compatibility", "upstream_url",
-          "upstream_revision", "provenance_sha256", "files", "usage"}
+          "upstream_revision", "provenance_sha256", "license", "files", "usage"}
 REQUIRED = {
     "postgresql": {"bin/postgres", "bin/initdb", "bin/pg_ctl", "bin/pg_controldata", "bin/psql"},
     "caddy": {"bin/caddy"},
@@ -46,10 +47,46 @@ def regular(path, limit):
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
+def verify_reported_version(kind, root, version):
+    probes = {
+        "postgresql": ("bin/postgres", ["--version"]),
+        "caddy": ("bin/caddy", ["version"]),
+        "server": ("bin/synveil-api", ["--version"]),
+    }
+    selected = [probes[kind]]
+    if kind == "server":
+        selected.extend((name, ["--version"]) for name in (
+            "bin/synveil-worker", "bin/synveil-server-migrate"
+        ))
+    for binary, arguments in selected:
+        try:
+            result = subprocess.run(
+                [str(root / binary), *arguments], check=True, timeout=15,
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                cwd=root,
+                env={"PATH": "/usr/bin:/bin", "LC_ALL": "C", "LANG": "C"},
+            )
+            output = (result.stdout or result.stderr).decode("utf-8", "strict").strip()
+        except (OSError, UnicodeError, subprocess.SubprocessError) as error:
+            raise ValueError("runtime version probe failed") from error
+        if len(output) > 4096:
+            raise ValueError("runtime version output exceeds bound")
+        if kind == "postgresql":
+            prefix = "postgres (PostgreSQL) "
+            reported = output.removeprefix(prefix) if output.startswith(prefix) else ""
+        elif kind == "caddy":
+            reported = output.split(" ", 1)[0].removeprefix("v")
+            version = version.removeprefix("v")
+        else:
+            prefix = Path(binary).name + " "
+            reported = output.removeprefix(prefix) if output.startswith(prefix) else ""
+        if not reported or reported != version:
+            raise ValueError("runtime version differs from signed manifest")
+
 def publish(args):
     raw = regular(args.manifest, 2 * 1024 * 1024)
     manifest = json.loads(raw, object_pairs_hook=unique_object)
-    if set(manifest) != FIELDS or manifest["schema_version"] != 1:
+    if set(manifest) != FIELDS or manifest["schema_version"] != 2:
         raise ValueError("unsupported manifest schema")
     if (manifest["platform"], manifest["architecture"], manifest["compatibility"]) != (
             "linux", "x86_64", "synveil-desktop-server-v0.2"):
@@ -59,14 +96,38 @@ def publish(args):
     if manifest["usage"] != "managed_host_production_input":
         raise ValueError("CI fixtures are not managed Host inputs")
     kind = manifest["kind"]
-    if kind not in REQUIRED or not manifest["version"] or "latest" in manifest["version"]:
+    version = manifest["version"]
+    if (kind not in REQUIRED or not isinstance(version, str) or
+            len(version) > 64 or "latest" in version.lower() or
+            version in ("unknown", "unverified", "placeholder", "0.0.0") or
+            not version[0].isascii() or not version[0].isalnum() or
+            "." not in version or version.endswith((".", "-", "+")) or
+            ".." in version or any(not (c.isascii() and (c.isalnum() or c in ".+-")) for c in version)):
         raise ValueError("exact runtime version required")
-    if kind == "postgresql" and not manifest["version"].startswith("17."):
+    if kind == "postgresql" and not version.startswith("17."):
         raise ValueError("PostgreSQL 17 required")
-    if not manifest["upstream_url"].startswith("https://") or not manifest["upstream_revision"]:
+    upstream_revision = manifest["upstream_revision"]
+    upstream_url = manifest["upstream_url"]
+    parsed_upstream = urlsplit(upstream_url) if isinstance(upstream_url, str) else None
+    if (not isinstance(upstream_revision, str) or len(upstream_revision) != 40 or
+            any(char not in "0123456789abcdef" for char in upstream_revision) or
+            parsed_upstream is None or parsed_upstream.scheme != "https" or
+            not parsed_upstream.hostname or parsed_upstream.username is not None or
+            parsed_upstream.password is not None or parsed_upstream.fragment):
         raise ValueError("authenticated upstream provenance required")
     if len(manifest["packaging_revision"]) != 40 or any(c not in "0123456789abcdef" for c in manifest["packaging_revision"]):
         raise ValueError("exact packaging revision required")
+    expected_licenses = {"server": "MIT", "postgresql": "PostgreSQL", "caddy": "Apache-2.0"}
+    license_info = manifest["license"]
+    if (not isinstance(license_info, dict) or
+            set(license_info) != {"spdx_id", "license_file", "license_sha256", "notice_file", "notice_sha256"} or
+            license_info["spdx_id"] != expected_licenses[kind] or
+            license_info["license_file"] != "LICENSE" or
+            license_info["notice_file"] != "NOTICE" or
+            any(not isinstance(license_info[key], str) or len(license_info[key]) != 64 or
+                any(c not in "0123456789abcdef" for c in license_info[key])
+                for key in ("license_sha256", "notice_sha256"))):
+        raise ValueError("exact license and notice metadata required")
     # gpgv is the mature signature verifier. The trusted keyring must be supplied
     # by the operator/build policy; no key is fetched from the input itself. Copy
     # all three public inputs into a private directory so verification uses the
@@ -99,7 +160,10 @@ def publish(args):
                 name == "manifest.json" or
                 any(part in ("", ".", "..") for part in name.split("/")) or name in inventory):
             raise ValueError("unsafe inventory path")
-        if not isinstance(item["executable"], bool) or not 0 <= item["bytes"] <= 512 * 1024 * 1024:
+        if (not isinstance(item["executable"], bool) or type(item["bytes"]) is not int or
+                not 0 <= item["bytes"] <= 512 * 1024 * 1024 or
+                not isinstance(item["sha256"], str) or len(item["sha256"]) != 64 or
+                any(c not in "0123456789abcdef" for c in item["sha256"])):
             raise ValueError("invalid inventory bounds")
         inventory[name] = item
     if not 0 < len(inventory) <= 8192 or not (REQUIRED[kind] | {"LICENSE", "NOTICE", "PROVENANCE"}) <= inventory.keys():
@@ -140,6 +204,34 @@ def publish(args):
         verified[name] = data
     if inventory["PROVENANCE"]["sha256"] != manifest["provenance_sha256"]:
         raise ValueError("provenance checksum mismatch")
+    try:
+        provenance = json.loads(verified["PROVENANCE"], object_pairs_hook=unique_object)
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError("runtime provenance is not valid unique-key JSON") from error
+    if (not isinstance(provenance, dict) or
+            set(provenance) != {"schema_version", "component", "version", "source_revision",
+                                "source_url", "platform", "architecture"} or
+            type(provenance["schema_version"]) is not int or provenance["schema_version"] != 1 or
+            provenance["component"] != kind or provenance["version"] != version or
+            provenance["source_revision"] != manifest["upstream_revision"] or
+            provenance["source_url"] != manifest["upstream_url"] or
+            provenance["platform"] != manifest["qualified_os"] or
+            provenance["architecture"] != manifest["architecture"]):
+        raise ValueError("runtime provenance does not match signed source identity")
+    if (inventory[license_info["license_file"]]["sha256"] != license_info["license_sha256"] or
+            inventory[license_info["notice_file"]]["sha256"] != license_info["notice_sha256"]):
+        raise ValueError("license or notice checksum mismatch")
+    # Run only after the publisher signature, closed inventory, per-file digest,
+    # and ELF architecture have all been verified. Probe a private copy of the
+    # already verified bytes so a mutable supplied path cannot race execution.
+    with tempfile.TemporaryDirectory(prefix=".host-version-probe-") as probe_root:
+        probe = Path(probe_root)
+        for name, data in verified.items():
+            target = probe / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            target.chmod(0o700 if inventory[name]["executable"] else 0o600)
+        verify_reported_version(kind, probe, version)
     identity = digest(raw)
     if any(path.is_symlink() for path in (args.output, *args.output.absolute().parents)):
         raise ValueError("redirected runtime publication path")

@@ -21,6 +21,10 @@ use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    if env::args().nth(1).as_deref() == Some("--version") {
+        println!("synveil-api {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     init_tracing()?;
 
     let server_configuration = server_configuration_from_runtime()?;

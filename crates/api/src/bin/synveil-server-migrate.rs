@@ -10,6 +10,10 @@ use synveil_metadata::{DatabasePool, MigrationRunner};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        println!("synveil-server-migrate {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     init_tracing()?;
     let config = server_configuration_from_runtime()?;
     let RuntimeServerConfiguration::Managed(managed) = config else {

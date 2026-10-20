@@ -29,11 +29,15 @@ jobs:
       - run: python3 scripts/validate-server-service-installation.py
       - name: Verify systemd topology with fixture executables
         run: |
-          sudo mkdir -p /opt/synveil/server/current /opt/synveil/postgresql/17/current/bin
+          sudo mkdir -p /opt/synveil/server/current /opt/synveil/postgresql/17/current/bin /opt/synveil/edge/current
           for file in synveil-api synveil-worker synveil-server-migrate; do
             printf '#!/bin/sh\n' | sudo tee "/opt/synveil/server/current/$file" >/dev/null
             sudo chmod 0755 "/opt/synveil/server/current/$file"
           done
           printf '#!/bin/sh\n' | sudo tee /opt/synveil/postgresql/17/current/bin/postgres >/dev/null
           sudo chmod 0755 /opt/synveil/postgresql/17/current/bin/postgres
-          systemd-analyze verify deploy/systemd/synveil-server.target deploy/systemd/synveil-postgresql.service deploy/systemd/synveil-server-migrate.service deploy/systemd/synveil-api.service deploy/systemd/synveil-worker.service
+          printf '#!/bin/sh\n' | sudo tee /opt/synveil/postgresql/17/current/bin/pg_ctl >/dev/null
+          sudo chmod 0755 /opt/synveil/postgresql/17/current/bin/pg_ctl
+          printf '#!/bin/sh\n' | sudo tee /opt/synveil/edge/current/caddy >/dev/null
+          sudo chmod 0755 /opt/synveil/edge/current/caddy
+          systemd-analyze verify deploy/systemd/synveil-server.target deploy/systemd/synveil-postgresql.service deploy/systemd/synveil-server-migrate.service deploy/systemd/synveil-api.service deploy/systemd/synveil-worker.service deploy/systemd/synveil-edge.service

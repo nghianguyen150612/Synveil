@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Synveil P036 production artifact inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "product", "product_version", "source_commit", "artifacts"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "product": {"const": "Synveil"},
+    "product_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"},
+    "source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "artifacts": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": {"$ref": "#/$defs/artifactEntry"}
+    }
+  },
+  "$defs": {
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*\\\\)[A-Za-z0-9._+/-]+$"
+    },
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "fingerprint": {"type": "string", "pattern": "^[0-9A-F]{40,64}$"},
+    "artifactFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "format", "size_bytes", "sha256", "signature_path"],
+      "properties": {
+        "path": {"$ref": "#/$defs/relativePath"},
+        "format": {"enum": ["deb", "rpm", "runtime_manifest_v2"]},
+        "size_bytes": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "#/$defs/digest"},
+        "signature_path": {"$ref": "#/$defs/relativePath"},
+        "payload_root": {"$ref": "#/$defs/relativePath"}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "signature_path", "source_url", "source_revision"],
+      "properties": {
+        "path": {"$ref": "#/$defs/relativePath"},
+        "sha256": {"$ref": "#/$defs/digest"},
+        "signature_path": {"$ref": "#/$defs/relativePath"},
+        "source_url": {"type": "string", "pattern": "^https://[^ ]+$"},
+        "source_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      }
+    },
+    "license": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["spdx_id", "path", "sha256", "notice_path", "notice_sha256"],
+      "properties": {
+        "spdx_id": {"enum": ["MIT", "PostgreSQL", "Apache-2.0"]},
+        "path": {"$ref": "#/$defs/relativePath"},
+        "sha256": {"$ref": "#/$defs/digest"},
+        "notice_path": {"$ref": "#/$defs/relativePath"},
+        "notice_sha256": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "artifactEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component", "version", "source_revision", "platform", "architecture", "artifact", "provenance", "license"],
+      "properties": {
+        "component": {"enum": ["desktop", "server", "postgresql17", "edge"]},
+        "version": {"type": "string", "minLength": 3, "maxLength": 128, "pattern": "^(?!.*(?:latest|unknown|placeholder|unverified))[A-Za-z0-9][A-Za-z0-9.+_-]*$"},
+        "source_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "platform": {"enum": ["ubuntu-24.04", "fedora-42"]},
+        "architecture": {"const": "x86_64"},
+        "artifact": {"$ref": "#/$defs/artifactFile"},
+        "provenance": {"$ref": "#/$defs/provenance"},
+        "license": {"$ref": "#/$defs/license"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"component": {"const": "desktop"}}, "required": ["component"]},
+          "then": {
+            "properties": {
+              "artifact": {
+                "properties": {"format": {"enum": ["deb", "rpm"]}},
+                "required": ["format"]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "artifact": {
+                "properties": {"format": {"const": "runtime_manifest_v2"}, "payload_root": {"$ref": "#/$defs/relativePath"}},
+                "required": ["format", "payload_root"]
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
