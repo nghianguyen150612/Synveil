@@ -1,58 +1,80 @@
 # Mức độ sẵn sàng phân phối v0.2
 
-**Trạng thái kiểm toán: đã chuẩn bị tài liệu; v0.2 chưa được phát hành.** Sản phẩm hiện đã phát hành vẫn là v0.1.0. Chưa có GitHub Release v0.2, channel tải công khai, khóa ký production hoặc bộ artifact v0.2 cuối cùng. Artifact từ workflow là đầu ra CI unsigned, không phải bản phát hành production đã xác thực.
-
 ### Trạng thái phát hành R05 — 2026-10-20
 
-Lịch sử mã nguồn R01–R04 đã được tích hợp trên `main`. Pipeline tạo ứng viên
-unsigned chính xác theo source R05 đang chạy với source
-`d0b1c43c144493e4adf9b44d3fd24d02f2bd7dbb` trong
-[Actions run 39359470865](https://github.com/nghianguyen150612/Synveil/actions/runs/39359470865).
-Tại snapshot được ghi nhận gần nhất, chưa có bộ candidate hoàn chỉnh. Nếu
-được tạo, candidate đó vẫn chưa phải release công khai hoặc đã ký production.
+**`R05_INTEGRATED_RELEASE_BLOCKED`.** Synveil `v0.2.0` chưa được phát hành.
+Hiện chưa có stable tag, GitHub Release công khai, bản tải xuống đã xác thực
+hoặc stable channel được kích hoạt. Các đầu ra ứng viên v0.2 là đầu vào CI
+chưa ký; không cài đặt chúng và không phân phối archive artifact của Actions.
 
-Việc ký production và thiết lập gốc tin cậy publisher, inventory P036 tám mục
-có chữ ký, chấp nhận native trên Windows 11/Ubuntu 24.04/Fedora 42, vòng đời
-AppImage, bằng chứng bảo toàn dữ liệu và khôi phục sau mất điện, cùng toàn bộ
-21 gate P047 vẫn bị chặn. P048 chưa được phê duyệt. Chưa có tag `v0.2.0`,
-GitHub Release hay stable channel. Tiếp tục dùng hướng dẫn v0.1.0 cho sản phẩm
-đã phát hành; không cài artifact Actions unsigned như bản release công khai.
+Hướng dẫn cài đặt công khai hiện tại vẫn là hướng dẫn cho bản đã phát hành
+`v0.1.0`. Bản ghi điều kiện và vấn đề chặn R05 nằm trong
+[manifest phát hành R05](../../v0.2/RELEASE_HARDENING_R05_MANIFEST.md).
+Trang này mô tả các mục tiêu cần chứng nhận và giới hạn hiện tại, không tuyên
+bố các mục tiêu đó đã được hỗ trợ.
 
-Baseline tài liệu P046 là `a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc`. P045 vẫn là PR bản nháp riêng, đang mở tại `035497c05c145e5c6129e744f9455937069680f4`; kết quả dưới đây chỉ là bằng chứng cho đúng source head đó, không hoàn thành P045.
+## Các mục tiêu cần chứng nhận
 
-## Danh sách nền tảng và artifact
+| Định dạng ứng viên | Mục tiêu | Trạng thái hiện tại |
+| --- | --- | --- |
+| `SynveilSetup.exe` | Windows 11 `x86_64` | **Blocked; Not yet published.** Bản build chính xác từ main sau tích hợp đã tạo Setup ứng viên chưa ký và bước kiểm tra sản phẩm với người dùng tiêu chuẩn đã đạt trên GitHub-hosted Windows Server 2025. Workflow sau đó đã chặn đúng vì thiếu giao diện GUI tương tác, đăng nhập thật và các bề mặt named pipe. Bằng chứng Windows 11 bắt buộc vẫn còn thiếu. |
+| `synveil_<version>_amd64.deb` | Ubuntu 24.04 `x86_64` | **Blocked; Not yet published.** Chưa có ứng viên đã xác thực hoàn tất hành trình desktop native và vòng đời cài đặt. |
+| `synveil-<version>-1.x86_64.rpm` | Fedora 42 `x86_64` | **Blocked; Not yet published.** Chưa có ứng viên đã xác thực hoàn tất hành trình desktop native và vòng đời cài đặt. |
+| `Synveil-<version>-x86_64.AppImage` | Linux `x86_64` | **Blocked; Not yet published.** Build chính xác trên integrated-main, tái lập độc lập, kiểm tra manifest/runtime, smoke và vòng đời người dùng hiện tại đã đạt trên CI Ubuntu 22.04; kiểm tra khởi chạy native, di chuyển vị trí và vòng đời trên Ubuntu 24.04/Fedora vẫn còn thiếu. |
 
-| Bề mặt | Tên dự kiến / kiến trúc | Trạng thái và bằng chứng | Tuyên bố phát hành |
-| --- | --- | --- | --- |
-| Windows Setup | `SynveilSetup.exe`, Windows x86_64 | **Implemented; Build validated** trong run Windows installer P045 [37970834502](https://github.com/nghianguyen150612/Synveil/actions/runs/37970834502). Một số bước standard-user có chạy, nhưng chấp nhận native Windows run [37970834767](https://github.com/nghianguyen150612/Synveil/actions/runs/37970834767) thất bại khi ghi nhận các bề mặt bắt buộc chưa khả dụng. **Native qualified: không.** | **Blocked; Not yet published.** Vẫn cần chốt phiên bản Windows được hỗ trợ và chấp nhận P045. |
-| Ubuntu DEB | `synveil_<version>_amd64.deb`, x86_64 | **Implemented; Build validated** trong job artifact Linux P045 của run [37970834983](https://github.com/nghianguyen150612/Synveil/actions/runs/37970834983). Guest Ubuntu 24.04 thất bại trước assertion sản phẩm ở bước boot/readiness. **Native qualified: không.** | Ubuntu 24.04 x86_64 chỉ là ứng viên. **Blocked; Not yet published.** |
-| Fedora RPM | `synveil-<version>-1.x86_64.rpm`, x86_64 | **Implemented; Build validated** trong run [37970834983](https://github.com/nghianguyen150612/Synveil/actions/runs/37970834983). Guest Fedora 42 thất bại trước assertion sản phẩm ở bước boot/readiness. **Native qualified: không.** | Fedora 42 x86_64 chỉ là ứng viên. Các bản RPM khác **Unsupported** trừ khi được nêu tên và chứng nhận riêng. |
-| Linux AppImage | `Synveil-<version>-x86_64.AppImage`, x86_64 | **Implemented; Build validated** trong run [37970834983](https://github.com/nghianguyen150612/Synveil/actions/runs/37970834983). Guest Ubuntu 24.04 và Fedora 42 đều thất bại trước assertion sản phẩm. **Native qualified: không.** | Chưa duyệt nền tảng tương thích Linux phổ thông nào. **Blocked; Not yet published.** |
-| Linux quick install | `deploy/install/quick-install.sh` → `scripts/linux_quick_install.py` | **Implemented** với phát hiện chính xác Ubuntu 24.04/Fedora 42 x86_64 và tải stable channel đã xác thực. Chưa có endpoint production, bootstrap khóa hoặc generation channel. | **Blocked; Not yet published.** Không sao chép lệnh cài từ CI hoặc tự điền dữ liệu tin cậy. |
+`Implemented` mô tả hành vi trong source. `Build validated` mô tả một kiểm tra
+build đã hoàn tất. `Native tested` mô tả một kiểm tra máy có phạm vi giới hạn.
+`Native qualified` yêu cầu hoàn tất toàn bộ hành trình máy sạch áp dụng.
+`Blocked` ghi nhận bằng chứng bắt buộc còn thiếu. `Not yet published` nghĩa là
+chưa có bản tải v0.2 công khai. `Unsupported` nghĩa là kế hoạch phát hành này
+không đưa ra cam kết tương thích.
 
-`Implemented` mô tả hành vi mã nguồn. `Build validated` mô tả build CI được dẫn liên kết ở source head P045. `Native tested` có nghĩa một bước native giới hạn đã thực sự chạy; không có nghĩa toàn bộ hành trình sản phẩm đã vượt qua. `Native qualified` yêu cầu các assertion chấp nhận máy sạch đã nêu phải thành công. `Blocked` ghi nhận gate phát hành chưa đạt. `Not yet published` có nghĩa chưa có artifact phát hành công khai chính thức. `Unsupported` không phải cam kết tương thích.
+Không mục tiêu v0.2 nào đạt `Native qualified`. Không được dùng danh sách mục
+tiêu trên làm cam kết hỗ trợ hoặc nguồn tạo liên kết tải xuống.
 
-## Ranh giới hỗ trợ chính xác
+## Connect và Host
 
-- Windows: Setup x86_64 là mục tiêu v0.2. Chưa phiên bản Windows nào được chứng nhận; Windows ARM64 nằm ngoài ma trận.
-- Ứng viên package Linux: Ubuntu 24.04 x86_64 cho DEB và Fedora 42 x86_64 cho RPM. Cả hai vẫn cần chấp nhận native P045.
-- Debian chưa được chứng nhận. Có package DEB hoạt động hoặc package manager thuộc họ Debian không chứng minh Debian được hỗ trợ.
-- Các bản dẫn xuất Debian và bản phân phối RPM khác không được chứng nhận chỉ dựa trên định dạng tệp.
-- AppImage nhắm tới Linux x86_64, nhưng baseline tương thích và khởi chạy native chưa được chứng nhận. Không thể suy ra rằng mọi kernel Linux, glibc, desktop hoặc cấu hình FUSE đều được hỗ trợ.
-- Linux ARM64/aarch64, kiến trúc 32-bit, macOS, iOS và Android nằm ngoài ma trận cài đặt v0.2.
+**Connect** là kết nối ứng dụng desktop với máy chủ Synveil đang có.
+**Host** là thiết lập máy chủ Synveil được quản lý trên thiết bị này. Đây là
+các chế độ sản phẩm, chưa phải hành trình cài đặt v0.2 đã được chứng nhận.
+Việc chấp nhận first-run cho Connect và Host vẫn bị chặn.
 
-## Danh sách xác minh danh tính và xuất bản release
+Chứng nhận Managed Host cần đầu vào Synveil server, PostgreSQL 17 và Caddy xác
+thực, đã ký cho Ubuntu 24.04 và Fedora 42; đồng thời cần public keyring được
+phê duyệt, fingerprint publisher được ghim độc lập, bằng chứng license và
+notice đầy đủ, cùng inventory P036 tám mục đã ký và vượt qua validator. Các
+đầu vào trust production và bằng chứng chấp nhận Host sau cài đặt chưa được
+cung cấp.
 
-- [ ] Ghi rõ phiên bản hệ điều hành, kiến trúc, yêu cầu GUI/runtime chính xác đã vượt qua chấp nhận native.
-- [ ] Hoàn tất chấp nhận P045 cho Windows, Ubuntu 24.04, Fedora 42 và mọi môi trường Linux phổ thông được quảng bá; giữ lại danh tính source/artifact chính xác.
-- [ ] Hoàn tất chấp nhận Host được quản lý đầu-cuối P036. Run self-host trên head P045 hiện tại [37970834595](https://github.com/nghianguyen150612/Synveil/actions/runs/37970834595) thất bại ở gate danh tính artifact production; các job nền tảng chưa phải một lần chứng nhận Host đạt.
-- [ ] Cấp và phân phối độc lập gốc tin cậy công khai production; thiết lập quản lý khóa riêng và hoạt động ký. Bộ xác minh đã có, nhưng chưa cấp khóa production.
-- [ ] Công bố stable channel và byte manifest phát hành đã xác thực, origin tin cậy, artifact chính xác cùng dữ liệu manifest/checksum đã ký. Hiện chưa công bố channel hoặc artifact v0.2.
-- [ ] Xác minh tên do producer tạo, phiên bản, kiến trúc, hash, chữ ký, liên kết phát hành và liên kết cài đặt/phục hồi Anh-Việt khớp nhau trên đúng source phát hành.
-- [ ] Chỉ chạy xác thực release candidate cuối P047 sau khi các điều kiện P045/P036 và release cần thiết đã đạt. P046 không tạo tag v0.2.0.
+## Nâng cấp, sửa chữa và dữ liệu
 
-Run ma trận cross-platform P045 [37970834983](https://github.com/nghianguyen150612/Synveil/actions/runs/37970834983) đã build artifact Linux nhưng thất bại ở gate bằng chứng máy sạch: guest Ubuntu 24.04 DEB, Fedora 42 RPM/AppImage không đạt trạng thái sẵn sàng và gate tổng hợp bằng chứng native thất bại. Đây không phải lần chứng nhận native thành công. Xem toàn bộ checks và bằng chứng được lưu trong [PR P045 #78](https://github.com/nghianguyen150612/Synveil/pull/78).
+Các policy cho Windows và package Linux có danh sách `upgrade_from` rỗng.
+Chưa có nâng cấp tự động từ `v0.1.0` lên `v0.2.0` nào được phê duyệt hoặc kiểm
+thử. Sửa chữa, gỡ/cài lại và bảo toàn dữ liệu chưa được chứng nhận trên toàn
+bộ ma trận mục tiêu. Chưa có rollback cơ sở dữ liệu nào đạt. Hãy giữ bản sao
+lưu đã xác minh của dữ liệu đang phát hành và không thử installer ứng viên trên
+bản dữ liệu duy nhất.
 
-## Hướng dẫn công khai hiện tại
+## Chữ ký và tải xuống
 
-Dùng các tài liệu v0.1 được liên kết trong [mục lục tài liệu](../../README.md) cho sản phẩm hiện đã phát hành. Hướng dẫn v0.2 trong thư mục này là tài liệu xem trước; chúng không thay thế hướng dẫn v0.1 hoặc cho phép cài artifact CI unsigned.
+Chưa có chữ ký Authenticode, RPM/OpenPGP hoặc Ed25519 production, cũng chưa có
+policy public key v0.2 được tin cậy độc lập. Không có metadata stable-channel
+hay checksum v0.2 công khai. Build xanh, archive CI hoặc manifest ứng viên
+chưa ký không chứng minh danh tính publisher.
+
+Trước khi tin cậy một bản tải trong tương lai, cần phát hành artifact đã ký
+chính xác cùng manifest được xác thực, sau đó xác minh byte tải xuống, chữ ký,
+source identity và generation của channel. Chưa thể hoàn tất quy trình đó khi
+các tệp chưa được phát hành.
+
+## Nền tảng không hỗ trợ và hướng dẫn hiện tại
+
+Kế hoạch phát hành v0.2 này không chứng nhận Debian như một mục tiêu riêng,
+các bản phân phối Linux khác, `ARM64/aarch64`, hệ thống 32-bit, `macOS`,
+`Android` hoặc `iOS`. Có source không đồng nghĩa với được hỗ trợ. Bản phát hành
+này không tuyên bố có bản Android hoặc iOS trên store.
+
+Tiếp tục dùng hướng dẫn `v0.1.0` đã phát hành trong
+[release notes v0.1](../RELEASE_NOTES_v0.1.md). Có thể xem source tree trong
+[README của repository](../../../README.md). Hiện chưa có bước cài đặt, liên
+kết tải xuống hoặc checksum phát hành v0.2.

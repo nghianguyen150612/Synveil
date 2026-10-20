@@ -1,58 +1,79 @@
 # v0.2 distribution readiness
 
-**Audit status: documentation is prepared; v0.2 is not released.** The current released product remains v0.1.0. No v0.2 GitHub Release, public download channel, production signing key, or final v0.2 artifact set is published. Workflow artifacts are unsigned CI outputs and are not authenticated production releases.
-
 ### R05 release status — 2026-10-20
 
-R01–R04 source history is integrated on `main`. R05's exact-source unsigned
-candidate pipeline is running for source
-`d0b1c43c144493e4adf9b44d3fd24d02f2bd7dbb` in
-[Actions run 39359470865](https://github.com/nghianguyen150612/Synveil/actions/runs/39359470865).
-At the latest recorded snapshot, no candidate set had been assembled. The
-candidate, if produced, is not a public or production-signed release.
+**`R05_INTEGRATED_RELEASE_BLOCKED`.** Synveil `v0.2.0` has not been released.
+There is no stable tag, public GitHub Release, authenticated download, or
+activated stable channel. The v0.2 candidate outputs are unsigned CI inputs;
+do not install them or distribute their Actions artifact archives.
 
-Production signing and publisher trust, the signed P036 eight-entry inventory,
-native Windows 11/Ubuntu 24.04/Fedora 42 acceptance, AppImage lifecycle
-acceptance, data-preservation and power-cycle evidence, and all 21 P047 gates
-remain blocked. P048 is not approved. No `v0.2.0` tag, GitHub Release or stable
-channel exists. Continue using the v0.1.0 manuals for the released product;
-do not install unsigned Actions artifacts as a public release.
+The released `v0.1.0` guidance remains the public installation guidance. The
+R05 qualification and blocker record is in
+[the R05 release manifest](../../v0.2/RELEASE_HARDENING_R05_MANIFEST.md).
+This page describes qualification targets and their current limits; it does
+not declare those targets supported.
 
-The P046 documentation baseline is `a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc`. P045 remains a separate open draft PR at `035497c05c145e5c6129e744f9455937069680f4`; its results below are evidence only for that source head and do not complete P045.
+## Qualification targets
 
-## Platform and artifact checklist
+| Candidate format | Target | Current status |
+| --- | --- | --- |
+| `SynveilSetup.exe` | Windows 11 `x86_64` | **Blocked; Not yet published.** The exact-main build produced a reproducible unsigned Setup candidate and its standard-user product acceptance step passed on GitHub-hosted Windows Server 2025. The workflow then correctly blocked at unavailable interactive GUI, genuine logon and named-pipe surfaces. Required Windows 11 evidence remains outstanding. |
+| `synveil_<version>_amd64.deb` | Ubuntu 24.04 `x86_64` | **Blocked; Not yet published.** No authenticated candidate completed the native desktop and lifecycle journey. |
+| `synveil-<version>-1.x86_64.rpm` | Fedora 42 `x86_64` | **Blocked; Not yet published.** No authenticated candidate completed the native desktop and lifecycle journey. |
+| `Synveil-<version>-x86_64.AppImage` | Linux `x86_64` | **Blocked; Not yet published.** The exact integrated-main build, independent reproduction, inspection, smoke and current-user lifecycle checks passed on Ubuntu 22.04 CI; native Ubuntu 24.04/Fedora launch, relocation and lifecycle acceptance remain outstanding. |
 
-| Surface | Expected naming / architecture | Status and evidence | Release claim |
-| --- | --- | --- | --- |
-| Windows Setup | `SynveilSetup.exe`, Windows x86_64 | **Implemented; Build validated** in P045 Windows installer run [37970834502](https://github.com/nghianguyen150612/Synveil/actions/runs/37970834502). Scoped standard-user steps ran, but Windows native acceptance run [37970834767](https://github.com/nghianguyen150612/Synveil/actions/runs/37970834767) failed while recording unavailable required surfaces. **Native qualified: no.** | **Blocked; Not yet published.** Exact supported Windows versions and P045 acceptance are still required. |
-| Ubuntu DEB | `synveil_<version>_amd64.deb`, x86_64 | **Implemented; Build validated** as part of the P045 Linux artifact job in run [37970834983](https://github.com/nghianguyen150612/Synveil/actions/runs/37970834983). The Ubuntu 24.04 guest failed before product assertions during boot/readiness. **Native qualified: no.** | Ubuntu 24.04 x86_64 is a candidate only. **Blocked; Not yet published.** |
-| Fedora RPM | `synveil-<version>-1.x86_64.rpm`, x86_64 | **Implemented; Build validated** in run [37970834983](https://github.com/nghianguyen150612/Synveil/actions/runs/37970834983). The Fedora 42 guest failed before product assertions during boot/readiness. **Native qualified: no.** | Fedora 42 x86_64 is a candidate only. Other RPM distributions are **Unsupported** unless separately named and qualified. |
-| Linux AppImage | `Synveil-<version>-x86_64.AppImage`, x86_64 | **Implemented; Build validated** in run [37970834983](https://github.com/nghianguyen150612/Synveil/actions/runs/37970834983). Ubuntu 24.04 and Fedora 42 guest attempts failed before product assertions. **Native qualified: no.** | No general Linux compatibility baseline is approved. **Blocked; Not yet published.** |
-| Linux quick install | `deploy/install/quick-install.sh` → `scripts/linux_quick_install.py` | **Implemented** with exact Ubuntu 24.04/Fedora 42 x86_64 detection and authenticated stable-channel acquisition. Production endpoint, key bootstrap, and channel generation are absent. | **Blocked; Not yet published.** Do not copy an install command from CI or invent trust inputs. |
+`Implemented` describes source behavior. `Build validated` describes a
+completed build check. `Native tested` describes a scoped machine test.
+`Native qualified` requires the complete applicable clean-machine journey.
+`Blocked` records missing mandatory evidence. `Not yet published` means no
+public v0.2 download exists. `Unsupported` means this release plan makes no
+compatibility claim.
 
-`Implemented` describes source behavior. `Build validated` describes the cited CI build on P045's source head only. `Native tested` means a scoped native step actually ran; it does not mean the full product journey passed. `Native qualified` requires the named clean-machine acceptance assertions to pass. `Blocked` records an unmet release gate. `Not yet published` means no official public release artifact is available. `Unsupported` is not a compatibility promise.
+No v0.2 target is `Native qualified`. The target list above must not be used as
+a support claim or as a source for download links.
 
-## Exact support boundary
+## Connect and Host
 
-- Windows: x86_64 Setup is a v0.2 target. No Windows version is qualified yet; Windows ARM64 is outside the matrix.
-- Linux package candidates: Ubuntu 24.04 x86_64 for DEB and Fedora 42 x86_64 for RPM. Both still require P045 native acceptance.
-- Debian is not qualified. A working DEB package or Debian-family package manager does not establish Debian support.
-- Other Debian derivatives and RPM-based distributions are not qualified by file format.
-- AppImage targets Linux x86_64, but its compatibility baseline and native launch remain unqualified. It does not mean every Linux kernel, glibc, desktop, or FUSE configuration is supported.
-- Linux ARM64/aarch64, 32-bit architectures, macOS, iOS, and Android are outside the v0.2 installation matrix.
+**Connect** means connecting the desktop client to an existing Synveil server.
+**Host** means setting up a managed Synveil server on this device. These are
+product modes, not qualified v0.2 installation journeys. First-run Connect and
+Host acceptance remain blocked.
 
-## Release identity and publication checklist
+Managed Host qualification needs authentic, signed Synveil server,
+PostgreSQL 17 and Caddy inputs for Ubuntu 24.04 and Fedora 42, plus the approved
+public keyring, independently pinned publisher fingerprints, complete license
+and notice evidence, and a passing signed eight-entry P036 inventory. Those
+production trust inputs and the installed Host acceptance evidence have not
+been supplied.
 
-- [ ] Name the exact OS versions, architecture, and GUI/runtime requirements that passed native acceptance.
-- [ ] Complete P045 Windows, Ubuntu 24.04, Fedora 42, and any explicitly advertised generic-Linux acceptance; preserve exact source and artifact identities.
-- [ ] Complete P036 end-to-end managed Host acceptance. Current P045-head self-host run [37970834595](https://github.com/nghianguyen150612/Synveil/actions/runs/37970834595) failed the production-artifact identity gate; platform jobs were not a passing Host qualification.
-- [ ] Provision and independently distribute the production public trust root; establish private-key custody and signing operations. The verifier exists, but no production key is provisioned.
-- [ ] Publish authenticated stable-channel and release-manifest bytes, the trusted origin, exact artifacts, and signed checksums/manifest data. No public v0.2 channel or artifacts are published now.
-- [ ] Verify final producer names, version, architecture, hashes, signature, release links, and paired English/Vietnamese install and recovery links on the exact release source.
-- [ ] Run P047 final release-candidate validation only after required P045/P036 and release prerequisites pass. P046 does not create a v0.2.0 tag.
+## Upgrade, repair and data
 
-The P045 cross-platform matrix run [37970834983](https://github.com/nghianguyen150612/Synveil/actions/runs/37970834983) built the Linux artifacts but failed its clean-machine evidence gate: Ubuntu 24.04 DEB, Fedora 42 RPM/AppImage guests did not reach readiness, and the aggregate native-evidence gate failed. This result is not a native qualification pass. See the P045 [PR #78](https://github.com/nghianguyen150612/Synveil/pull/78) for its complete checks and retained evidence.
+The Windows and Linux package policies have empty `upgrade_from` lists. No
+automatic `v0.1.0` to `v0.2.0` upgrade is approved or tested. Repair,
+uninstall/reinstall and data preservation are not qualified across the target
+matrix. No database rollback has passed. Keep a verified backup of released
+data and do not test candidate installers against the only copy.
 
-## Current public guidance
+## Signing and downloads
 
-Use the v0.1 manuals linked from the [documentation index](../../README.md) for the currently released product. The v0.2 guides in this folder are preview guidance; they do not replace v0.1 instructions or authorize installing unsigned CI artifacts.
+There are no production Authenticode, RPM/OpenPGP or Ed25519 signatures and no
+independently trusted v0.2 public key policy. No stable-channel metadata or
+public v0.2 checksums exist. Do not treat a green build, a CI archive, or an
+unsigned candidate manifest as publisher authentication.
+
+Before a future download is trusted, the release must publish the exact signed
+artifact and authenticated manifest, then verify the downloaded bytes,
+signature, source identity and channel generation. That verification procedure
+cannot be completed against unpublished files.
+
+## Unsupported platforms and current guidance
+
+This v0.2 release plan does not qualify Debian as a separate target, other
+Linux distributions, `ARM64/aarch64`, 32-bit systems, `macOS`, `Android`, or
+`iOS`. Source code presence does not establish support. This release does not
+claim an Android or iOS store release.
+
+Continue to use the published `v0.1.0` guidance in the
+[v0.1 release notes](../RELEASE_NOTES_v0.1.md). The source tree is available
+through the repository [README](../../../README.md). No v0.2 installer steps,
+download links or release checksums are available yet.

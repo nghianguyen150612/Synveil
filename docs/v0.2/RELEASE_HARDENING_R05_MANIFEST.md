@@ -2,193 +2,218 @@
 
 ## Final disposition
 
-**`R05_INTEGRATED_RELEASE_BLOCKED`.** R01–R04 are integrated on `main` in
-their required order, and R05 repaired a source-level workflow defect. The
-exact-source unsigned candidate pipeline is running against `d0b1c43` as of
-2026-10-20 02:38 UTC. Production signing, P036, native qualification and the
-P048 release decision remain blocked. No `v0.2.0` tag, GitHub Release or
+**`R05_INTEGRATED_RELEASE_BLOCKED`.** R01–R04 and R05 source work are on
+`main`. R05 merged as PR #154 with real merge commit
+`deef2db375764d3157afb5371eb963bbd9b3f1ea`. The exact-source unsigned
+candidate workflow passed source/version validation; Fedora server input
+completed, while Ubuntu server, AppImage, Windows and Qt reproducibility jobs
+were in progress and the DEB/RPM build was queued at the 05:44 UTC snapshot.
+The separate exact-main AppImage workflow passed its build and bounded
+hosted-runner checks. P036 production identity,
+production signing, native qualification, upgrade/data-preservation evidence,
+and P048 approval remain blocked. No `v0.2.0` tag, GitHub Release or
 stable-channel activation exists.
 
-This record is a release handoff, not production signing or release approval.
-The authoritative P047 definition remains the unchanged historical record in
-[PR #104 at `81303a4`](https://github.com/nghianguyen150612/Synveil/pull/104).
+This is a release handoff, not production signing or release approval. The
+P047 gate set remains the unchanged set from historical P047 PR #104 at
+`81303a469beb2edd5ae7c3f5efacfc617b405093`; that PR is closed and unmerged.
 
 ## Git integration
 
 - Repository: `nghianguyen150612/Synveil`.
 - Starting `origin/main`: `b01c3b2328b271529d02cb4ee30d97be43a42611`.
-- Initial live check found R01–R04 open, stacked in order, with their heads
-  matching the supplied verified snapshot. No v0.2.0 tag or GitHub Release
-  existed.
-- R01 PR #148 merged by a real merge commit: `d8b5d3e7ec00e6992a44de6cee3b0af799667af3`.
-- R02 PR #149 merged by a real merge commit: `ac8c3e5c7c5841baa5f55029bd9c77a1861f5ea1`.
-- R03 PR #150 merged by a real merge commit: `df6afc2d7bba4ee063946f60f0bba9e067e487e0`.
-- R04 PR #151 merged by a real merge commit: `fc23d4d356ba746d739feed30e0b5aa144f0c87b`.
-- Each merge retained the predecessor history. The R01, R02, R03 and R04
-  original verified heads remain ancestors of `main`; P001–P060 history and
-  platform source trees remain in place.
-- R05 branch: `release/v02-official-publication`.
-- R05 source-fix PR #152 merged as `d0b1c43c144493e4adf9b44d3fd24d02f2bd7dbb`.
-  It makes `scripts/build-host-server-input.sh` executable. The candidate
-  pipeline had failed on the prior integrated source because both host-input
-  jobs received exit 126 (`Permission denied`). The script has a shebang and
-  direct workflow callers; the fix changes only its Git mode (`100644` to
-  `100755`).
-- Exact R05 candidate source under evaluation: `d0b1c43c144493e4adf9b44d3fd24d02f2bd7dbb`.
-- R01–R04 integrated baseline before R05 fix: `fc23d4d356ba746d739feed30e0b5aa144f0c87b`.
-- Required merge policy was checked: merge commits are enabled; no repository
-  rulesets or required checks were returned; `main` and the PR branches were
-  reported unprotected. The branch-protection detail API returned 403, so no
-  inaccessible rule is claimed absent. No force-push, squash merge, rebase
-  merge or protected-rule bypass was used.
+- R01 PR #148 merged by a real merge commit:
+  `d8b5d3e7ec00e6992a44de6cee3b0af799667af3`.
+- R02 PR #149 merged by a real merge commit:
+  `ac8c3e5c7c5841baa5f55029bd9c77a1861f5ea1`.
+- R03 PR #150 merged by a real merge commit:
+  `df6afc2d7bba4ee063946f60f0bba9e067e487e0`.
+- R04 PR #151 merged by a real merge commit:
+  `fc23d4d356ba746d739feed30e0b5aa144f0c87b`.
+- R05 PR #152 merged as `d0b1c43c144493e4adf9b44d3fd24d02f2bd7dbb`;
+  it corrected the executable Git mode of `scripts/build-host-server-input.sh`.
+- R05 PR #153 merged as `503920aeac5f087f78fea253192579b71ae5e620`.
+- R05 PR #154, branch `release/v02-official-publication`, merged on
+  2026-10-20 by a real merge commit:
+  `deef2db375764d3157afb5371eb963bbd9b3f1ea`.
+- Product-source integration SHA on `main`:
+  `deef2db375764d3157afb5371eb963bbd9b3f1ea`.
+- Each supplied R01–R04 verified head, the R05 #154 head
+  `6f984752e2e03e49ecbd90bc2cd85f4344987582`, and the starting main SHA were
+  verified reachable from integrated `main`. No squash, rebase, force-push or
+  history rewrite was used. The R05 branch was retained after merge.
+- Closed P045 PR #78 and P047 PR #104 were not reopened or merged. The existing
+  iOS P001–P060 and desktop, server and Android source histories remain intact.
+- GitHub reports merge commits enabled, `delete_branch_on_merge=false`, no
+  required PR checks, and no repository rulesets. The branch-protection detail
+  endpoint returned 403; no inaccessible policy is claimed absent. PR #154 was
+  merged through the ordinary GitHub merge operation without `--admin`.
 
-## Product and candidate identity
+## Source and candidate identity
 
 - Product version: `0.2.0`.
-- Exact-source release-candidate workflow: [run 39359470865](https://github.com/nghianguyen150612/Synveil/actions/runs/39359470865),
-  `workflow_dispatch`, source `d0b1c43c144493e4adf9b44d3fd24d02f2bd7dbb`,
-  `sign_candidate=false`.
-- Source/version validation passed. Package, AppImage and Windows builds were
-  in progress. The Ubuntu host-input build was in progress; the Fedora
-  host-input job failed before compilation because rustup rejected
-  `HOME=/github/home` for the root user in the Fedora container
-  (`euid-obtained home directory: /root`, exit 128). The workflow cannot
-  assemble a candidate from this run. R05 adds job-level `HOME: /root`, then
-  will rerun the candidate on the resulting integrated main source.
+- Exact-source version audit on the integrated source:
+  `python3 scripts/validate-release-version.py --expected-version 0.2.0 --source-commit deef2db375764d3157afb5371eb963bbd9b3f1ea`
+  passed and reported 18 workspace crates.
 - Qualified production candidate SHA: **none**.
-- No R03 test-merge artifact is reused as an R05 release artifact. The R03
-  candidate source was `7f88d114e272ac220056db216030acda84be90e1`; its artifacts
-  are historical diagnostics only.
-- No official release URL exists.
+- Exact integrated-main unsigned candidate workflow:
+  [run 39373799679](https://github.com/nghianguyen150612/Synveil/actions/runs/39373799679),
+  source `deef2db375764d3157afb5371eb963bbd9b3f1ea`, dispatched with
+  `sign_candidate=false`; its source/version validation passed. At the 05:44
+  UTC snapshot, Fedora server input completed, Ubuntu server, AppImage, Windows
+  and desktop Qt reproducibility jobs were in progress, while the DEB/RPM build
+  remained queued. It has not emitted a complete exact-source candidate.
+- The candidate from earlier main SHA `503920aeac5f087f78fea253192579b71ae5e620`
+  and all R03 test-merge artifacts are historical and are not R05 release
+  artifacts.
+- R05 PR #154 aligns the Windows Rust CI release build with Windows Installer:
+  both now build `synveil-desktop` and `synveil-client` in one locked Cargo
+  invocation. The clean-target Windows reproducibility verifier uses that same
+  grouped invocation. The earlier same-source workflows differed by 1,163
+  bytes in the PR test run; exact integrated-main cross-producer comparison is
+pending the Windows Installer and Rust CI runs, which remain in progress or
+queued. No ZIP is selected for
+  publication until those exact main outputs match.
+- PR #154 also keeps Qt diagnostics outside the source tree, strengthens
+  committed-source fingerprint checks, and makes the Linux VM acceptance
+  adapter executable. It changes build and acceptance infrastructure, not
+  product runtime behavior.
 
-## Artifact and signing disposition
+## Final artifact and signing disposition
 
-The exact-source unsigned build is still running. The
-[R05 final artifact matrix](RELEASE_FINAL_ARTIFACT_MATRIX.md) distinguishes
-candidate workflow bytes from production-qualified and distributed artifacts.
-No R05 product file is declared final until the producer and independent
-verifier finish and the exact byte identities are recorded there.
+The [R05 final artifact matrix](RELEASE_FINAL_ARTIFACT_MATRIX.md) is the
+identity record. The cross-platform candidate pipeline has not completed. The
+exact-main unsigned Windows Setup and AppImage candidate identities are recorded
+there; the Windows ZIP and Linux package identities are pending. No final
+production-signed artifact exists. Any unsigned CI output remains a candidate
+input and is not a final release artifact.
 
-Production signing was not attempted. The protected GitHub environment
-`synveil-release-signing` was not configured (the environment lookup returned
-404). The task supplied no authorized Authenticode PFX/password and approved
-thumbprint/timestamp endpoint, RPM/OpenPGP private identity and trusted
-fingerprint, Ed25519 release key and independent trust policy, or P036
-publisher keyring/fingerprints. Repository secret and self-hosted runner
-enumeration endpoints returned 403; their contents are not inferred. The
-nonproduction fixture suite passed 5/5 tests, including explicit missing-key
-and missing-inventory blockers. Fixture signatures do not establish a
-production publisher identity.
+Production signing was not attempted. No authorized Authenticode certificate
+and protected PFX/password, independently approved thumbprint and timestamp
+endpoint; RPM/OpenPGP signing identity and trusted fingerprint; Ed25519 private
+key and independent public trust policy; or production signing environment was
+available. No private key, publisher identity, production digest, signature or
+provenance was created. Signing must precede final distributed-byte hashing.
 
-No signature, publisher identity, production digest, artifact provenance or
-signed inventory was fabricated. Signing must happen before final distributed
-byte hashes are calculated; the final manifest must bind those exact signed
-bytes.
+Signing behavior was exercised with nonproduction fixtures only:
+`python3 -m unittest scripts.tests.test_release_signing scripts.tests.test_rpm_signing scripts.tests.test_p036_signing -v`
+passed 5/5. These tests explicitly block missing signers, unknown trust keys
+and missing inventory; they do not establish publisher trust. The exact-main
+AppImage workflow did verify the pinned AppImageKit runtime signature against
+upstream fingerprint `570C77ACEA40C0F1B758902CBF96CCA56490F695` and runtime SHA-256
+`2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d`; this is
+third-party runtime provenance, not Synveil product signing.
 
 ## P036 production inventory
 
 `acceptance/p036/production-artifacts.json` and
-`acceptance/p036/production-artifacts.json.sig` are absent. Only the schema is
-present. `python3 scripts/validate-p036-production-artifacts.py` exits 2 with
-`BLOCKED_BY_EXTERNAL_INPUT: production-artifacts.json has not been supplied`.
-The exact-source R05 run produced one unsigned Synveil server source input for
-Ubuntu 24.04; its archive identity and closed payload inventory are recorded
-in the [artifact matrix](RELEASE_FINAL_ARTIFACT_MATRIX.md). Its bundled notice
-incorrectly identifies a desktop/Qt package. The R05 fix supplies a server
-notice that states the input's scope and explicitly does not claim third-party
-dependency notices. The Fedora server input failed before compilation due the
-container HOME mismatch. Neither input is production-signed or P036-ready.
+`acceptance/p036/production-artifacts.json.sig` are absent. The local validator
+reports:
 
-The R05 candidate workflow's production signing and P036 jobs were deliberately
-not enabled. The required eight signed entries, PostgreSQL 17/Caddy artifacts,
-publisher keyring, independent fingerprints, complete license/notice
-evidence, detached inventory signature and runtime verification do not exist.
-P036 is not a pass, and no real Managed Host journey ran.
+```text
+BLOCKED_BY_EXTERNAL_INPUT: production-artifacts.json has not been supplied
+```
+
+The exact-main P036 workflow is
+[run 39373791245](https://github.com/nghianguyen150612/Synveil/actions/runs/39373791245).
+Its `artifact-identity` job failed at “Materialize approved public publisher
+keyring”; the interruption, Ubuntu and Fedora native jobs remain queued. The source/contract job passed. The same failure was already visible on the
+matching PR-head check
+[39372788693](https://github.com/nghianguyen150612/Synveil/actions/runs/39372788693/job/118464161759).
+The candidate pipeline produced an unsigned Fedora Synveil server source-input
+bundle, but that bundle is not a production P036 entry: its notice explicitly
+says third-party dependency license/notice evidence is incomplete. There are no
+authentic signed eight-entry production bytes, independent fingerprints,
+complete license/notice evidence, detached inventory signature or runtime
+registration result. P036 is **BLOCKED**; no real Managed Host acceptance pass
+is inferred.
 
 ## Native qualification
 
-No `PASS_NATIVE` result was established.
+No `PASS_NATIVE` result was established at capture.
 
-- Windows 11 x86_64: no qualified interactive Windows 11 session was supplied.
-  GitHub-hosted `windows-2025` checks cannot establish first-run GUI, genuine
-  logon/restart or named-pipe acceptance. Exact-candidate native consumption
-  has not yet run.
-- Ubuntu 24.04 x86_64: no authenticated exact-candidate native desktop install
-  and first-run session has completed.
-- Fedora 42 x86_64: no authenticated exact-candidate native desktop install
-  and first-run session has completed.
-- AppImage: the exact R05 image is pending the producer; no qualified Ubuntu
-  24.04 and Fedora 42 lifecycle/relocation session is established.
-- Managed Host P036: blocked by the missing authenticated eight-entry
-  inventory, public keyring/fingerprints and authorized native/VM control
-  environment.
+- Windows 11 x86_64: exact-main native acceptance
+  [run 39373764284](https://github.com/nghianguyen150612/Synveil/actions/runs/39373764284)
+  completed with the expected environment-blocked result. Its build job
+  produced an unsigned Setup candidate and its standard-user product acceptance
+  step passed on GitHub-hosted Windows Server 2025. The final job correctly
+  blocked because that runner cannot supply the requested interactive Windows
+  11 GUI, genuine logon/restart, named-pipe and real-server journey.
+- Ubuntu 24.04 x86_64 and Fedora 42 x86_64: the exact-main native Linux
+  candidate consumer has not run because the exact candidate producer has not
+  completed. No authenticated desktop install, first sync, repair and data
+  preservation journey is recorded.
+- AppImage: exact-main build, independent reproducibility, manifest/runtime
+  inspection, smoke and current-user lifecycle workflow
+  [run 39373764291](https://github.com/nghianguyen150612/Synveil/actions/runs/39373764291)
+  passed on GitHub-hosted Ubuntu 22.04. This is exact integrated-main build
+  evidence, not native Ubuntu 24.04/Fedora 42 desktop acceptance.
+- Managed Host P036: exact-main run 39373791245 failed artifact identity
+  because the approved keyring is missing; its native/interruption jobs are
+  queued. Production trust inputs, authorized native OS sessions and VM power
+  control are unavailable.
 
-The exact candidate consumers must be dispatched only with a successful
-producer run ID. Container checks, source tests, workflow fixture builds and
-skipped jobs are not native acceptance.
+Containers, offscreen Qt, source tests, a build runner, workflow fixtures,
+queued or skipped guests, and candidate-only checks are not native acceptance.
 
 ## Upgrade, repair and data integrity
 
-The current Windows and native package policies both have `upgrade_from: []`.
-No prior version, including v0.1.0, is approved for automatic upgrade. No
-source-to-target upgrade, downgrade or rollback has passed. Do not advertise
-v0.1-to-v0.2 automatic upgrades. The release remains fresh-install-only only
-if the authoritative P047 requirements and product contract later accept that
-distribution path; this record does not mark `UPGRADE` not applicable.
+`deploy/release/native-upgrade-policy.json` and
+`deploy/release/windows-upgrade-policy.json` both contain `upgrade_from: []`.
+No prior version, including v0.1.0, is approved for automatic upgrade. No real
+source-to-target upgrade, downgrade or rollback has passed. The P047 `UPGRADE`
+gate remains blocked; this manifest does not mark it not applicable.
 
-No native v0.2 install/repair/uninstall journey established client library,
-credentials, durable queue, server object-store, configuration or PostgreSQL
-data preservation. No genuine VM power interruption and recovery was run. No
-rollback-success claim is made. Before any later release decision, preserve
-user data and verify recovery from interrupted installation/update boundaries
-without resetting storage identity or credentials.
+No exact signed native install/repair/uninstall journey establishes client
+library identity, credentials, durable queue, server object storage,
+configuration or database preservation. No real VM power interruption and
+recovery was run. No rollback-success claim is made.
 
 ## P047 and P048
 
-The qualification report records every one of the authoritative 21 P047 gates
-and its evidence: [RELEASE_CANDIDATE_QUALIFICATION_R05.md](RELEASE_CANDIDATE_QUALIFICATION_R05.md).
-All 21 remain `BLOCKED` because full source, exact artifact, signing/trust,
-native journey or data-preservation evidence is missing; no status is inferred
-from a merge or a partial workflow.
+The qualification report records all 21 authoritative P047 gates with exact
+source, artifacts, commands, runner, evidence, risks and status:
+[RELEASE_CANDIDATE_QUALIFICATION_R05.md](RELEASE_CANDIDATE_QUALIFICATION_R05.md).
+No gate is promoted from a merge, unsigned artifact, skipped job, fixture or
+partial result.
 
-**P048 decision: `BLOCKED`.** Prerequisites absent include all 21 P047 PASS
-results, native Windows/Ubuntu/Fedora and AppImage evidence, P036 production
-identity and Host journeys, approved production signers and independent trust
-roots, authenticated stable distribution, and release-specific upgrade/data
-preservation decisions. No stable tag or publication was attempted.
+**P048 decision: `BLOCKED`.** Required conditions still missing include all
+mandatory P047 PASS evidence, authenticated production artifacts, approved
+signers and trust roots, P036 inventory and Managed Host acceptance, native
+Windows/Linux journeys, upgrade/data-preservation decisions, and an
+authenticated stable channel. No stable tag or publication was attempted.
 
-## Exact remaining external inputs and actions
+## Remaining external inputs and actions
 
 1. Provide approved Authenticode signing material through protected custody,
-   the independently approved thumbprint, and approved timestamp endpoint.
-2. Provide the approved RPM/OpenPGP signer and independently trusted
+   an independently approved thumbprint and approved timestamp endpoint.
+2. Provide the approved RPM/OpenPGP signing identity and independently trusted
    fingerprint.
-3. Provision an Ed25519 release metadata signing key, public trust policy,
-   key ID, freshness/rollback generation and key-rotation procedure.
-4. Supply authentic Ubuntu 24.04 and Fedora 42 desktop/server/PostgreSQL 17/
-   Caddy bytes with immutable source revisions, payload inventories, signed
-   provenance, license/notice evidence, approved publisher keyring and
-   independently pinned fingerprints; validate and sign the eight-entry
-   P036 inventory.
+3. Provision an Ed25519 metadata signing key, independent public trust policy,
+   key ID, minimum generation/freshness protection and key-rotation procedure.
+4. Supply authentic, signed Ubuntu 24.04 and Fedora 42 desktop/server,
+   PostgreSQL 17 and Caddy inputs, immutable source revisions, payload
+   inventories, complete licenses/notices, approved keyring and independently
+   pinned publisher fingerprints; then validate and sign the eight-entry P036
+   inventory.
 5. Provision authorized interactive Windows 11, Ubuntu 24.04 and Fedora 42
-   test environments plus a controlled test server and P036 VM power-control
-   runner. Supply exact-candidate interaction evidence, not screenshots or
-   logs detached from the run.
-6. Complete the exact-source candidate build and verifier, resolve the
-   Windows portable ZIP producer discrepancy using member-level evidence,
-   and bind all evidence to the final signed bytes.
-7. Execute upgrade, repair, uninstall, preservation and interruption recovery
-   tests against supported starting states; retain `upgrade_from: []` until a
-   real path passes.
-8. Complete every P047 gate, record the P048 decision as approved only after
-   its prerequisites pass, then follow the ordered tag, GitHub Release,
-   download verification and stable-channel publication procedure.
+   test environments, a controlled test server, and P036 VM power-control
+   runner. Bind interaction evidence to the exact signed candidate.
+6. Complete exact-main producer and verifier runs; require Windows Installer
+   and Rust CI ZIP equality; then bind acceptance to those exact final signed
+   bytes.
+7. Execute supported upgrade, repair, uninstall, preservation, interruption
+   recovery and downgrade-rejection scenarios. Keep `upgrade_from: []` until a
+   supported transition passes.
+8. Pass all mandatory P047 gates and record an approved P048 decision before
+   creating a tag, public release or stable-channel metadata.
 
 ## Publication state
 
+- Product source integration SHA: `deef2db375764d3157afb5371eb963bbd9b3f1ea`.
 - Tag `v0.2.0`: absent.
 - GitHub Release: absent; no release URL.
 - Stable-channel metadata/origin: not provisioned or activated.
-- Public download hashes/signatures: none.
-- Current released version remains `v0.1.0`.
+- Final signed public artifact hashes and signatures: none.
+- Current public product remains v0.1.0.
 - Completion status: **`R05_INTEGRATED_RELEASE_BLOCKED`**.
