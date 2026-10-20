@@ -112,7 +112,11 @@ jobs:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - name: Build source-bound unsigned server input
-        run: ./scripts/build-host-server-input.sh target/host-server-candidate
+        run: |
+          # The Fedora container runs as root while checkout files belong to
+          # the runner UID; trust only this exact mounted workspace.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          ./scripts/build-host-server-input.sh target/host-server-candidate
       - uses: actions/upload-artifact@v4
         with:
           name: synveil-host-server-fedora42-candidate
