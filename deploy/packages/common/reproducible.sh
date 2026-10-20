@@ -352,6 +352,7 @@ synveil_prepare_reproducible_rust_build() {
     local native_qt_root=""
 
     canonical_repo_root="$(cd "$repo_root" && pwd -P)"
+    synveil_assert_release_source_preflight "$canonical_repo_root" || return 1
     cargo_target_dir="${CARGO_TARGET_DIR:-${canonical_repo_root}/target}"
     if [[ "$cargo_target_dir" =~ ^[A-Za-z]:[/\\] ]]; then
         if command -v cygpath >/dev/null 2>&1; then
@@ -731,11 +732,47 @@ synveil_source_revision() {
     }
 }
 
-# Hash the actual source files, including dirty tracked files and non-ignored
-# source files. Ignored build output (target/) is excluded by Git's file list.
-# This is the provenance key for a generated manifest; it is intentionally not
-# a hash of HEAD alone, because a dirty worktree must not be compared with a
-# clean-checkpoint artifact.
+# Check for non-ignored untracked inputs once, before release compilation. The
+# checked root/revision marker is persisted between GitHub Actions steps so
+# generated files from Cargo, Qt, packaging, or tests cannot become source
+# inputs merely because a later manifest is written from the same checkout.
+synveil_assert_release_source_preflight() {
+    local repo_root="$1"
+    local canonical_root head_sha marker_root marker_sha path
+    local -a untracked_paths=()
+
+    canonical_root="$(cd "$repo_root" && pwd -P)"
+    head_sha="$(synveil_source_revision "$canonical_root")" || return 1
+    marker_root="${SYNVEIL_RELEASE_SOURCE_PREFLIGHT_ROOT:-}"
+    marker_sha="${SYNVEIL_RELEASE_SOURCE_PREFLIGHT_SHA:-}"
+    if [[ "$marker_root" == "$canonical_root" && "$marker_sha" == "$head_sha" ]]; then
+        return 0
+    fi
+
+    mapfile -d '' -t untracked_paths < <(
+        git -C "$canonical_root" ls-files -z --others --exclude-standard -- . ':!target'
+    )
+    if ((${#untracked_paths[@]} > 0)); then
+        printf '[synveil-artifact] ERROR: non-ignored untracked release source inputs exist before compilation:\n' >&2
+        for path in "${untracked_paths[@]}"; do
+            printf '[synveil-artifact]   %s\n' "$path" >&2
+        done
+        return 1
+    fi
+
+    export SYNVEIL_RELEASE_SOURCE_PREFLIGHT_ROOT="$canonical_root"
+    export SYNVEIL_RELEASE_SOURCE_PREFLIGHT_SHA="$head_sha"
+    if [[ -n "${GITHUB_ENV:-}" ]]; then
+        printf 'SYNVEIL_RELEASE_SOURCE_PREFLIGHT_ROOT=%s\nSYNVEIL_RELEASE_SOURCE_PREFLIGHT_SHA=%s\n' \
+            "$canonical_root" "$head_sha" >> "$GITHUB_ENV"
+    fi
+}
+
+# Hash tracked source files from their current worktree bytes. Non-ignored
+# untracked inputs are rejected by synveil_assert_release_source_preflight
+# before compilation; generated files therefore never enter the provenance
+# fingerprint. Dirty tracked files still produce a different fingerprint from
+# the committed checkout.
 synveil_source_fingerprint() {
     local repo_root="$1"
     local path digest
@@ -744,7 +781,7 @@ synveil_source_fingerprint() {
         return 1
     fi
     {
-        git -C "$repo_root" ls-files -z --cached --others --exclude-standard -- . ':!target' |
+        git -C "$repo_root" ls-files -z --cached -- . ':!target' |
             LC_ALL=C sort -z |
             while IFS= read -r -d '' path; do
                 [[ -f "$repo_root/$path" ]] || continue

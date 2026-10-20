@@ -29,6 +29,12 @@ jobs:
           version: 6.8.3
           arch: win64_msvc2022_64
           cache: true
+      - name: Keep Qt installer diagnostics outside the source tree
+        shell: pwsh
+        run: |
+          if (Test-Path -LiteralPath 'aqtinstall.log') {
+            Move-Item -LiteralPath 'aqtinstall.log' -Destination (Join-Path $env:RUNNER_TEMP 'aqtinstall.log') -Force
+          }
       - name: Select and authenticate the MSVC linker
         shell: pwsh
         run: ./scripts/select-msvc-linker.ps1
