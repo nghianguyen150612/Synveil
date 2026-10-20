@@ -166,6 +166,13 @@ jobs:
           arch: win64_msvc2022_64
           cache: true
 
+      - name: Keep Qt installer diagnostics outside the source tree
+        shell: pwsh
+        run: |
+          if (Test-Path -LiteralPath 'aqtinstall.log') {
+            Move-Item -LiteralPath 'aqtinstall.log' -Destination (Join-Path $env:RUNNER_TEMP 'aqtinstall.log') -Force
+          }
+
       - name: Verify Qt 6.4 minimum
         shell: pwsh
         run: |

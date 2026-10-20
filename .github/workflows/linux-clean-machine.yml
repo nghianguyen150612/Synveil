@@ -121,6 +121,10 @@ jobs:
           host: linux
           target: desktop
           arch: linux_gcc_64
+      - name: Keep Qt installer diagnostics outside the source tree
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          if [[ -f aqtinstall.log ]]; then mv -- aqtinstall.log "$RUNNER_TEMP/aqtinstall.log"; fi
       - name: Build dependencies
         if: github.event_name != 'workflow_dispatch'
         run: |

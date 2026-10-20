@@ -37,6 +37,9 @@ jobs:
           target: desktop
           arch: linux_gcc_64
           cache: true
+      - name: Keep Qt installer diagnostics outside the source tree
+        run: |
+          if [[ -f aqtinstall.log ]]; then mv -- aqtinstall.log "$RUNNER_TEMP/aqtinstall.log"; fi
       - name: Install conservative build/runtime dependencies
         run: |
           sudo apt-get update
