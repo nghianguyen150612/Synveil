@@ -38,7 +38,7 @@ mkdir -p "$host_input_stage/payload/bin"
 for host_input_binary in synveil-api synveil-worker synveil-server-migrate synveil-host-helper; do
     install -m 0755 "$host_input_repo/target/release/$host_input_binary" "$host_input_stage/payload/bin/$host_input_binary"
 done
-install -m 0644 "$host_input_repo/LICENSE" "$host_input_repo/deploy/NOTICE" "$host_input_stage/payload/"
+install -m 0644 "$host_input_repo/LICENSE" "$host_input_repo/deploy/server/NOTICE" "$host_input_stage/payload/"
 python3 - "$host_input_repo" "$host_input_stage" "$host_input_revision" "$host_input_os" <<'PY'
 from pathlib import Path
 import hashlib, json, sys, tomllib

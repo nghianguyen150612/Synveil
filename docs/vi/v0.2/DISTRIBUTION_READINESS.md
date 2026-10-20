@@ -2,6 +2,22 @@
 
 **Trạng thái kiểm toán: đã chuẩn bị tài liệu; v0.2 chưa được phát hành.** Sản phẩm hiện đã phát hành vẫn là v0.1.0. Chưa có GitHub Release v0.2, channel tải công khai, khóa ký production hoặc bộ artifact v0.2 cuối cùng. Artifact từ workflow là đầu ra CI unsigned, không phải bản phát hành production đã xác thực.
 
+### Trạng thái phát hành R05 — 2026-10-20
+
+Lịch sử mã nguồn R01–R04 đã được tích hợp trên `main`. Pipeline tạo ứng viên
+unsigned chính xác theo source R05 đang chạy với source
+`d0b1c43c144493e4adf9b44d3fd24d02f2bd7dbb` trong
+[Actions run 39359470865](https://github.com/nghianguyen150612/Synveil/actions/runs/39359470865).
+Tại snapshot được ghi nhận gần nhất, chưa có bộ candidate hoàn chỉnh. Nếu
+được tạo, candidate đó vẫn chưa phải release công khai hoặc đã ký production.
+
+Việc ký production và thiết lập gốc tin cậy publisher, inventory P036 tám mục
+có chữ ký, chấp nhận native trên Windows 11/Ubuntu 24.04/Fedora 42, vòng đời
+AppImage, bằng chứng bảo toàn dữ liệu và khôi phục sau mất điện, cùng toàn bộ
+21 gate P047 vẫn bị chặn. P048 chưa được phê duyệt. Chưa có tag `v0.2.0`,
+GitHub Release hay stable channel. Tiếp tục dùng hướng dẫn v0.1.0 cho sản phẩm
+đã phát hành; không cài artifact Actions unsigned như bản release công khai.
+
 Baseline tài liệu P046 là `a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc`. P045 vẫn là PR bản nháp riêng, đang mở tại `035497c05c145e5c6129e744f9455937069680f4`; kết quả dưới đây chỉ là bằng chứng cho đúng source head đó, không hoàn thành P045.
 
 ## Danh sách nền tảng và artifact

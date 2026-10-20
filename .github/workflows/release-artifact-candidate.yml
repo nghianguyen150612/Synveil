@@ -36,6 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/validate-release-version.py --expected-version 0.2.0 --source-commit "$GITHUB_SHA"
+          python3 -m unittest scripts.tests.test_host_server_input_contract -v
           if git show-ref --verify --quiet refs/tags/v0.2.0; then
             echo 'R03 must not consume or create the final v0.2.0 tag.' >&2
             exit 1
@@ -97,6 +98,10 @@ jobs:
     runs-on: ubuntu-24.04
     container: fedora:42
     timeout-minutes: 50
+    env:
+      # The job runs as root in the Fedora container. GitHub's container
+      # default HOME (/github/home) makes rustup reject the mismatched euid.
+      HOME: /root
     permissions:
       contents: read
     steps:

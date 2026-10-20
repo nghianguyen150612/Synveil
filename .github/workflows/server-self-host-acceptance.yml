@@ -59,6 +59,7 @@ jobs:
       - name: Check harness and builder script syntax
         run: |
           bash -n scripts/build-host-server-input.sh scripts/run-p036-native-acceptance.sh scripts/run-p036-power-interruption.sh
+          python3 -m unittest scripts.tests.test_host_server_input_contract -v
           python3 -m py_compile deploy/server/prepare-host-runtime.py scripts/validate-p036-production-artifacts.py scripts/p036_native_acceptance.py scripts/p036-snapshot-state.py scripts/p036_power_interruption.py scripts/materialize-p036-trust-keyring.py
       - run: python3 scripts/validate-server-service-installation.py
 

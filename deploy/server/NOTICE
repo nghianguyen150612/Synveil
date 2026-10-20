@@ -1,0 +1,15 @@
+Synveil server runtime input notice
+
+This unsigned input bundle contains the Synveil server API, background worker,
+server migration utility, and Host helper built from the exact Synveil source
+revision recorded in its input manifest. Synveil source is licensed under the
+MIT terms in the adjacent LICENSE file.
+
+PostgreSQL 17 and Caddy are separate runtime inputs and are not included here.
+The bundle does not include the distribution's C library, systemd, D-Bus, or
+other operating-system runtime packages; those remain platform dependencies.
+
+This notice does not enumerate third-party Rust dependency licenses or replace
+their required notices. Before production registration, the exact build's
+dependency/license inventory and any required third-party notices must be
+provided and verified alongside the publisher-signed manifest and payload.
