@@ -22,16 +22,18 @@ R01–R04 verified heads are respectively
 `24f84d6e9460d82380f3ab017a3a2d36d24f2879`,
 `f6f2591f44caf54ff13de2b0fd869257674de655`,
 `524ef926324a0e965735bf2097d67792095a525a`, and
-`a4079010398c14e1bcb04914aab14c4fc8fe78c2`; all are ancestors of the current
-integrated main. Closed P045 PR #78 and P047 PR #104 were not reopened or
-merged. Existing iOS P001–P060 and desktop, server and Android source history
-remain intact.
+`a4079010398c14e1bcb04914aab14c4fc8fe78c2`; all are ancestors of integrated
+main `deef2db375764d3157afb5371eb963bbd9b3f1ea`. R05 PR #154 head
+`6f984752e2e03e49ecbd90bc2cd85f4344987582` is also reachable from that main
+commit. Closed P045 PR #78 and P047 PR #104 were not reopened or merged.
+Existing iOS P001–P060 and desktop, server and Android source history remain
+intact.
 
 ## R05 execution
 
 | Task | Status | Closeout / next action |
 | --- | --- | --- |
-| R05 — Final integration, production qualification and conditional publication | `R05_INTEGRATED_RELEASE_BLOCKED` | R05 branch: `release/v02-official-publication`. PR #152 merged as `d0b1c43c144493e4adf9b44d3fd24d02f2bd7dbb`; it fixes the non-executable `scripts/build-host-server-input.sh` that failed both server candidate jobs with exit 126. The exact-source candidate producer is [run 39359470865](https://github.com/nghianguyen150612/Synveil/actions/runs/39359470865), `sign_candidate=false`; see [R05 manifest](RELEASE_HARDENING_R05_MANIFEST.md), [P047 report](RELEASE_CANDIDATE_QUALIFICATION_R05.md), and [final artifact matrix](RELEASE_FINAL_ARTIFACT_MATRIX.md). P036 production inventory, production signing/trust, native journeys, Windows ZIP reconciliation, all 21 P047 gates and P048 approval remain blocked. No tag, GitHub Release or stable channel was created. |
+| R05 — Final integration, production qualification and conditional publication | `R05_INTEGRATED_RELEASE_BLOCKED` | Branch `release/v02-official-publication`; source PR [#154](https://github.com/nghianguyen150612/Synveil/pull/154) merged normally as `deef2db375764d3157afb5371eb963bbd9b3f1ea`. Earlier R05 PRs #152 and #153 merged as `d0b1c43c144493e4adf9b44d3fd24d02f2bd7dbb` and `503920aeac5f087f78fea253192579b71ae5e620`. At 05:44 UTC, exact-main candidate run [39373799679](https://github.com/nghianguyen150612/Synveil/actions/runs/39373799679) had passed source/version validation with `sign_candidate=false`; Fedora server input completed, Ubuntu server/AppImage/Windows/Qt reproduction were in progress, and DEB/RPM remained queued. Exact-main AppImage build/reproducibility/inspection/smoke/lifecycle passed on hosted Ubuntu 22.04. Windows Setup candidate from exact main reproduced byte-for-byte and its standard-user product step passed on hosted Server 2025, but Windows native acceptance correctly failed at the unavailable GUI/logon/named-pipe surfaces. Rust CI's Ubuntu/macOS/Windows tests, quality and OS checks passed; Windows/Linux Qt, web quality and dependency policy remained incomplete. Windows Installer, package and PostgreSQL 17 runs were in progress. All exact-main iOS static, Rust Apple, Xcode build and simulator workflows passed. P036 source/contract tests passed, but production artifact identity failed for absent approved keyring and native jobs are queued. Production trust/signers, supported OS native journeys, upgrade/data-preservation evidence, full exact-source artifact verification, mandatory P047 gates and P048 approval remain blocked. No tag, GitHub Release or stable channel was created; see [R05 manifest](RELEASE_HARDENING_R05_MANIFEST.md), [P047 report](RELEASE_CANDIDATE_QUALIFICATION_R05.md), and [final artifact matrix](RELEASE_FINAL_ARTIFACT_MATRIX.md). |
 
 The release candidate and qualification decision are separate. Integrating
 source does not pass a P047 gate. Only P048 may approve the final exact-source,

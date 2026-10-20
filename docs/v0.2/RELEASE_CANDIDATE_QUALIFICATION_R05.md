@@ -2,122 +2,145 @@
 
 ## Decision
 
-**`BLOCKED`. P048 is not approved.** The exact integrated release source under
-evaluation is `d0b1c43c144493e4adf9b44d3fd24d02f2bd7dbb`, product version
-`0.2.0`. The P047 gate set and gate definitions are the unchanged authoritative
-21 entries in historical P047 PR #104, source
-`81303a469beb2edd5ae7c3f5efacfc617b405093`. That PR remains closed and
-unmerged; its machine record is used as the definition, not reintroduced into
-main.
+**`BLOCKED`. P048 is not approved.** The exact integrated product source under
+evaluation is `deef2db375764d3157afb5371eb963bbd9b3f1ea`, product version
+`0.2.0`. The 21 gate IDs and their definitions remain the authoritative P047
+set from closed, unmerged PR #104 at
+`81303a469beb2edd5ae7c3f5efacfc617b405093`; no old P047 draft code was merged.
 
-This snapshot was recorded at **2026-10-20 02:41 UTC**. Exact-source
-candidate producer run
-[39359470865](https://github.com/nghianguyen150612/Synveil/actions/runs/39359470865)
-passed its source/version check. Its Fedora 42 host-input job failed before
-compilation: rustup rejected `HOME=/github/home` for the root user in the
-Fedora container (`euid-obtained home directory: /root`, exit 128). Package,
-AppImage, Windows and Ubuntu host-input builds were still in progress. The
-workflow cannot assemble a candidate from this run. R05 adds job-level
-`HOME: /root`; that change requires an exact-source rerun. No release artifact,
-final hash, production signature or native result is inferred from this run.
+Snapshot: **2026-10-20 05:44 UTC**. The exact-source candidate workflow
+[39373799679](https://github.com/nghianguyen150612/Synveil/actions/runs/39373799679)
+passed source/version validation; Fedora server input completed, Ubuntu server,
+AppImage and Windows candidate jobs were in progress, and the DEB/RPM build
+job remained queued.
+Exact-main Rust CI, Windows Installer, DEB/RPM, PostgreSQL 17 and AppImage runs use source
+`deef2db375764d3157afb5371eb963bbd9b3f1ea`. The AppImage run passed build,
+reproducibility, manifest/runtime inspection, smoke and current-user lifecycle
+checks on hosted Ubuntu 22.04. Rust CI, Windows Installer, DEB/RPM and
+PostgreSQL 17 were in progress. Rust CI's Ubuntu/macOS/Windows test jobs and
+Ubuntu/macOS/Windows checks and quality job passed; Windows/Linux Qt, web
+quality and dependency-policy jobs were not complete. The Windows native workflow completed with
+`BLOCKED_BY_ENVIRONMENT`: its build and standard-user acceptance passed on
+Windows Server 2025, but that runner does not provide the required Windows 11
+GUI and logon session. The exact-main P036 `artifact-identity` job failed while
+materializing the approved public keyring; native/interruption jobs were
+queued; the P036 source/contract checks passed. No artifact identity is
+inferred from an unfinished candidate workflow.
 
-## Source checks and current workflow evidence
+## Source checks and available evidence
 
-- Local exact-source version audit:
-  `python3 scripts/validate-release-version.py --expected-version 0.2.0 --source-commit d0b1c43c144493e4adf9b44d3fd24d02f2bd7dbb`
-  passed and reported 18 workspace crates.
-- Nonproduction signing-contract fixtures:
-  `python3 -m unittest scripts.tests.test_release_signing scripts.tests.test_rpm_signing scripts.tests.test_p036_signing -v`
-  passed 5/5 tests. The tests cover explicit missing-signer, unknown-trust-key
-  and missing-inventory blockers; fixture signing is not publisher evidence.
-- P036 production validator:
-  `python3 scripts/validate-p036-production-artifacts.py` exited 2 with
+- Exact integrated source/version check:
+  `python3 scripts/validate-release-version.py --expected-version 0.2.0 --source-commit deef2db375764d3157afb5371eb963bbd9b3f1ea`
+  passed; 18 workspace crates.
+- Source fingerprint tests on R05 head: `python3 -m unittest
+  scripts.tests.test_release_source_fingerprint -v` passed 4/4.
+- Linux acceptance adapter self-tests:
+  `python3 scripts/linux_acceptance.py self-test` passed 15/15. These validate
+  adapter behavior and do not execute a native guest.
+- Installation acceptance contract:
+  `bash scripts/validate-install-acceptance.sh` passed 21/21; it states that
+  native execution was not performed.
+- Nonproduction release/RPM/P036 signing fixtures:
+  `python3 -m unittest scripts.tests.test_release_signing
+  scripts.tests.test_rpm_signing scripts.tests.test_p036_signing -v` passed
+  5/5. Fixture keys do not establish publisher identity.
+- P036 production validator exits 2:
+  `python3 scripts/validate-p036-production-artifacts.py` reports
   `BLOCKED_BY_EXTERNAL_INPUT: production-artifacts.json has not been supplied`.
-- Exact-source Rust CI [39359450796](https://github.com/nghianguyen150612/Synveil/actions/runs/39359450796),
-  Windows installer [39359450646](https://github.com/nghianguyen150612/Synveil/actions/runs/39359450646),
-  Linux DEB/RPM [39359450795](https://github.com/nghianguyen150612/Synveil/actions/runs/39359450795),
-  PostgreSQL 17 [39359450706](https://github.com/nghianguyen150612/Synveil/actions/runs/39359450706),
-  Windows native acceptance [39359450736](https://github.com/nghianguyen150612/Synveil/actions/runs/39359450736),
-  and AppImage [39359450814](https://github.com/nghianguyen150612/Synveil/actions/runs/39359450814)
-  were triggered from `d0b1c43`; not all had completed at the snapshot.
-- The exact-source server-services workflow [39359450749](https://github.com/nghianguyen150612/Synveil/actions/runs/39359450749)
-  passed. Server network-reachability [39359450920](https://github.com/nghianguyen150612/Synveil/actions/runs/39359450920)
-  and first-admin [39359450844](https://github.com/nghianguyen150612/Synveil/actions/runs/39359450844)
-  were in progress. A static service check does not establish P036 production
-  runtime acceptance.
-- Installer security [39359469940](https://github.com/nghianguyen150612/Synveil/actions/runs/39359469940),
-  installation resilience [39359470275](https://github.com/nghianguyen150612/Synveil/actions/runs/39359470275),
-  iOS static [39359471036](https://github.com/nghianguyen150612/Synveil/actions/runs/39359471036),
-  iOS Rust Apple [39359469727](https://github.com/nghianguyen150612/Synveil/actions/runs/39359469727),
-  iOS build [39359469825](https://github.com/nghianguyen150612/Synveil/actions/runs/39359469825),
-  and iOS simulator [39359470334](https://github.com/nghianguyen150612/Synveil/actions/runs/39359470334)
-  were triggered on the exact source and were pending or in progress at the
-  snapshot.
-- Repair and Recovery UX checks passed on the R04 PR source, but that workflow
-  did not support `workflow_dispatch` or push to `main`. R05 adds a manual
-  trigger in the closeout PR so it can be run against the integrated main SHA.
-  Its exact-main result is not counted until that run completes.
-- Historical Actions runs on `15da713` used a tree identical to `d0b1c43` but
-  a different source SHA. Superseded queued/in-progress duplicate runs were
-  cancelled; they are not exact-source qualification evidence.
+- Bilingual v0.2 user-doc validator passed 7 matched topics and 14
+  troubleshooting cases. `bash scripts/validate-docs.sh` passed its 24
+  documentation units. This does not provide a public v0.2 download or final
+  release verification instructions.
+- R05 PR #154 workflow evidence is on head
+  `6f984752e2e03e49ecbd90bc2cd85f4344987582`, whose tree is integrated at
+  `deef2db`. The PR-head AppImage run
+  [39372784222](https://github.com/nghianguyen150612/Synveil/actions/runs/39372784222)
+  passed build, independent byte reproducibility, manifest/runtime inspection,
+  smoke and current-user lifecycle checks. It is an unsigned PR-head output,
+  not an exact integrated-main production artifact or native desktop pass.
+- Exact-main iOS checks passed: Static Validation [39373790719](https://github.com/nghianguyen150612/Synveil/actions/runs/39373790719), Rust Apple Build [39373790728](https://github.com/nghianguyen150612/Synveil/actions/runs/39373790728), iOS Build [39373790899](https://github.com/nghianguyen150612/Synveil/actions/runs/39373790899), and Simulator Tests [39373790837](https://github.com/nghianguyen150612/Synveil/actions/runs/39373790837). These are source/platform checks; they do not claim an iOS store release or change v0.2 support scope.
+- The exact-main P036 `artifact-identity` check
+  [failed at the keyring step](https://github.com/nghianguyen150612/Synveil/actions/runs/39373791245).
+  The matching PR-head failure is recorded at
+  [job 118464161759](https://github.com/nghianguyen150612/Synveil/actions/runs/39372788693/job/118464161759).
+  Neither run registered or verified a production runtime.
 
-The GitHub-hosted Windows native workflow explicitly records unavailable
-interactive desktop, real-logon and named-pipe surfaces as blockers. The
-Linux clean-machine workflow also documents that its native evidence gate
-must remain non-PASS without actual guest acceptance. A source test, build
-runner, container, partial job or skipped guest is not a native result.
+## P047 gate outcomes
 
-## Authoritative P047 gate outcomes
+Every row below uses exact source SHA
+`deef2db375764d3157afb5371eb963bbd9b3f1ea`. The expected R05 product artifact
+set is `SynveilSetup.exe`, `synveil-0.2.0-windows-x86_64.zip`,
+`synveil_0.2.0_amd64.deb`, `synveil-0.2.0-1.x86_64.rpm`,
+`Synveil-0.2.0-x86_64.AppImage`, and the exact-source
+`SYNVEIL-RELEASE-MANIFEST.json`. The cross-platform candidate workflow is
+incomplete. Individual unsigned exact-main Setup and AppImage identities are
+recorded in the artifact matrix; the package/ZIP aggregate and production
+signatures/URLs are not available. “Evidence” links identify exact-main runs unless stated otherwise.
 
-Every gate retains its original requirement. Exact source under evaluation is
-`d0b1c43c144493e4adf9b44d3fd24d02f2bd7dbb` for all rows. `BLOCKED` means
-mandatory evidence is absent or incomplete, even if a scoped subcheck passed.
+| # | Gate | Required artifact identity / verification | Runner and result | Remaining risk and final status |
+| ---: | --- | --- | --- | --- |
+| 1 | `SOURCE_QUALITY` | Source SHA above; `python3 scripts/validate-release-version.py --expected-version 0.2.0 --source-commit deef2db375764d3157afb5371eb963bbd9b3f1ea`; `cargo fmt --all -- --check`; Rust CI | Version audit passed locally. Exact-main [Rust CI 39373764252](https://github.com/nghianguyen150612/Synveil/actions/runs/39373764252): Ubuntu/macOS/Windows tests, quality, and Ubuntu/macOS/Windows checks passed; Windows/Linux Qt, web quality and dependency policy remained incomplete. | Full exact-main source/workspace CI incomplete. **BLOCKED** |
+| 2 | `DESKTOP_RUNTIME` | Windows Setup/ZIP, DEB, RPM and AppImage from exact candidate; launch, IPC, lifecycle and clean shutdown | Exact-main Windows native [39373764284](https://github.com/nghianguyen150612/Synveil/actions/runs/39373764284) completed with `BLOCKED_BY_ENVIRONMENT`: build and standard-user product acceptance passed on Windows Server 2025, but interactive GUI/logon/named-pipe evidence is unavailable. Linux exact-candidate consumers await the candidate pipeline. | No interactive Windows 11/Ubuntu/Fedora release journey. **BLOCKED** |
+| 3 | `CLIENT_SYNC` | Exact signed platform package, controlled Synveil server, authentication/library/initial sync/restart/preservation evidence | No signed exact candidate or authenticated real-server session. | No qualified Connect or sync evidence. **BLOCKED** |
+| 4 | `SERVER_RUNTIME` | Signed P036 Synveil server, PostgreSQL 17 and Caddy entries; installed service/runtime/storage evidence | Exact-main [PG17 39373764287](https://github.com/nghianguyen150612/Synveil/actions/runs/39373764287) remained in progress. Prompt033 service [64326](https://github.com/nghianguyen150612/Synveil/actions/runs/39373764326), Prompt034 network [64277](https://github.com/nghianguyen150612/Synveil/actions/runs/39373764277), and Prompt035 bootstrap [64314](https://github.com/nghianguyen150612/Synveil/actions/runs/39373764314) passed on Ubuntu 24.04 hosted runners. No production P036 inventory or installed runtime. | These source/service checks cannot replace signed installed Host acceptance. **BLOCKED** |
+| 5 | `FIRST_RUN_CONNECT` | Exact signed Windows/Linux candidate, controlled server, authentication, library selection and first sync | No exact candidate or authorized interactive Connect run. | First-run path not qualified. **BLOCKED** |
+| 6 | `FIRST_RUN_HOST` | Signed P036 eight-entry inventory, PostgreSQL 17/Caddy, bootstrap, library, sync and recovery | Exact-main [P036 39373791245](https://github.com/nghianguyen150612/Synveil/actions/runs/39373791245): `artifact-identity` failed at approved keyring materialization; source/contract checks passed; native/interruption jobs remain queued. The candidate pipeline produced an unsigned Fedora Synveil server input bundle (artifact 12242708471), but its own notice records incomplete third-party dependency notices and it has no trusted publisher signature. The eight-entry production inventory/signature remain absent. | No authorized Host journey or trusted runtime. **BLOCKED** |
+| 7 | `WINDOWS_INSTALLER` | Signed `SynveilSetup.exe` and ZIP; install, GUI, first run, repair and preservation on Windows 11 x86_64 | Exact-main Windows native run [39373764284](https://github.com/nghianguyen150612/Synveil/actions/runs/39373764284) built Setup twice with identical bytes (32,816,688 bytes; SHA-256 `76f811347eaeb88b9099db29ff3140803d1fac5b5c33e3882231f9bf4ed98e96`). Retrieved artifact 12243017639 matched `p028-candidate.json` and a passing local release-manifest validation. Its standard-user product acceptance step passed on Windows Server 2025; workflow then correctly failed at `BLOCKED_BY_ENVIRONMENT` for required GUI/logon/named-pipe surfaces. Windows Installer run [39373764312](https://github.com/nghianguyen150612/Synveil/actions/runs/39373764312) remained in progress. | No interactive Windows 11 GUI/logon, trusted Authenticode signer, or production-signed Setup/ZIP. **BLOCKED** |
+| 8 | `UBUNTU_DEB` | Signed `synveil_0.2.0_amd64.deb`; Ubuntu 24.04 install, GUI, Connect, repair and preservation | Exact-main [DEB/RPM 39373764286](https://github.com/nghianguyen150612/Synveil/actions/runs/39373764286) was building and reproducing packages. Exact-candidate native consumer not dispatched because the candidate is incomplete. | No authenticated package or native Ubuntu journey. **BLOCKED** |
+| 9 | `FEDORA_RPM` | Signed `synveil-0.2.0-1.x86_64.rpm`; Fedora 42 DNF5 install, GUI, sync and repair | Exact-main [DEB/RPM 39373764286](https://github.com/nghianguyen150612/Synveil/actions/runs/39373764286) was building and reproducing packages. No trusted RPM/OpenPGP signer or native Fedora consumer. | No authenticated package or native Fedora journey. **BLOCKED** |
+| 10 | `LINUX_APPIMAGE` | Signed/source-bound `Synveil-0.2.0-x86_64.AppImage`; Ubuntu/Fedora runtime, relocation and lifecycle | Exact-main [AppImage 39373764291](https://github.com/nghianguyen150612/Synveil/actions/runs/39373764291) passed build, independent reproducibility, manifest/runtime inspection, smoke and current-user lifecycle on Ubuntu 22.04 hosted runner. | No production signature or native Ubuntu 24.04/Fedora 42 lifecycle/relocation result. **BLOCKED** |
+| 11 | `QUICK_INSTALL` | Signed manifest, public trust policy, stable origin, authenticated download and safe install | Exact-main [installer security 39373791297](https://github.com/nghianguyen150612/Synveil/actions/runs/39373791297): Ubuntu/Windows acquisition-channel-downgrade checks and Linux invocation/path/hook checks passed; Windows ownership/security remained in progress and lifecycle/structural/dependency jobs remained queued. No stable origin, production key bootstrap or generation. | No authenticated stable acquisition. **BLOCKED** |
+| 12 | `UPGRADE` | Actual supported prior installation, exact target package, migration and downgrade test | `deploy/release/native-upgrade-policy.json` and `deploy/release/windows-upgrade-policy.json` both have `upgrade_from: []`; no real source-to-target run. | v0.1.0 upgrade and rollback are unapproved and untested. **BLOCKED** |
+| 13 | `REPAIR` | Exact signed installed package; repair preserving package/user ownership boundaries | Exact-main [repair/recovery UX 39373791048](https://github.com/nghianguyen150612/Synveil/actions/runs/39373791048): static/docs, desktop/QML and installer-repair contract jobs passed; formatting, recovery projection, quality, root/data safety, client lifecycle and dependency-policy jobs remained queued. Exact-candidate native repair not run. | No full installed-package repair evidence. **BLOCKED** |
+| 14 | `UNINSTALL` | Exact signed package; ownership-bounded uninstall/reinstall evidence | No exact candidate or native uninstall/reinstall result. | Preserve user data and remove only owned components remains unverified. **BLOCKED** |
+| 15 | `DATA_PRESERVATION` | Before/after identity for client library, credentials, durable queue, server objects, config and DB | [Resilience 39373791405](https://github.com/nghianguyen150612/Synveil/actions/runs/39373791405): AppImage partial recovery, Windows ENOSPC and ownership/interruption fixtures, and Ubuntu ENOSPC passed; lifecycle/preservation/quality jobs remained queued. No complete exact-package native lifecycle snapshot. | No database/client/server data preservation result. **BLOCKED** |
+| 16 | `POWER_CYCLE_RECOVERY` | Exact signed P036 runtime; genuine VM power loss at transaction boundaries and recovery | P036 run 39373791245 interruption-recovery job queued; no authorized VM power-control evidence. | No genuine power interruption was executed. **BLOCKED** |
+| 17 | `ARTIFACT_INTEGRITY` | Exact source, product filename, platform/architecture, payload, size, SHA-256, provenance and acceptance binding | Exact-main candidate [39373799679](https://github.com/nghianguyen150612/Synveil/actions/runs/39373799679) passed source/version validation; Fedora server input completed, Ubuntu server, AppImage, desktop Qt reproducibility and Windows candidate jobs were in progress, and DEB/RPM build remained queued. Exact-main AppImage [39373764291](https://github.com/nghianguyen150612/Synveil/actions/runs/39373764291) produced 49,183,224 bytes with SHA-256 `746485e81835a885037d91b2bbe6cfaebc09741caa0f987b6dc60bdbde3833b1`, independently matched against the retrieved candidate manifest. The full cross-platform candidate manifest is unavailable. | Exact-source candidate and independent acceptance binding incomplete. **BLOCKED** |
+| 18 | `RELEASE_SIGNING` | Authenticode, RPM/OpenPGP and Ed25519 signatures verified against independently approved roots | No production signing environment/credentials/trust policy. Five nonproduction signing fixtures passed only. | Production signatures and final signed-byte hashes absent. **BLOCKED** |
+| 19 | `TRUST_BOOTSTRAP` | Independent public keyring/policy, signer pins, minimum generation, freshness and rotation | P036 keyring materialization failed on missing approved input; no independent Ed25519 public trust policy or generation. | No production trust bootstrap or rotation test. **BLOCKED** |
+| 20 | `DISTRIBUTION_CHANNEL` | Public HTTPS origin, authenticated stable metadata, exact files, freshness/rollback checks | No stable origin or channel metadata; no tag/release or public files. | No public distribution or rollback resistance. **BLOCKED** |
+| 21 | `DOCUMENTATION` | English/Vietnamese install, support, trust, checksum, upgrade and troubleshooting instructions matching released bytes | `python3 scripts/validate-v02-user-docs.py` and `bash scripts/validate-docs.sh` passed locally. No qualified public artifact/link/checksum exists. | Guides cannot describe final downloads or production verification yet. **BLOCKED** |
 
-| # | Existing gate ID | Required evidence (unchanged contract) | Verification / runner | Current result and remaining evidence | Final status |
-| ---: | --- | --- | --- | --- | --- |
-| 1 | `SOURCE_QUALITY` | Strict formatting, lint, dependency policy and applicable workspace checks on exact source | Rust CI run 39359450796, GitHub-hosted Linux/macOS/Windows; exact-source version audit | Version audit passed; Rust CI was queued. Complete exact-source CI, including all platform and desktop jobs. | **BLOCKED** |
-| 2 | `DESKTOP_RUNTIME` | Desktop/client startup, IPC, real surface and clean shutdown | Windows native run 39359450736; Linux exact-candidate consumer not yet dispatched | No qualified interactive Windows 11, Ubuntu 24.04 or Fedora 42 desktop session. | **BLOCKED** |
-| 3 | `CLIENT_SYNC` | Authentication, library creation, initial sync, pause/resume, recovery, restart and preserved data | Exact signed candidate plus controlled test service and native session | No exact candidate or authenticated first-sync journey. | **BLOCKED** |
-| 4 | `SERVER_RUNTIME` | Services, private listener and database/runtime ownership contracts | Server services run 39359450749 passed; network and bootstrap runs 39359450920/39359450844 in progress; PG17 run 39359450706 | Scoped service check passed. Production-signed P036 server/database/edge inputs and actual installed runtime remain absent. | **BLOCKED** |
-| 5 | `FIRST_RUN_CONNECT` | Installed Connect flow, secure server entry, authentication, library choice and first sync | Exact signed Windows/Linux candidate and controlled server | No installed exact-candidate Connect journey ran. | **BLOCKED** |
-| 6 | `FIRST_RUN_HOST` | Production Host first-admin bootstrap, login, library setup, sync and recovery | P036 signed inventory; Ubuntu/Fedora native P036 runners and controlled services | P036 inventory and approved keyring/fingerprints are absent; no Host journey ran. | **BLOCKED** |
-| 7 | `WINDOWS_INSTALLER` | Windows 11 GUI Setup, install, launch and first-run behavior | Windows installer 39359450646 and Windows native 39359450736 | Producer/native runs were pending or in progress; no approved Authenticode identity or Windows 11 interactive acceptance. | **BLOCKED** |
-| 8 | `UBUNTU_DEB` | Ubuntu 24.04 package install, launch, first run, repair and preservation | Linux package run 39359450795; exact-candidate clean-machine consumer required | Exact R05 DEB bytes and native Ubuntu 24.04 GUI/lifecycle journey were not established at snapshot. | **BLOCKED** |
-| 9 | `FEDORA_RPM` | Fedora 42 package install, launch, first run, repair and preservation | Linux package run 39359450795; approved RPM signature and native Fedora journey required | Exact R05 RPM bytes, approved OpenPGP signer and native Fedora 42 journey were not established at snapshot. | **BLOCKED** |
-| 10 | `LINUX_APPIMAGE` | Authenticated AppImage launch and first run on qualified clean machines | AppImage run 39359450814; Ubuntu/Fedora native sessions required | Exact R05 image build was in progress; no authenticated image or qualified native lifecycle/relocation result. | **BLOCKED** |
-| 11 | `QUICK_INSTALL` | Authenticated channel selection, exact download verification, authorization and safe install | Installer security run 39359469940; trusted production origin and keys required | Fixture/source contracts do not provide a production bootstrap, authenticated stable origin, or current channel generation. | **BLOCKED** |
-| 12 | `UPGRADE` | Upgrade from supported prior installation preserving configuration, credentials and library data | `deploy/packages/native-upgrade-policy.json`, `deploy/packages/windows-upgrade-policy.json`; real source-to-target test | Both policies have `upgrade_from: []`; no prior version, including v0.1.0, is approved. No test or rollback pass. | **BLOCKED** |
-| 13 | `REPAIR` | Idempotent repair of package-owned state preserving user-owned state | Repair and Recovery UX workflow; native exact-package repair required | R04 PR source checks passed and R05 adds an exact-main manual trigger; exact-main result and exact-candidate installed repair are outstanding. | **BLOCKED** |
-| 14 | `UNINSTALL` | Remove only owned components and preserve user libraries/configuration | Exact signed installers and native uninstall/reinstall journeys | No exact R05 package uninstall/reinstall journey or signed package exists. | **BLOCKED** |
-| 15 | `DATA_PRESERVATION` | Upgrade, repair, interruption and uninstall preserve user data and credentials | Original-state snapshots, native client/server storage checks and verification report | No complete native lifecycle evidence for library identity, credentials, durable queue, objects, configuration and database state. | **BLOCKED** |
-| 16 | `POWER_CYCLE_RECOVERY` | Genuine power loss at transaction boundaries; safe reconciliation without data loss | Authorized disposable P036 VM/control runner and exact signed inputs | No VM-control evidence or genuine power interruption was supplied. | **BLOCKED** |
-| 17 | `ARTIFACT_INTEGRITY` | Exact source/tree, platform, version, build, artifact ID, size, SHA-256, provenance and acceptance binding | Candidate producer 39359470865; independent verifier; candidate-bound acceptance consumers | Candidate was not yet assembled at snapshot. No final R05 artifact identity or acceptance binding. | **BLOCKED** |
-| 18 | `RELEASE_SIGNING` | Production signatures and independently verified references | Protected `synveil-release-signing` environment; approved Authenticode, RPM/OpenPGP and Ed25519 keys | Protected environment lookup returned 404; no authorized credentials/trust policy supplied. Five nonproduction fixture tests passed only. | **BLOCKED** |
-| 19 | `TRUST_BOOTSTRAP` | Trusted bootstrap, key rotation and minimum generation without rollback | Independent public trust policy and freshness/rollback test | No production public trust root, key rotation evidence or approved minimum generation. | **BLOCKED** |
-| 20 | `DISTRIBUTION_CHANNEL` | Authenticated production publication, safe download and rollback resistance | Publisher-controlled HTTPS origin; signed channel metadata and rollback tests | No origin, stable metadata or activated channel. | **BLOCKED** |
-| 21 | `DOCUMENTATION` | English/Vietnamese guidance matches qualified behavior, commands, limits, security and data handling | `scripts/validate-docs.sh`, `scripts/validate-v02-user-docs.py`; final exact-byte links required | R05 docs are being updated to describe blocked reality. No qualified downloads, hashes, signing verification or release links exist. | **BLOCKED** |
+## Per-gate verification command and runner record
 
-No gate is `NOT_APPLICABLE`. No partial result, merge, skipped job, workflow
-fixture or unsigned artifact is promoted to `PASS`.
+All entries below are for source SHA
+`deef2db375764d3157afb5371eb963bbd9b3f1ea`. These commands and actions define
+the required evidence. A command described as not run is not treated as a
+pass. The preceding gate table records the required artifact identity,
+observed result, remaining risk and final status for each gate.
 
-## P048 prerequisite check
+| Gate | Verification command or required action | Runner/OS and observed result |
+| --- | --- | --- |
+| `SOURCE_QUALITY` | `python3 scripts/validate-release-version.py --expected-version 0.2.0 --source-commit deef2db375764d3157afb5371eb963bbd9b3f1ea`; `cargo fmt --all -- --check`; exact-main Rust CI | Local version audit passed. Rust CI run [39373764252](https://github.com/nghianguyen150612/Synveil/actions/runs/39373764252), GitHub-hosted Ubuntu/macOS/Windows: tests, quality, and Ubuntu/macOS/Windows checks passed; Windows/Linux Qt, web quality and dependency policy remained incomplete at snapshot. |
+| `DESKTOP_RUNTIME` | Verify imported candidate with `python3 scripts/verify_release_candidate_run.py --run-id 39373799679 --artifact-name synveil-release-candidate --repository nghianguyen150612/Synveil --expected-source-commit deef2db375764d3157afb5371eb963bbd9b3f1ea --artifact-root target/packages --output target/packages/RELEASE-CANDIDATE-VERIFICATION.json`; perform installed GUI/IPC/shutdown journeys | Candidate verifier awaits producer run [39373799679](https://github.com/nghianguyen150612/Synveil/actions/runs/39373799679). Windows hosted run is Server 2025; no qualifying Windows 11 or Linux desktop session. |
+| `CLIENT_SYNC` | `cargo test -p synveil-client-sync --lib --locked`; then authenticate, select a library, sync, pause/resume, restart and compare durable state against the controlled test server | Rust CI hosted Ubuntu workspace tests passed; exact-main PostgreSQL run [39373764287](https://github.com/nghianguyen150612/Synveil/actions/runs/39373764287) was in progress. No authenticated installed-client session was run. |
+| `SERVER_RUNTIME` | `./scripts/run-p036-native-acceptance.sh ubuntu-24.04`; `./scripts/run-p036-native-acceptance.sh fedora-42`; PostgreSQL 17 scheduled-maintenance workflow | P036 declares self-hosted Ubuntu 24.04/Fedora 42 runners, but no authorized native host evidence is available; host jobs remain queued and artifact identity failed for missing keyring in [run 39373791245](https://github.com/nghianguyen150612/Synveil/actions/runs/39373791245). Prompt033/034/035 hosted Ubuntu workflows passed scoped source/service checks. |
+| `FIRST_RUN_CONNECT` | On an installed signed client, launch Connect, authenticate to the controlled server, select a library, complete first sync, restart and verify identity/data | Required operator-led native GUI action was not run. No authorized interactive Windows 11, Ubuntu 24.04 or Fedora 42 session is available. |
+| `FIRST_RUN_HOST` | `python3 scripts/validate-p036-production-artifacts.py --platform ubuntu-24.04 --inventory acceptance/p036/production-artifacts.json --inventory-signature acceptance/p036/production-artifacts.json.sig --artifact-root acceptance/p036/artifacts`; then `./scripts/run-p036-native-acceptance.sh ubuntu-24.04` and Fedora equivalent | P036 identity job failed before validator execution because approved public keyring variables are absent. No inventory files or authorized native host inputs exist. |
+| `WINDOWS_INSTALLER` | `python scripts/validate-windows-installer.py`; `./scripts/invoke-windows-standard-user-test.ps1 -Setup candidate/windows-installer/SynveilSetup.exe -EvidenceDirectory target/windows-native-evidence`; inspect/install/repair/uninstall on Windows 11 | Exact-main installer run [39373764312](https://github.com/nghianguyen150612/Synveil/actions/runs/39373764312) remained in progress. Native run [39373764284](https://github.com/nghianguyen150612/Synveil/actions/runs/39373764284) used GitHub-hosted Windows Server 2025; the Setup build and standard-user product acceptance passed but GUI/logon/named-pipe evidence correctly blocked the run. |
+| `UBUNTU_DEB` | `./deploy/packages/build.sh`; `dpkg-deb --info target/packages/synveil_0.2.0_amd64.deb`; install and run candidate on Ubuntu 24.04 as non-root | Exact-main package run [39373764286](https://github.com/nghianguyen150612/Synveil/actions/runs/39373764286) was building on hosted Linux. Candidate consumer has not run. |
+| `FEDORA_RPM` | `./deploy/packages/build.sh`; `rpm -qp --info target/packages/synveil-0.2.0-1.x86_64.rpm`; install through DNF5 and run on Fedora 42 as non-root | Exact-main package run [39373764286](https://github.com/nghianguyen150612/Synveil/actions/runs/39373764286) was building on hosted Linux. No trusted RPM signature or native Fedora consumer. |
+| `LINUX_APPIMAGE` | `./deploy/packages/build-appimage.sh --build-only`; `./scripts/validate-appimage-build.sh --artifact target/packages/Synveil-0.2.0-x86_64.AppImage --manifest target/packages/SYNVEIL-RELEASE-MANIFEST.json`; `python3 scripts/release_manifest.py validate --artifact-root target/packages target/packages/SYNVEIL-RELEASE-MANIFEST.json` | Exact-main AppImage run [39373764291](https://github.com/nghianguyen150612/Synveil/actions/runs/39373764291) passed on GitHub-hosted Ubuntu 22.04: independent rebuild, manifest/runtime inspection, smoke and current-user lifecycle. Candidate hash logged as `746485e81835a885037d91b2bbe6cfaebc09741caa0f987b6dc60bdbde3833b1`; this does not establish Ubuntu 24.04/Fedora 42 native support or production signing. |
+| `QUICK_INSTALL` | `python3 scripts/release_download.py --trust-policy <approved-trust-policy.json> --expected-version 0.2.0 --expected-source-commit deef2db375764d3157afb5371eb963bbd9b3f1ea <signed-manifest.json>`; `python3 scripts/release_channel.py validate <channel.json>` | Installer security run [39373791297](https://github.com/nghianguyen150612/Synveil/actions/runs/39373791297) passed scoped unsigned fixture checks on Ubuntu and Windows; remaining hardening jobs were incomplete. Not run against production trust/origin: no production trust policy, authenticated manifest, stable origin or generation exists. |
+| `UPGRADE` | Execute each proposed source-to-target upgrade and downgrade scenario from `deploy/release/native-upgrade-policy.json` and `deploy/release/windows-upgrade-policy.json` with before/after DB, config and user-state comparisons | Not run. Both policies keep `upgrade_from: []`; no supported transition is authorized. |
+| `REPAIR` | `cargo test -p synveil-install-engine --test lifecycle_contract --test engine_contract --test error_model_contract --locked`; execute repair against exact signed installed packages and compare preserved state | Exact-main repair/recovery run [39373791048](https://github.com/nghianguyen150612/Synveil/actions/runs/39373791048): static/docs, desktop/QML and installer-repair contract jobs passed; remaining jobs were queued. Signed-package native repair not run. |
+| `UNINSTALL` | `bash scripts/validate-install-acceptance.sh`; execute installed-package uninstall/reinstall with ownership checks and before/after data inventory | Contract validator passed 21/21 and explicitly says native execution was not performed. No exact-candidate uninstall/reinstall journey was run. |
+| `DATA_PRESERVATION` | Record and compare client library identity, credentials, durable queue, configuration, server objects and PostgreSQL state around install/repair/reinstall/recovery | AppImage recovery, Windows lifecycle, and Windows/Ubuntu ENOSPC scoped fixtures in resilience run [39373791405](https://github.com/nghianguyen150612/Synveil/actions/runs/39373791405) passed; preservation and other jobs remained queued. No integrated native state comparison was run. |
+| `POWER_CYCLE_RECOVERY` | `./scripts/run-p036-power-interruption.sh` on the authorized P036 VM control runner; validate snapshots and recovery state | Exact-main P036 interruption job [39373791245](https://github.com/nghianguyen150612/Synveil/actions/runs/39373791245) queued. VM power-control runner and authentic runtime inputs unavailable. |
+| `ARTIFACT_INTEGRITY` | `python3 scripts/verify_release_candidate_run.py` with run `39373799679`; `python3 scripts/release_manifest.py validate --artifact-root target/packages target/packages/SYNVEIL-RELEASE-MANIFEST.json`; compare producer ZIP SHA-256 values | Candidate pipeline passed source/version validation. Fedora server input completed, Ubuntu server, AppImage and Windows builds plus desktop Qt reproduction were in progress, and DEB/RPM build was queued. AppImage hash is recorded above; exact aggregate candidate manifest, cross-platform sizes and Windows cross-producer ZIP equality remain outstanding. |
+| `RELEASE_SIGNING` | `python3 -m unittest scripts.tests.test_release_signing scripts.tests.test_rpm_signing scripts.tests.test_p036_signing -v`; after protected signing, verify Authenticode, RPM and Ed25519 signatures against approved roots and rehash final bytes | Fixture tests passed 5/5 locally with nonproduction keys. Production signing was not attempted because approved credentials, fingerprints and trust policy are absent. |
+| `TRUST_BOOTSTRAP` | `python3 scripts/materialize-p036-trust-keyring.py`; provision and verify independent P036 keyring/fingerprints and Ed25519 freshness/rollback policy | Exact-main P036 keyring step failed because authorized variables were absent. No independent production trust bootstrap exists. |
+| `DISTRIBUTION_CHANNEL` | `python3 scripts/release_channel.py validate <channel.json>`; `python3 scripts/release_channel.py select-fresh --trusted-sha256 <trusted-channel-sha256> <channel.json>`; download and verify generation, signature, artifacts and rollback rejection | Not run: no stable origin or metadata. No tag, GitHub Release or channel activation exists. |
+| `DOCUMENTATION` | `python3 scripts/validate-v02-user-docs.py`; `bash scripts/validate-docs.sh`; verify final public links, checksums, version and support claims after release | Local validators passed (7 matched topics/14 troubleshooting cases; 24 docs units). Public artifact links/checksums cannot be qualified before signed publication. |
 
-The authoritative P047 record requires all of the following before P048 may
-freeze a source, create `v0.2.0`, or publish:
+No gate is `NOT_APPLICABLE`. No partial build, merge, fixture, skipped job,
+unsigned artifact or contract check is promoted to `PASS`. A blocked gate may
+contain scoped passing subchecks; that does not satisfy its full requirement.
 
-1. All 21 P047 gates pass against exact authenticated v0.2.0 artifacts, with
-   no required FAIL/BLOCKED/ERROR/SKIPPED evidence — **not met**.
-2. P045 Windows 11 interactive and Ubuntu/Fedora native clean-machine journeys,
-   lifecycle/data preservation and real hard-power-cycle recovery — **not met**.
-3. P036 production identity and installed Host bootstrap/login/library/sync/
-   recovery/preservation against controlled services — **not met**.
-4. Production signing, independent trust bootstrap, authenticated distribution,
-   rollback protection and key rotation — **not met**.
-5. Accepted P047 PR merged to main before final tagging — **not met; no accepted
-   P047 release decision exists**.
-6. Update P045 against current main, resolve its documentation validator
-   conflict without losing P046 bilingual and P045 matrix checks, and rerun
-   evidence — **not met**.
+## P048 prerequisite decision
 
-**P048 decision: `BLOCKED`.** There is no qualified candidate SHA, tag, public
-GitHub Release, release URL or stable-channel activation.
+P048 is **`BLOCKED`** because mandatory release gates remain blocked, there is
+no authenticated final artifact set, native Windows/Linux/P036 journeys have
+not passed, no production signing/trust inputs exist, upgrade and data
+preservation are unqualified, and no authenticated stable channel exists. No
+stable tag or publication was attempted.
