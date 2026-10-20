@@ -3809,6 +3809,12 @@ mod tests {
         server.stop().await.unwrap();
         host.shutdown().await.unwrap();
         state.close_pool().await;
+        // Drop every SQLite owner before deleting its backing directory.
+        // Windows keeps the database locked until all Arcs are gone.
+        drop(control);
+        drop(server);
+        drop(host);
+        drop(state);
         fs::remove_dir_all(root).unwrap();
     }
 

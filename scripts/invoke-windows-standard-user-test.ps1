@@ -7,7 +7,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$user = 'synveil_p025_' + [Guid]::NewGuid().ToString('N').Substring(0,8)
+$user = 'synveil_p025_' + [Guid]::NewGuid().ToString('N').Substring(0,7)
 $password = [Guid]::NewGuid().ToString('N') + '!aA7'
 Write-Output "::add-mask::$password"
 $account = $null
@@ -18,6 +18,9 @@ New-Item $EvidenceDirectory -ItemType Directory -Force | Out-Null
 try {
     $computer = [ADSI]"WinNT://$env:COMPUTERNAME,computer"
     $account = $computer.Create('user',$user)
+    # WinNT ADSI requires the new account to exist in SAM before SetPassword
+    # can target it. Persist the created account before setting its credentials.
+    $account.SetInfo()
     $account.SetPassword($password)
     $account.Put('Description','Disposable Synveil P025 standard-user acceptance account')
     $account.SetInfo()
@@ -57,7 +60,10 @@ try {
         Copy-Item -LiteralPath $childLogs -Destination (Join-Path $EvidenceDirectory 'standard-user-logs') -Recurse -Force
     }
     if ($null -ne $account) {
-        ([ADSI]"WinNT://$env:COMPUTERNAME,computer").Delete('user',$user)
+        $localAccount = Get-LocalUser -Name $user -ErrorAction SilentlyContinue
+        if ($null -ne $localAccount) {
+            Remove-LocalUser -InputObject $localAccount -ErrorAction Stop
+        }
     }
     if ($sid) {
         Get-CimInstance Win32_UserProfile -Filter "SID='$sid'" -ErrorAction SilentlyContinue | Remove-CimInstance -ErrorAction SilentlyContinue

@@ -30,10 +30,18 @@ def main() -> None:
     require("actions/download-artifact@v4" in workflow and
             "identity.sha256" in workflow and "GITHUB_SHA" in workflow,
             "consumer must authenticate transferred bytes and source")
-    require("candidate/p028-candidate.json" in workflow and
-            "candidate/SynveilSetup.exe" in workflow and
-            "candidate/target/windows-installer/" not in workflow,
-            "consumer paths must match upload-artifact's flattened common-root layout")
+    require("$candidateRoot = Join-Path $PWD 'candidate/windows-installer'" in workflow and
+            "Join-Path $candidateRoot 'p028-candidate.json'" in workflow and
+            "Join-Path $candidateRoot 'SynveilSetup.exe'" in workflow and
+            "Join-Path $candidateRoot 'SYNVEIL-RELEASE-MANIFEST.json'" in workflow and
+            "candidate/windows-installer/SynveilSetup.exe" in workflow,
+            "consumer paths must preserve the uploaded windows-installer directory")
+    for evidence in (
+        "release_manifest_sha256", "P028_CANDIDATE_MANIFEST_DIGEST_FAILURE",
+        "P028_CANDIDATE_MANIFEST_IDENTITY_FAILURE",
+        "P028_CANDIDATE_MANIFEST_ARTIFACT_FAILURE", "actualSize",
+    ):
+        require(evidence in workflow, f"transferred candidate provenance: {evidence}")
     require("SYNVEIL_V0_2_WINDOWS_INSTALL_EXPERIENCE_READY" not in workflow + docs,
             "readiness marker must remain withheld before native evidence")
     for status in ("SOURCE_PRESENT", "STATIC_VERIFIED", "CI_NATIVE_SCOPED", "NATIVE_CLEAN_MACHINE", "BLOCKED", "FAIL", "PASS"):

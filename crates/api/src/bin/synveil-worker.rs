@@ -200,17 +200,16 @@ fn write_host_worker_health(
         ));
     }
     let target = directory.join("health.json");
-    if let Ok(meta) = fs::symlink_metadata(&target) {
-        if !meta.is_file()
+    if let Ok(meta) = fs::symlink_metadata(&target)
+        && (!meta.is_file()
             || meta.uid() != nix::unistd::geteuid().as_raw()
             || meta.nlink() != 1
-            || meta.mode() & 0o077 != 0
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "invalid worker health file",
-            ));
-        }
+            || meta.mode() & 0o077 != 0)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "invalid worker health file",
+        ));
     }
     let temporary = directory.join(format!(".health-{}", uuid::Uuid::now_v7()));
     let mut file = fs::OpenOptions::new()

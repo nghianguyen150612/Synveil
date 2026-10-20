@@ -26,8 +26,9 @@ mod live_fixture {
         };
         use synveil_client_sync::{
             ClientSyncError, DesktopRootRecoveryGate, DesktopSyncHostConfig,
-            FilesystemLocalReplica, LocalNode, LocalReplica, LocalStateConfig, LocalStateStore,
-            ManagedRelativePath, OutboundIntentKind, ReplicaScope,
+            FilesystemLocalReplica, LOCAL_SCHEMA_VERSION, LocalNode, LocalReplica,
+            LocalStateConfig, LocalStateStore, ManagedRelativePath, OutboundIntentKind,
+            ReplicaScope,
         };
         use synveil_core::{EnrollmentSecret, NodeKind, NodeState, Sequence};
         use synveil_platform::{
@@ -603,7 +604,10 @@ mod live_fixture {
                 process.root_status(seed.library_id),
                 Some(synveil_client_sync::RootAvailability::Available)
             );
-            assert_eq!(process.host().state().schema_version().await.unwrap(), 7);
+            assert_eq!(
+                process.host().state().schema_version().await.unwrap(),
+                LOCAL_SCHEMA_VERSION
+            );
             let runtime_identity = process.host().runtime_identity();
             assert_eq!(
                 process.host().runtime_identity(),

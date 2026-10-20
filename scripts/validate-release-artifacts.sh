@@ -79,6 +79,13 @@ manifest_source_date_epoch="$(sed -n 's/^source_date_epoch=//p' "$MANIFEST" | he
     exit 1
 }
 
+expected_paths=(
+    'target/release/synveil-scheduled-maintenance-once'
+    'target/release/synveil-client'
+    'target/release/synveil-desktop'
+    'target/release/synveil-host-helper'
+)
+declare -A seen_paths=()
 in_artifacts=0
 entries=0
 while IFS= read -r line || [[ -n "$line" ]]; do
@@ -98,6 +105,22 @@ while IFS= read -r line || [[ -n "$line" ]]; do
             exit 1
             ;;
     esac
+    case "$relative_path" in
+        target/release/synveil-scheduled-maintenance-once|\
+        target/release/synveil-client|\
+        target/release/synveil-desktop|\
+        target/release/synveil-host-helper)
+            ;;
+        *)
+            printf '[synveil-artifact] ERROR: unexpected Linux release artifact: %s\n' "$relative_path" >&2
+            exit 1
+            ;;
+    esac
+    if [[ -n "${seen_paths[$relative_path]+present}" ]]; then
+        printf '[synveil-artifact] ERROR: duplicate Linux release artifact: %s\n' "$relative_path" >&2
+        exit 1
+    fi
+    seen_paths["$relative_path"]=1
     artifact="${REPO_ROOT}/${relative_path}"
     [[ -f "$artifact" ]] || {
         printf '[synveil-artifact] ERROR: manifest references missing artifact: %s\n' "$relative_path" >&2
@@ -117,10 +140,18 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     entries=$((entries + 1))
 done < "$MANIFEST"
 
-[[ "$entries" -eq 3 ]] || {
-    printf '[synveil-artifact] ERROR: expected three Linux release artifacts, found %s\n' "$entries" >&2
+[[ "$entries" -eq "${#expected_paths[@]}" ]] || {
+    printf '[synveil-artifact] ERROR: expected %s Linux release artifacts, found %s\n' \
+        "${#expected_paths[@]}" "$entries" >&2
     exit 1
 }
+for expected_path in "${expected_paths[@]}"; do
+    if [[ -z "${seen_paths[$expected_path]+present}" ]]; then
+        printf '[synveil-artifact] ERROR: Linux release artifact is missing from manifest: %s\n' \
+            "$expected_path" >&2
+        exit 1
+    fi
+done
 
 printf '[synveil-artifact] release artifact manifest verified: %s\n' "$MANIFEST"
 printf '[synveil-artifact] source_fingerprint=%s source_date_epoch=%s entries=%s\n' \

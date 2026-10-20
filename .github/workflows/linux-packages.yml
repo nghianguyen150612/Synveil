@@ -528,8 +528,14 @@ jobs:
             exit 1
           fi
           useradd --create-home --user-group synveil-installer
-          printf 'synveil-installer ALL=(root) NOPASSWD: /usr/bin/dnf\n' > /etc/sudoers.d/synveil-installer
+          DNF_EXEC="$(readlink -f "$(command -v dnf)")"
+          RPM_EXEC="$(readlink -f "$(command -v rpm)")"
+          test -x "$DNF_EXEC"
+          test -x "$RPM_EXEC"
+          printf 'synveil-installer ALL=(root) NOPASSWD: %s, %s -V synveil\n' \
+            "$DNF_EXEC" "$RPM_EXEC" > /etc/sudoers.d/synveil-installer
           chmod 0440 /etc/sudoers.d/synveil-installer
+          visudo -cf /etc/sudoers.d/synveil-installer
           chown -R synveil-installer:synveil-installer "$PWD"
           VERSION="$(rpm -qp --qf '%{VERSION}' "$RPM")"
           runuser -u synveil-installer -- ./scripts/run-linux-quick-install-acceptance.sh \

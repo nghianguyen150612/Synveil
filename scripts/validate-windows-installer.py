@@ -145,10 +145,40 @@ def main() -> int:
         require(runtime_rule in package, f"authoritative runtime rule: {runtime_rule}")
     for required in ("SYNVEIL-MANIFEST.txt", "unmanifested package file", "0x8664", "platforms/qwindows.dll"):
         require(required in installed_test, f"installed runtime verification: {required}")
+    require("if ($LASTEXITCODE -ne 0)" not in per_user_test,
+            "P025 PowerShell verifier must not consume stale native-process exit status")
+    require("$env:QT_QPA_PLATFORM='windows'" in per_user_test and "$env:QT_QUICK_BACKEND='software'" in per_user_test,
+            "P025 packaged desktop smoke must use the shipped Windows plugin with software rendering")
+    require("$env:QT_QPA_PLATFORM='offscreen'" not in per_user_test,
+            "P025 packaged Windows runtime does not ship the Qt offscreen plugin")
+    require("SYNVEIL_CLIENT_CONFIG" in per_user_test
+            and per_user_test.index("'client probe'") < per_user_test.index("'desktop smoke'"),
+            "P025 missing-profile client probe must precede the first-run desktop smoke")
+    require("function Wait-ForRemovedPath" in per_user_test
+            and "AddSeconds(10)" in per_user_test
+            and per_user_test.count("Wait-ForRemovedPath $root") == 2,
+            "P025 waits for bounded Inno second-phase removal after both uninstalls")
     for evidence in ("synthetic_standard_user", "administrator_member", "installer_elevated", "integrity_sid", "RegistryView]::Registry64", "RegistryView]::Registry32", "machine PATH changed", "Synveil service created", "Synveil scheduled task created", "PER_USER_ACL_FAILURE", "second uninstaller", "state_preservation"):
         require(evidence in per_user_test, f"P025 per-user evidence: {evidence}")
-    for evidence in ("SetPassword", "-Credential", "-LoadUserProfile", "WaitForExit(300000)", ".Delete('user'", "Remove-CimInstance", "::add-mask::"):
+    for evidence in ("[Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)",
+                     "$env:LOCALAPPDATA = $localAppData", "$env:APPDATA = $roamingAppData",
+                     "$env:TEMP = Join-Path $localAppData 'Temp'", "P025_PROFILE_PATH_FAILURE"):
+        require(evidence in per_user_test, f"P025 user-profile environment: {evidence}")
+    for evidence in ("SetPassword", "-Credential", "-LoadUserProfile", "WaitForExit(300000)",
+                     "Get-LocalUser -Name $user", "Remove-LocalUser", "Remove-CimInstance", "::add-mask::"):
         require(evidence in per_user_invoker, f"P025 disposable-account harness: {evidence}")
+    account_prefix = "synveil_p025_"
+    require(f"$user = '{account_prefix}'" in per_user_invoker and ".Substring(0,7)" in per_user_invoker,
+            "P025 disposable local account name stays within the 20-character SAM limit")
+    require(len(account_prefix) + 7 <= 20, "P025 generated local account name length")
+    account_create = per_user_invoker.index("$account = $computer.Create('user',$user)")
+    account_commit = per_user_invoker.index("$account.SetInfo()", account_create)
+    account_password = per_user_invoker.index("$account.SetPassword($password)", account_commit)
+    password_commit = per_user_invoker.index("$account.SetInfo()", account_password)
+    require(account_create < account_commit < account_password < password_commit,
+            "P025 account must be committed to SAM before setting its password")
+    require(".Delete('user'" not in per_user_invoker,
+            "P025 cleanup must not fail when an account was not committed")
     for evidence in ("Inspect compiled Setup execution level", "requestedExecutionLevel", "asInvoker", "invoke-windows-standard-user-test.ps1", "windows-per-user-evidence"):
         require(evidence in workflow, f"P025 hosted workflow evidence: {evidence}")
     for evidence in (r"\Synveil\BackgroundClient\profile-", "InteractiveToken", "LeastPrivilege", "<LogonTrigger>",
@@ -181,6 +211,16 @@ def main() -> int:
                      "p027-obsolete-owned.txt", "downgrade-fixture", "reinstall-production",
                      "startup_preference_preserved", "authorized_scope"):
         require(evidence in lifecycle_test, f"P027 native lifecycle evidence: {evidence}")
+    for evidence in ("GetFolderPath([Environment+SpecialFolder]::UserProfile)",
+                     "$env:LOCALAPPDATA = $localAppData", "$env:APPDATA = $roamingAppData",
+                     "$env:TEMP = Join-Path $localAppData 'Temp'", "P027_PROFILE_PATH_FAILURE"):
+        require(evidence in lifecycle_test, f"P027 standard-user profile environment: {evidence}")
+    require(lifecycle_test.index("P027_PROFILE_PATH_FAILURE") < lifecycle_test.index("$root = Join-Path"),
+            "P027 profile paths are validated before deriving installer paths")
+    require("function Wait-ForRemovedPath" in lifecycle_test
+            and lifecycle_test.count("Wait-ForRemovedPath $root") == 3
+            and "bounded second-phase cleanup" in lifecycle_test,
+            "P027 waits for bounded Inno second-phase removal after each uninstall")
     for evidence in ("Interrupt-UpgradeAfterOwnedPayloadCopy", "NewerLicenseHash",
                      "LIFECYCLE_INTERRUPTION_FAILURE", "process_termination='forced'",
                      "prior_manifest_and_registration_matched"):

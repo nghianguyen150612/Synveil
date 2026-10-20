@@ -1462,6 +1462,7 @@ export function RestoreWorkflowPage({
           record={pendingExecution}
           title="Finish this restore"
           busy={executionSubmitting}
+          canRetry={destinationDetails.status === 'success'}
           onCheckStatus={() => void readPlan(false)}
           onRetry={() => void submitExecution(pendingExecution.idempotency_key)}
           onDiscard={discardPendingExecution}

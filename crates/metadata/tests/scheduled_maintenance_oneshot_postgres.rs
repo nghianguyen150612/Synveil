@@ -768,7 +768,9 @@ async fn oneshot_concurrent_callers_no_duplicates_and_zero_deadlocks() {
     }
     assert_eq!(deadlock, 0, "concurrent one-shot must have 0 deadlocks");
     assert_eq!(other_db, 0, "unexpected DB errors: {other_db}");
-    // Verify exactly one occurrence/handoff/run/claim and no duplicate child effects.
+    // Verify exactly one occurrence/handoff/run and a duplicate-free claim
+    // prefix. Concurrent one-shot callers may each advance one lifecycle
+    // transition, so one canonical run can have up to three claims.
     assert_eq!(
         count_for_set(
             &fixture.db.inspection,
@@ -796,13 +798,55 @@ async fn oneshot_concurrent_callers_no_duplicates_and_zero_deadlocks() {
         .await,
         1
     );
-    let claims = count_for_set(
-        &fixture.db.inspection,
-        "backup_scheduled_maintenance_claims",
-        fixture.backup_set_id,
+    let claims: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT expected_state, resulting_state
+         FROM backup_scheduled_maintenance_claims
+         WHERE backup_set_id = $1
+         ORDER BY CASE expected_state
+             WHEN 'CREATED' THEN 1
+             WHEN 'SNAPSHOT_CAPTURED' THEN 2
+             WHEN 'EXPIRY_PLANNED' THEN 3
+         END",
     )
-    .await;
-    assert_eq!(claims, 1);
+    .bind(fixture.backup_set_id.into_uuid())
+    .fetch_all(&fixture.db.inspection)
+    .await
+    .unwrap();
+    assert!(
+        (1..=3).contains(&claims.len()),
+        "unexpected claim count: {claims:?}"
+    );
+    let mut expected_state = "CREATED";
+    for (index, (claim_state, resulting_state)) in claims.iter().enumerate() {
+        assert_eq!(
+            claim_state, expected_state,
+            "claim states must be contiguous"
+        );
+        let next_state = match claim_state.as_str() {
+            "CREATED" => "SNAPSHOT_CAPTURED",
+            "SNAPSHOT_CAPTURED" => "EXPIRY_PLANNED",
+            "EXPIRY_PLANNED" => "COMPLETED",
+            _ => panic!("unexpected claim state: {claim_state}"),
+        };
+        if let Some(resulting_state) = resulting_state {
+            assert_eq!(resulting_state, next_state);
+            expected_state = next_state;
+        } else {
+            assert_eq!(
+                index + 1,
+                claims.len(),
+                "only the final claim may be incomplete"
+            );
+            expected_state = claim_state;
+        }
+    }
+    let run_state: String =
+        sqlx::query_scalar("SELECT state FROM backup_maintenance_runs WHERE backup_set_id = $1")
+            .bind(fixture.backup_set_id.into_uuid())
+            .fetch_one(&fixture.db.inspection)
+            .await
+            .unwrap();
+    assert_eq!(run_state, expected_state);
     // No duplicate child effects: snapshot capture operation should have exactly one snapshot.
     let runs = BackupService::new(fixture.pool())
         .list_backup_maintenance_runs(fixture.owner_user_id, fixture.backup_set_id, None, 10)

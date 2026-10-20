@@ -23,6 +23,39 @@ fn script() -> PathBuf {
     repo_root().join("deploy/packages/build-windows.sh")
 }
 
+fn bash_command() -> Command {
+    #[cfg(windows)]
+    {
+        // The Windows runner also exposes the WSL launcher as `bash.exe` on
+        // PATH. Resolve Git Bash beside the Git for Windows installation so
+        // this test parses the script with the shell used by Actions.
+        let git_locations = Command::new("where.exe")
+            .arg("git.exe")
+            .output()
+            .expect("locate Git for Windows");
+        assert!(
+            git_locations.status.success(),
+            "Git for Windows must be available for the native packaging test"
+        );
+        for line in String::from_utf8_lossy(&git_locations.stdout).lines() {
+            let git = PathBuf::from(line.trim());
+            let Some(root) = git.parent().and_then(|directory| directory.parent()) else {
+                continue;
+            };
+            let bash = root.join("bin").join("bash.exe");
+            if bash.is_file() {
+                return Command::new(bash);
+            }
+        }
+        panic!("Git Bash was not found beside the Git for Windows executable");
+    }
+
+    #[cfg(not(windows))]
+    {
+        Command::new("bash")
+    }
+}
+
 #[test]
 fn windows_packager_is_shell_safe_and_syntax_clean() {
     let path = script();
@@ -43,8 +76,8 @@ fn windows_packager_is_shell_safe_and_syntax_clean() {
         "packager must not recursively remove a broad root"
     );
 
-    let mut child = Command::new("bash")
-        .arg("-n")
+    let mut child = bash_command()
+        .args(["--noprofile", "--norc", "-n", "-s"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -59,8 +92,9 @@ fn windows_packager_is_shell_safe_and_syntax_clean() {
     let output = child.wait_with_output().expect("wait for bash -n");
     assert!(
         output.status.success(),
-        "Windows packager must be syntax-clean: {}",
-        String::from_utf8_lossy(&output.stderr)
+        "Windows packager must be syntax-clean (status {:?}): {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr),
     );
 }
 

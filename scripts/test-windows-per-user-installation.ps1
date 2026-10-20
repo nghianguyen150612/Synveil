@@ -7,13 +7,57 @@ param(
 $ErrorActionPreference = 'Stop'
 $appId = '{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1'
 $uninstallSubkey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\$appId"
-$root = Join-Path $env:LOCALAPPDATA 'Programs\Synveil'
-$startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Synveil.lnk'
-$desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Synveil.lnk'
-$commonStartMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Synveil.lnk'
-$publicDesktop = Join-Path $env:PUBLIC 'Desktop\Synveil.lnk'
-$logRoot = Join-Path $env:LOCALAPPDATA 'Synveil\installer'
-$sentinel = Join-Path $env:LOCALAPPDATA 'Synveil\state-sentinel\p025.txt'
+$profileIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$profileName = ($profileIdentity.Name -split '\\')[-1]
+$profileRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+$profileLeaf = if ([string]::IsNullOrWhiteSpace($profileRoot)) { '' } else { Split-Path -Leaf $profileRoot }
+if ([string]::IsNullOrWhiteSpace($profileRoot) -or $profileLeaf -cne $profileName) {
+    $profileRoot = Join-Path $env:SystemDrive "Users\$profileName"
+}
+$localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+$roamingAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)
+$desktopRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory)
+$expectedLocal = Join-Path $profileRoot 'AppData\Local'
+$expectedRoaming = Join-Path $profileRoot 'AppData\Roaming'
+$expectedDesktop = Join-Path $profileRoot 'Desktop'
+if ([string]::IsNullOrWhiteSpace($localAppData) -or
+    !$localAppData.StartsWith($expectedLocal, [StringComparison]::OrdinalIgnoreCase)) {
+    $localAppData = $expectedLocal
+}
+if ([string]::IsNullOrWhiteSpace($roamingAppData) -or
+    !$roamingAppData.StartsWith($expectedRoaming, [StringComparison]::OrdinalIgnoreCase)) {
+    $roamingAppData = $expectedRoaming
+}
+if ([string]::IsNullOrWhiteSpace($desktopRoot) -or
+    !$desktopRoot.StartsWith($expectedDesktop, [StringComparison]::OrdinalIgnoreCase)) {
+    $desktopRoot = $expectedDesktop
+}
+$programData = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)
+$publicDesktopRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonDesktopDirectory)
+if ([string]::IsNullOrWhiteSpace($programData)) { $programData = Join-Path $env:SystemDrive 'ProgramData' }
+if ([string]::IsNullOrWhiteSpace($publicDesktopRoot)) {
+    $publicDesktopRoot = Join-Path $env:SystemDrive 'Users\Public\Desktop'
+}
+$env:USERPROFILE = $profileRoot
+$env:LOCALAPPDATA = $localAppData
+$env:APPDATA = $roamingAppData
+$env:ProgramData = $programData
+$env:PUBLIC = Split-Path -Parent $publicDesktopRoot
+$env:TEMP = Join-Path $localAppData 'Temp'
+$env:TMP = $env:TEMP
+$root = Join-Path $localAppData 'Programs\Synveil'
+$startMenu = Join-Path $roamingAppData 'Microsoft\Windows\Start Menu\Programs\Synveil.lnk'
+$desktop = Join-Path $desktopRoot 'Synveil.lnk'
+$commonStartMenu = Join-Path $programData 'Microsoft\Windows\Start Menu\Programs\Synveil.lnk'
+$publicDesktop = Join-Path $publicDesktopRoot 'Synveil.lnk'
+$logRoot = Join-Path $localAppData 'Synveil\installer'
+$sentinel = Join-Path $localAppData 'Synveil\state-sentinel\p025.txt'
+
+foreach ($name in @('USERPROFILE','LOCALAPPDATA','APPDATA','ProgramData','PUBLIC','TEMP','TMP')) {
+    if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+        throw "P025_PROFILE_PATH_FAILURE: $name could not be resolved for the standard user"
+    }
+}
 
 Add-Type -TypeDefinition @'
 using System;
@@ -45,6 +89,19 @@ public static class SynveilTokenEvidence {
 '@
 
 function Assert-True([bool]$Condition, [string]$Message) { if (!$Condition) { throw $Message } }
+function Wait-ForRemovedPath([string]$Path, [string]$Name) {
+    # Inno's uninstaller launches a second phase from a temporary executable;
+    # the registered launcher can exit just before that phase removes {app}.
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds(10)
+    while (Test-Path -LiteralPath $Path) {
+        if ([DateTimeOffset]::UtcNow -ge $deadline) {
+            $remaining = @(Get-ChildItem -LiteralPath $Path -Force -Recurse -ErrorAction SilentlyContinue |
+                Select-Object -First 20 -ExpandProperty FullName)
+            throw "PER_USER_UNINSTALL_FAILURE: $Name remains after bounded second-phase cleanup; entries=$($remaining -join ', ')"
+        }
+        Start-Sleep -Milliseconds 100
+    }
+}
 $script:observedTokens = @{}
 function Invoke-Bounded([string]$File, [string[]]$Arguments, [string]$WorkingDirectory, [int]$ExpectedExit, [string]$Name, [string]$Stdout='', [string]$Stderr='') {
     $options = @{ FilePath=$File; ArgumentList=$Arguments; WorkingDirectory=$WorkingDirectory; PassThru=$true }
@@ -68,7 +125,7 @@ function Get-HklmRegistrationCount {
 function Get-SynveilServiceCount { return @((Get-Service -Name '*Synveil*' -ErrorAction SilentlyContinue)).Count }
 function Get-SynveilTaskCount { return @((Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -match 'Synveil' -or $_.TaskPath -match 'Synveil' })).Count }
 
-$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$identity = $profileIdentity
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $token = [SynveilTokenEvidence]::Current()
@@ -100,8 +157,11 @@ Assert-True ($null -ne $hkcu) 'PER_USER_REGISTRY_FAILURE: HKCU uninstall registr
 $uninstaller = $hkcu.GetValue('UninstallString').Trim('"'); $hkcu.Dispose()
 Assert-True (Test-Path $uninstaller -PathType Leaf) 'PER_USER_REGISTRY_FAILURE: registered uninstaller missing'
 
-& (Join-Path $RepositoryRoot 'scripts\test-windows-installed-runtime.ps1') -RuntimeRoot $root -Manifest (Join-Path $root 'SYNVEIL-MANIFEST.txt')
-if ($LASTEXITCODE -ne 0) { throw 'PER_USER_RUNTIME_FAILURE: installed manifest verifier failed' }
+try {
+    & (Join-Path $RepositoryRoot 'scripts\test-windows-installed-runtime.ps1') -RuntimeRoot $root -Manifest (Join-Path $root 'SYNVEIL-MANIFEST.txt')
+} catch {
+    throw "PER_USER_RUNTIME_FAILURE: installed manifest verifier failed: $($_.Exception.Message)"
+}
 $acl = Get-Acl -LiteralPath $root
 $broadWrite = @($acl.Access | Where-Object {
     $_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
@@ -110,21 +170,26 @@ $broadWrite = @($acl.Access | Where-Object {
 })
 Assert-True ($broadWrite.Count -eq 0) 'PER_USER_ACL_FAILURE: broad local-user principal can write package root'
 
-foreach ($name in @('QT_ROOT_DIR','QT_PLUGIN_PATH','QML2_IMPORT_PATH','QML_IMPORT_PATH')) { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
-$env:QT_QPA_PLATFORM='offscreen'; $env:QT_DEBUG_PLUGINS='1'; $env:PATH="$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
+foreach ($name in @('QT_ROOT_DIR','QT_PLUGIN_PATH','QT_QPA_PLATFORM_PLUGIN_PATH','QT_QPA_PLATFORM','QT_QUICK_BACKEND','QML2_IMPORT_PATH','QML_IMPORT_PATH','SYNVEIL_CLIENT_CONFIG')) { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
+$env:PATH="$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
+# Probe the installed client before the desktop's first-run smoke creates its
+# canonical profile manifest. With no profile, the client must exit 78 rather
+# than initialize or run an empty background process.
+$env:QT_DEBUG_PLUGINS='0'
+Invoke-Bounded (Join-Path $root 'synveil-client.exe') @() $unrelatedCwd 78 'client probe' (Join-Path $logRoot 'client.stdout.log') (Join-Path $logRoot 'client.stderr.log')
+$env:QT_QPA_PLATFORM='windows'; $env:QT_QUICK_BACKEND='software'; $env:QT_DEBUG_PLUGINS='1'
 $desktopOut=Join-Path $logRoot 'desktop.stdout.log'; $desktopErr=Join-Path $logRoot 'desktop.stderr.log'
 Invoke-Bounded (Join-Path $root 'synveil-desktop.exe') @('--qml-smoke-test') $unrelatedCwd 0 'desktop smoke' $desktopOut $desktopErr
 $diagnostics = Get-Content $desktopErr -Raw
 Assert-True ($diagnostics -notmatch [regex]::Escape($RepositoryRoot) -and $diagnostics -notmatch 'hostedtoolcache.*Qt') 'PER_USER_RUNTIME_FAILURE: desktop used checkout/Qt SDK path'
 $env:QT_DEBUG_PLUGINS='0'
-Invoke-Bounded (Join-Path $root 'synveil-client.exe') @() $unrelatedCwd 78 'client probe' (Join-Path $logRoot 'client.stdout.log') (Join-Path $logRoot 'client.stderr.log')
 Assert-True ([Environment]::GetEnvironmentVariable('Path','Machine') -ceq $machinePathBefore) 'PER_USER_MUTATION_FAILURE: machine PATH changed'
 Assert-True ([Environment]::GetEnvironmentVariable('Path','User') -ceq $userPathBefore) 'PER_USER_MUTATION_FAILURE: user PATH changed'
 Assert-True ((Get-SynveilServiceCount) -eq $servicesBefore) 'PER_USER_MUTATION_FAILURE: Synveil service created'
 Assert-True ((Get-SynveilTaskCount) -eq $tasksBefore) 'PER_USER_MUTATION_FAILURE: Synveil scheduled task created'
 
 Invoke-Bounded $uninstaller @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG=' + (Join-Path $logRoot 'uninstall.log'))) $unrelatedCwd 0 'uninstaller'
-Assert-True (!(Test-Path $root)) 'PER_USER_UNINSTALL_FAILURE: package root remains'
+Wait-ForRemovedPath $root 'package root'
 Assert-True (!(Test-Path $startMenu)) 'PER_USER_UNINSTALL_FAILURE: Start Menu shortcut remains'
 Assert-True ($null -eq [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($uninstallSubkey)) 'PER_USER_UNINSTALL_FAILURE: HKCU registration remains'
 Assert-True (Test-Path $sentinel -PathType Leaf) 'PER_USER_UNINSTALL_FAILURE: external state sentinel removed'
@@ -134,6 +199,7 @@ Assert-True (Test-Path $desktop -PathType Leaf) 'PER_USER_OPTION_FAILURE: DESKTO
 $hkcu = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($uninstallSubkey); Assert-True ($null -ne $hkcu) 'PER_USER_REINSTALL_FAILURE: HKCU registration missing'
 $uninstaller = $hkcu.GetValue('UninstallString').Trim('"'); $hkcu.Dispose()
 Invoke-Bounded $uninstaller @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG=' + (Join-Path $logRoot 'uninstall-reinstall.log'))) $unrelatedCwd 0 'second uninstaller'
+Wait-ForRemovedPath $root 'reinstalled package root'
 Assert-True (!(Test-Path $desktop) -and (Test-Path $sentinel)) 'PER_USER_UNINSTALL_FAILURE: option cleanup/state preservation failed'
 
 $os = Get-CimInstance Win32_OperatingSystem

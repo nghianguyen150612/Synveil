@@ -490,7 +490,8 @@ describe('backup foundation page', () => {
     const api = makeBackupApi({ getBackupOperation: getOperation })
     renderBackups(api, '/backups/set-1/operations/MAINTENANCE/run-1')
 
-    expect(await screen.findByRole('heading', { name: 'Operation details' })).toHaveFocus()
+    const operationHeading = await screen.findByRole('heading', { name: 'Operation details' })
+    await waitFor(() => expect(operationHeading).toHaveFocus())
     expect(getOperation).toHaveBeenCalledWith(
       'MAINTENANCE',
       'run-1',

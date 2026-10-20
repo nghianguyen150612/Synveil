@@ -40,12 +40,35 @@ fn validator() -> PathBuf {
 }
 
 fn run_validator(manifest_path: &Path) -> std::process::Output {
+    run_validator_at(&repo_root(), manifest_path)
+}
+
+fn run_validator_at(repo_root: &Path, manifest_path: &Path) -> std::process::Output {
     Command::new("bash")
-        .arg(validator())
+        .arg(repo_root.join("scripts/validate-release-artifacts.sh"))
         .arg(format!("--manifest={}", manifest_path.display()))
-        .current_dir(repo_root())
+        .current_dir(repo_root)
         .output()
         .expect("run release artifact validator")
+}
+
+fn source_fingerprint(repo_root: &Path) -> String {
+    let common = repo_root.join("deploy/packages/common/reproducible.sh");
+    let output = Command::new("bash")
+        .arg("-c")
+        .arg("source \"$1\"; synveil_source_fingerprint \"$2\"")
+        .arg("synveil-artifact-fingerprint")
+        .arg(common)
+        .arg(repo_root)
+        .current_dir(repo_root)
+        .output()
+        .expect("compute release artifact source fingerprint");
+    assert!(
+        output.status.success(),
+        "fingerprint failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
 fn compare_artifacts(expected: &Path, actual: &Path) -> std::process::Output {
@@ -114,17 +137,42 @@ fn artifact_unit_1_same_source_produces_stable_artifact_metadata() {
 }
 
 #[test]
+fn artifact_unit_9_linux_manifest_has_the_closed_release_binary_inventory() {
+    let builder = read(repo_root().join("deploy/packages/build.sh"));
+    let validator = read(validator());
+    let expected = [
+        "target/release/synveil-scheduled-maintenance-once",
+        "target/release/synveil-client",
+        "target/release/synveil-desktop",
+        "target/release/synveil-host-helper",
+    ];
+
+    for path in expected {
+        assert!(builder.contains(path), "producer omits {path}");
+        assert!(
+            validator.contains(&format!("'{path}'")),
+            "validator omits {path}"
+        );
+    }
+    assert!(validator.contains("declare -A seen_paths=()"));
+    assert!(validator.contains("unexpected Linux release artifact"));
+    assert!(validator.contains("duplicate Linux release artifact"));
+    assert!(validator.contains("${#expected_paths[@]}"));
+}
+
+#[test]
 fn artifact_unit_2_hash_comparison_detects_intentional_modification() {
     let Some(manifest_path) = linux_manifest() else {
         eprintln!("SKIP ARTIFACT-UNIT-2: Linux release manifest is absent");
         return;
     };
+    let root = repo_root();
     let contents = read(&manifest_path);
-    let Some((line_index, expected_hash, relative_path)) = first_artifact_line(&contents) else {
+    let Some((_line_index, expected_hash, relative_path)) = first_artifact_line(&contents) else {
         panic!("release manifest has no artifact entry");
     };
-    let artifact = repo_root().join(relative_path);
-    let tamper_dir = repo_root().join("target/p113-artifact-unit");
+    let artifact = root.join(&relative_path);
+    let tamper_dir = root.join("target/p113-artifact-unit");
     fs::create_dir_all(&tamper_dir).expect("create artifact tamper directory");
     let temp_path = tamper_dir.join(format!("tampered-{}", std::process::id()));
     fs::copy(&artifact, &temp_path).expect("copy real release artifact for mutation test");
@@ -161,28 +209,99 @@ fn artifact_unit_2_hash_comparison_detects_intentional_modification() {
         .to_owned();
     assert_ne!(actual_hash, expected_hash);
 
-    let mut lines = contents.lines().map(str::to_owned).collect::<Vec<_>>();
-    let mut fields = lines[line_index]
-        .split_whitespace()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    fields[3] = temp_path
-        .strip_prefix(repo_root())
-        .expect("tampered artifact is repo-relative")
-        .to_string_lossy()
-        .replace('\\', "/");
-    lines[line_index] = fields.join(" ");
+    let fixture_root = tamper_dir.join(format!("repository-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&fixture_root);
+    fs::create_dir_all(fixture_root.join("scripts")).expect("create validator fixture scripts");
+    fs::create_dir_all(fixture_root.join("deploy/packages/common"))
+        .expect("create validator fixture helpers");
+    fs::copy(
+        validator(),
+        fixture_root.join("scripts/validate-release-artifacts.sh"),
+    )
+    .expect("copy release artifact validator");
+    fs::copy(
+        root.join("deploy/packages/common/reproducible.sh"),
+        fixture_root.join("deploy/packages/common/reproducible.sh"),
+    )
+    .expect("copy reproducible artifact helpers");
+
+    let lines = contents.lines().map(str::to_owned).collect::<Vec<_>>();
+    let marker_line = lines
+        .iter()
+        .position(|line| line == "artifacts=sha256 size build_id path")
+        .expect("artifact manifest has its section marker");
+    for line in lines.iter().skip(marker_line + 1) {
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        if fields.len() != 4 {
+            continue;
+        }
+        let source = root.join(fields[3]);
+        let destination = fixture_root.join(fields[3]);
+        fs::create_dir_all(destination.parent().expect("artifact has a parent"))
+            .expect("create fixture release directory");
+        fs::copy(source, destination).expect("copy real release artifact into validator fixture");
+    }
+
+    let init = Command::new("git")
+        .arg("-C")
+        .arg(&fixture_root)
+        .args(["init", "--quiet"])
+        .output()
+        .expect("initialize validator fixture repository");
+    assert!(
+        init.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let add = Command::new("git")
+        .arg("-C")
+        .arg(&fixture_root)
+        .args([
+            "add",
+            "scripts/validate-release-artifacts.sh",
+            "deploy/packages/common/reproducible.sh",
+        ])
+        .output()
+        .expect("stage validator fixture source files");
+    assert!(
+        add.status.success(),
+        "git add failed: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+    let fixture_fingerprint = source_fingerprint(&fixture_root);
+
+    let fixture_artifact = fixture_root.join(&relative_path);
+    let mut fixture_bytes = fs::read(&fixture_artifact).expect("read fixture release artifact");
+    let last = fixture_bytes
+        .last_mut()
+        .expect("fixture release artifact is non-empty");
+    *last ^= 0x01;
+    fs::write(&fixture_artifact, &fixture_bytes)
+        .expect("write intentional mutation to allowed artifact path");
+
+    let mut fixture_lines = lines;
+    for line in &mut fixture_lines {
+        if line.starts_with("source_fingerprint=") {
+            *line = format!("source_fingerprint={fixture_fingerprint}");
+        }
+    }
     let tampered_manifest =
-        tamper_dir.join(format!("tampered-manifest-{}.txt", std::process::id()));
-    fs::write(&tampered_manifest, lines.join("\n") + "\n")
+        fixture_root.join("target/packages/SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt");
+    fs::create_dir_all(
+        tampered_manifest
+            .parent()
+            .expect("fixture manifest has a parent"),
+    )
+    .expect("create fixture manifest directory");
+    fs::write(&tampered_manifest, fixture_lines.join("\n") + "\n")
         .expect("write tampered artifact manifest");
-    let output = run_validator(&tampered_manifest);
+    let output = run_validator_at(&fixture_root, &tampered_manifest);
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("expected:"), "diagnostic: {stderr}");
     assert!(stderr.contains("actual:"), "diagnostic: {stderr}");
     let _ = fs::remove_file(temp_path);
-    let _ = fs::remove_file(tampered_manifest);
+    let _ = fs::remove_dir_all(fixture_root);
 }
 
 #[test]
@@ -377,8 +496,8 @@ fn artifact_unit_5_manifest_matches_generated_artifacts() {
             .skip(marker_line + 1)
             .filter(|line| line.split_whitespace().count() == 4)
             .count(),
-        3,
-        "Linux manifest must describe maintenance, client, and desktop binaries"
+        4,
+        "Linux manifest must describe maintenance, client, desktop, and Host helper binaries"
     );
 }
 

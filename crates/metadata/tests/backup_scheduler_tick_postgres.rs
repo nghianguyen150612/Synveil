@@ -402,9 +402,19 @@ async fn postgres_scheduler_tick_schema_is_current_on_postgresql_17() {
         version.starts_with("17."),
         "expected PostgreSQL 17, got {version}"
     );
+    let migration_status = MigrationRunner::new()
+        .status(&fixture.pool)
+        .await
+        .expect("current migration status must be readable");
+    assert!(migration_status.is_current());
     assert_eq!(
         count_table(&fixture.inspection, "_sqlx_migrations").await,
-        34
+        i64::try_from(migration_status.applied_versions().len())
+            .expect("migration count must fit PostgreSQL bigint")
+    );
+    assert_eq!(
+        migration_status.latest_applied_version(),
+        Some(20260910000000)
     );
     fixture.close().await;
 }

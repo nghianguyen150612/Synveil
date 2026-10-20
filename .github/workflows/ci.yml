@@ -134,7 +134,9 @@ jobs:
   desktop-windows-native:
     name: Native desktop UI (Windows Qt 6)
     runs-on: windows-latest
-    timeout-minutes: 30
+    # Exact-head run #39156222060 reached the runtime ZIP audit after the clean
+    # release rebuild but hit the 60-minute job limit before ZIP smoke checks.
+    timeout-minutes: 90
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -328,7 +330,7 @@ jobs:
   cross-platform-test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

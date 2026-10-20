@@ -317,13 +317,13 @@ describe('restore workflow', () => {
         retryable: false,
       }))
     })
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toHaveFocus()
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Sign in' })).toHaveFocus())
     fireEvent.change(screen.getByLabelText('Login identifier'), { target: { value: 'alice' } })
     fireEvent.change(screen.getByLabelText('Login key'), { target: { value: 'alice-key' } })
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'password' } })
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
 
-    expect(await screen.findByRole('heading', { name: 'Review restore plan' })).toHaveFocus()
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Review restore plan' })).toHaveFocus())
     expect(getPlan).toHaveBeenCalled()
     expect(createPlan).not.toHaveBeenCalled()
     expect(executePlan).not.toHaveBeenCalled()
@@ -602,9 +602,25 @@ describe('restore workflow', () => {
       return executionResponse
     })
     const backupApi = makeBackupApi({ executeBackupRestorePlan: executePlan })
-    renderRestore(planPath(), backupApi)
+    const defaultFileApi = makeFileApi()
+    let resolveDestination!: () => void
+    const destinationLoading = new Promise<void>((resolve) => {
+      resolveDestination = resolve
+    })
+    const fileApi = makeFileApi({
+      getLiveNode: vi.fn<FileMetadataApi['getLiveNode']>().mockImplementation(async (nodeId, options) => {
+        if (nodeId === rootNode.id) {
+          await destinationLoading
+        }
+        return defaultFileApi.getLiveNode(nodeId, options)
+      }),
+    })
+    renderRestore(planPath(), backupApi, fileApi)
 
     expect(await screen.findByRole('heading', { name: 'Finish this restore' })).toBeInTheDocument()
+    expect(await screen.findByText('Confirming destination details…')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry safely' })).not.toBeInTheDocument()
+    resolveDestination()
     await waitFor(() => expect(screen.getByRole('button', { name: 'Retry safely' })).toBeEnabled())
     expect(backupApi.getBackupRestorePlan).toHaveBeenCalled()
     expect(executePlan).not.toHaveBeenCalled()

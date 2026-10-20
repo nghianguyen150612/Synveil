@@ -9,15 +9,69 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'windows-security.ps1')
+$profileIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$profileName = ($profileIdentity.Name -split '\\')[-1]
+$profileRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+$profileLeaf = if ([string]::IsNullOrWhiteSpace($profileRoot)) { '' } else { Split-Path -Leaf $profileRoot }
+if ([string]::IsNullOrWhiteSpace($profileRoot) -or $profileLeaf -cne $profileName) {
+    $profileRoot = Join-Path $env:SystemDrive "Users\$profileName"
+}
+$localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+$roamingAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)
+$desktopRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory)
+$expectedLocal = Join-Path $profileRoot 'AppData\Local'
+$expectedRoaming = Join-Path $profileRoot 'AppData\Roaming'
+$expectedDesktop = Join-Path $profileRoot 'Desktop'
+if ([string]::IsNullOrWhiteSpace($localAppData) -or
+    !$localAppData.StartsWith($expectedLocal, [StringComparison]::OrdinalIgnoreCase)) {
+    $localAppData = $expectedLocal
+}
+if ([string]::IsNullOrWhiteSpace($roamingAppData) -or
+    !$roamingAppData.StartsWith($expectedRoaming, [StringComparison]::OrdinalIgnoreCase)) {
+    $roamingAppData = $expectedRoaming
+}
+if ([string]::IsNullOrWhiteSpace($desktopRoot) -or
+    !$desktopRoot.StartsWith($expectedDesktop, [StringComparison]::OrdinalIgnoreCase)) {
+    $desktopRoot = $expectedDesktop
+}
+$programData = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)
+$publicDesktopRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonDesktopDirectory)
+if ([string]::IsNullOrWhiteSpace($programData)) { $programData = Join-Path $env:SystemDrive 'ProgramData' }
+if ([string]::IsNullOrWhiteSpace($publicDesktopRoot)) {
+    $publicDesktopRoot = Join-Path $env:SystemDrive 'Users\Public\Desktop'
+}
+$env:USERPROFILE = $profileRoot
+$env:LOCALAPPDATA = $localAppData
+$env:APPDATA = $roamingAppData
+$env:ProgramData = $programData
+$env:PUBLIC = Split-Path -Parent $publicDesktopRoot
+$env:TEMP = Join-Path $localAppData 'Temp'
+$env:TMP = $env:TEMP
+foreach ($name in @('USERPROFILE','LOCALAPPDATA','APPDATA','ProgramData','PUBLIC','TEMP','TMP')) {
+    if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+        throw "P027_PROFILE_PATH_FAILURE: $name could not be resolved for the standard user"
+    }
+}
 $appId = '{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1'
 $uninstallKey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\$appId"
-$root = Join-Path $env:LOCALAPPDATA 'Programs\Synveil'
-$stateRoot = Join-Path $env:LOCALAPPDATA 'Synveil'
+$root = Join-Path $localAppData 'Programs\Synveil'
+$stateRoot = Join-Path $localAppData 'Synveil'
 $logRoot = Join-Path $stateRoot 'installer\p027'
-$startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Synveil.lnk'
-$desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Synveil.lnk'
+$startMenu = Join-Path $roamingAppData 'Microsoft\Windows\Start Menu\Programs\Synveil.lnk'
+$desktop = Join-Path $desktopRoot 'Synveil.lnk'
 
 function Assert-True([bool]$Condition, [string]$Message) { if (!$Condition) { throw $Message } }
+function Wait-ForRemovedPath([string]$Path, [string]$Name) {
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds(10)
+    while (Test-Path -LiteralPath $Path) {
+        if ([DateTimeOffset]::UtcNow -ge $deadline) {
+            $remaining = @(Get-ChildItem -LiteralPath $Path -Force -Recurse -ErrorAction SilentlyContinue |
+                Select-Object -First 20 -ExpandProperty FullName)
+            throw "LIFECYCLE_UNINSTALL_FAILURE: $Name remains after bounded second-phase cleanup; entries=$($remaining -join ', ')"
+        }
+        Start-Sleep -Milliseconds 100
+    }
+}
 function Invoke-Setup([string]$Path, [string[]]$Extra, [int]$Expected, [string]$Name) {
     $arguments = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LAUNCH=0') + $Extra + @(('/LOG=' + (Join-Path $logRoot "$Name.log")))
     $process = Start-Process -FilePath $Path -ArgumentList $arguments -WorkingDirectory $env:TEMP -PassThru
@@ -94,6 +148,7 @@ function Interrupt-UpgradeAfterOwnedPayloadCopy([string]$Path, [string]$Expected
 }
 
 New-Item $logRoot -ItemType Directory -Force | Out-Null
+New-Item $env:TEMP -ItemType Directory -Force | Out-Null
 foreach ($name in @('config','startup-preference','client-state','library','external')) {
     Set-Content -LiteralPath (Join-Path $stateRoot "p027-$name.sentinel") -Value "P027 synthetic non-secret $name state"
 }
@@ -113,7 +168,8 @@ Assert-True ((Snapshot-State) -ceq $stateBefore) 'LIFECYCLE_REPAIR_FAILURE: dura
 Invoke-RegisteredUninstall 'uninstall-production'
 Assert-True (Test-Path $unknown -PathType Leaf) 'LIFECYCLE_UNINSTALL_FAILURE: unknown adjacent file removed'
 Assert-True ((Snapshot-State) -ceq $stateBefore) 'LIFECYCLE_UNINSTALL_FAILURE: durable state changed'
-Remove-Item -LiteralPath $unknown; Remove-Item -LiteralPath $root -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $unknown
+Wait-ForRemovedPath $root 'uninstall-production'
 
 # Real Setup execution with isolated numeric fixture identities; never release artifacts.
 Invoke-Setup $OlderFixtureSetup @('/STARTUP=0','/DESKTOPICON=1') 0 'install-fixture-old'
@@ -144,10 +200,12 @@ Assert-True ((Manifest-Hashes | ConvertTo-Json -Compress) -ceq $beforeDowngrade)
 Assert-True ((Snapshot-State) -ceq $stateBefore) 'LIFECYCLE_DOWNGRADE_FAILURE: state changed'
 Invoke-RegisteredUninstall 'uninstall-fixture'
 Assert-True ((Test-Path $unknown) -and ((Snapshot-State) -ceq $stateBefore)) 'LIFECYCLE_UNINSTALL_FAILURE: preserved data changed'
-Remove-Item -LiteralPath $unknown; Remove-Item -LiteralPath $root -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $unknown
+Wait-ForRemovedPath $root 'uninstall-fixture'
 Invoke-Setup $Setup @('/STARTUP=0','/DESKTOPICON=0') 0 'reinstall-production'
 $null = Manifest-Hashes
 Invoke-RegisteredUninstall 'uninstall-reinstalled'
+Wait-ForRemovedPath $root 'uninstall-reinstalled'
 
 $evidence = [ordered]@{
     schema_version=1; source_commit=$env:GITHUB_SHA; artifact_sha256=(Get-FileHash $Setup -Algorithm SHA256).Hash.ToLowerInvariant()
