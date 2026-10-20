@@ -2,6 +2,22 @@
 
 **Audit status: documentation is prepared; v0.2 is not released.** The current released product remains v0.1.0. No v0.2 GitHub Release, public download channel, production signing key, or final v0.2 artifact set is published. Workflow artifacts are unsigned CI outputs and are not authenticated production releases.
 
+### R05 release status — 2026-10-20
+
+R01–R04 source history is integrated on `main`. R05's exact-source unsigned
+candidate pipeline is running for source
+`d0b1c43c144493e4adf9b44d3fd24d02f2bd7dbb` in
+[Actions run 39359470865](https://github.com/nghianguyen150612/Synveil/actions/runs/39359470865).
+At the latest recorded snapshot, no candidate set had been assembled. The
+candidate, if produced, is not a public or production-signed release.
+
+Production signing and publisher trust, the signed P036 eight-entry inventory,
+native Windows 11/Ubuntu 24.04/Fedora 42 acceptance, AppImage lifecycle
+acceptance, data-preservation and power-cycle evidence, and all 21 P047 gates
+remain blocked. P048 is not approved. No `v0.2.0` tag, GitHub Release or stable
+channel exists. Continue using the v0.1.0 manuals for the released product;
+do not install unsigned Actions artifacts as a public release.
+
 The P046 documentation baseline is `a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc`. P045 remains a separate open draft PR at `035497c05c145e5c6129e744f9455937069680f4`; its results below are evidence only for that source head and do not complete P045.
 
 ## Platform and artifact checklist

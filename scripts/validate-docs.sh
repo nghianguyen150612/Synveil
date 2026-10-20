@@ -133,6 +133,9 @@ python3 scripts/validate-installation-resilience-hardening.py || failures=$((fai
 echo "DOC-UNIT-23: checking bilingual v0.2 user and distribution guides"
 python3 scripts/validate-v02-user-docs.py || failures=$((failures + 1))
 
+echo "DOC-UNIT-24: checking the P045 clean-machine matrix and release boundary"
+python3 scripts/validate-cross-platform-clean-machine-matrix.py || failures=$((failures + 1))
+
 if [[ "$failures" -ne 0 ]]; then
     echo "documentation validation failed: $failures issue(s)" >&2
     exit 1

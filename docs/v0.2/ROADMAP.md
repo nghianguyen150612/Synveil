@@ -509,8 +509,14 @@ interruption resilience. No VM reboot or actual power-cycle is claimed;
 
 ### P045 — Cross-Platform Clean-Machine Matrix
 
-Run fresh Windows, Debian, Fedora and generic Linux acceptance on the exact
-platform versions advertised for v0.2.
+The current-source matrix and evidence validator cover Windows 11 x86_64,
+Ubuntu 24.04 and Fedora 42 x86_64 DEB/RPM, AppImage and quick-install routes.
+The matrix remains **acceptance withheld**: exact-source production artifacts,
+interactive native journeys, P036 production inputs, and hard power-cycle
+evidence are still required. Debian and other Linux distributions remain
+unqualified. The P045 validator runs as DOC-UNIT-24 alongside the retained
+P046 bilingual documentation checks in DOC-UNIT-23; P046 is implemented and
+P045 does not authorize release.
 
 ### P046 — v0.2 Documentation and Distribution Readiness
 

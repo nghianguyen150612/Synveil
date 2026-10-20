@@ -1,11 +1,50 @@
-# Synveil v0.2 Release Hardening Tracker
+# Synveil v0.2 release-hardening tracker
 
-R01–R05 are release-hardening execution tasks. They do not add to or renumber the existing P001–P048 product roadmap.
+R01–R05 are release-hardening execution tasks. They do not add to or renumber
+the existing P001–P048 product roadmap.
 
-| Release-hardening task | Status | Closeout / next action |
-|---|---|---|
-| R01 — Full CI recovery, build stabilization and cross-platform regression repair | `SOURCE_COMPLETE_WITH_BLOCKERS` | PR [#148](https://github.com/nghianguyen150612/Synveil/pull/148) remains open and unmerged at `24f84d6e9460d82380f3ab017a3a2d36d24f2879`, based on `main` `b01c3b2328b271529d02cb4ee30d97be43a42611`. R01 exact-head PostgreSQL run [#39171826358](https://github.com/nghianguyen150612/Synveil/actions/runs/39171826358) exposed an invalid corruption fixture violating `backup_schedules_effective_time_order`. R02 repaired only the fixture; full exact-head PostgreSQL 17 run [#39188222540](https://github.com/nghianguyen150612/Synveil/actions/runs/39188222540) passed, including `runner_scheduler_failure_boundary`. A later R02 test-only Windows fixture cleanup follow-up is awaiting fresh exact-head PG17 validation. Earlier R01 AppImage, Windows-native, and P036 blockers remain in the [R01 manifest](RELEASE_HARDENING_R01_MANIFEST.md). |
-| R02 — Managed Host production readiness and P036 acceptance | `SOURCE_COMPLETE_WITH_BLOCKERS` | PR [#149](https://github.com/nghianguyen150612/Synveil/pull/149) is stacked on `fix/v02-release-ci-stabilization` at `24f84d6e9460d82380f3ab017a3a2d36d24f2879`. Source commits: `8a5d5c9`, `0bed7c0`, and Windows test teardown follow-up `045dc1e`; docs closeout head `66e2cee` passed PG17 and service/network checks, but exposed a Windows test teardown failure. R02 now explicitly drops the test host before fixture cleanup in `crates/client-sync/src/host.rs`; local host33/host35 tests pass 1/1 each, and exact-head Windows CI rerun is pending. Production artifacts/trust inputs and native P036 acceptance remain blocked. Evidence and next actions are in the [R02 manifest](RELEASE_HARDENING_R02_MANIFEST.md). |
-| R03 — Production artifact identity, signatures, manifests and distribution | `R03_SOURCE_COMPLETE_WITH_BLOCKERS` | Source-level identity, byte-bound manifest/download validation, pinned signed AppImageKit runtime, RPM/Authenticode/Ed25519/P036 signing integrations, and protected candidate pipeline are recorded in the [R03 manifest](RELEASE_HARDENING_R03_MANIFEST.md). Exact unsigned CI candidates exist for Windows Setup and portable ZIP, Ubuntu DEB, Fedora RPM, and AppImage; hashes and evidence are in the [artifact matrix](RELEASE_ARTIFACT_MATRIX.md). Rust CI's independent ZIP output is reproducible but differs from the selected Windows installer ZIP, so exact selected-ZIP reproduction remains open. Authenticode, RPM, and release-manifest signatures, approved signer inputs, authenticated P036 inventory, Managed Host runtime artifacts, native Windows GUI/logon/named-pipe acceptance, a publisher-controlled distribution origin, and a stable channel remain blocked. R03 is stacked on R02 and has no merge/tag/release authorization. |
-| R04 — Native acceptance, upgrade safety and data preservation | `R04_SOURCE_COMPLETE_WITH_BLOCKERS` | R04 PR [#151](https://github.com/nghianguyen150612/Synveil/pull/151), branch `release/v02-native-acceptance`, targets R03 `release/v02-production-artifact-readiness`; starting base `524ef926324a0e965735bf2097d67792095a525a`; final product/acceptance source `17c70d870fbdd743494469eb97b09b1541a5bfc1` (observer fix `2488d6ea20856d1633512dab3b77e55bb630c639` and Windows path correction). The docs closeout commit is report-only; its branch SHA is the final R04 PR head. R01–R03 remain open in order at `24f84d6e9460d82380f3ab017a3a2d36d24f2879`, `f6f2591f44caf54ff13de2b0fd869257674de655`, `524ef926324a0e965735bf2097d67792095a525a`; main is `b01c3b2328b271529d02cb4ee30d97be43a42611`. The confirmed Linux watcher overflow defect is repaired and covered by 22 observer tests and 296 client-sync library tests. Manual Windows/Linux candidate consumers now verify the producer run, exact source commit, five product files and hashes; Windows selected-ZIP production compares independent same-job builds. The Windows manual path now authenticates the downloaded Setup before staging it. The candidate workflow cannot yet be dispatched because it is absent from `main` while R03 remains unmerged. No R04 exact artifact or native installation was qualified. The old R03 cross-workflow Windows ZIP divergence (857 bytes) remains unresolved because both archives return HTTP 403; it is not hidden by the same-job reproducibility check. No prior upgrade source is approved. Exact-head P047/CI status snapshot is `2026-10-20 00:23 UTC`; local source and docs validation and remaining blockers are detailed in the [R04 manifest](RELEASE_HARDENING_R04_MANIFEST.md), [P045 matrix](RELEASE_CANDIDATE_ACCEPTANCE_MATRIX.md), and [P047 report](RELEASE_CANDIDATE_QUALIFICATION_R04.md). |
-| R05 — Final release qualification | `NOT_STARTED` | Remains separate from R02; no `v0.2.0` tag, GitHub Release, or production qualification is authorized by this tracker. |
+## Integrated source history
+
+Starting `origin/main` was
+`b01c3b2328b271529d02cb4ee30d97be43a42611`. Live GitHub state showed PRs
+#148–#151 still open and stacked R01 → R02 → R03 → R04. They were integrated
+in that order using real merge commits, with every original verified head and
+predecessor history retained.
+
+| Task | PR | Integration commit | Current disposition |
+| --- | --- | --- | --- |
+| R01 — Full CI recovery, build stabilization and cross-platform regression repair | [#148](https://github.com/nghianguyen150612/Synveil/pull/148) | `d8b5d3e7ec00e6992a44de6cee3b0af799667af3` | Integrated. The R01 PostgreSQL fixture defect was repaired in R02; see [R01 manifest](RELEASE_HARDENING_R01_MANIFEST.md). |
+| R02 — Managed Host production readiness and P036 acceptance | [#149](https://github.com/nghianguyen150612/Synveil/pull/149) | `ac8c3e5c7c5841baa5f55029bd9c77a1861f5ea1` | Integrated. Production P036 inventory, trusted publisher inputs and native Host journey remain blocked; see [R02 manifest](RELEASE_HARDENING_R02_MANIFEST.md). |
+| R03 — Production artifact identity, signatures, manifests and distribution | [#150](https://github.com/nghianguyen150612/Synveil/pull/150) | `df6afc2d7bba4ee063946f60f0bba9e067e487e0` | Integrated. R03 unsigned test-merge files are historical and are not R05 release artifacts; see [R03 manifest](RELEASE_HARDENING_R03_MANIFEST.md). |
+| R04 — Native acceptance, upgrade safety and data preservation | [#151](https://github.com/nghianguyen150612/Synveil/pull/151) | `fc23d4d356ba746d739feed30e0b5aa144f0c87b` | Integrated. Native, upgrade, P036 and P047 qualification remain blocked; see [R04 manifest](RELEASE_HARDENING_R04_MANIFEST.md). |
+
+R01–R04 verified heads are respectively
+`24f84d6e9460d82380f3ab017a3a2d36d24f2879`,
+`f6f2591f44caf54ff13de2b0fd869257674de655`,
+`524ef926324a0e965735bf2097d67792095a525a`, and
+`a4079010398c14e1bcb04914aab14c4fc8fe78c2`; all are ancestors of the current
+integrated main. Closed P045 PR #78 and P047 PR #104 were not reopened or
+merged. Existing iOS P001–P060 and desktop, server and Android source history
+remain intact.
+
+## R05 execution
+
+| Task | Status | Closeout / next action |
+| --- | --- | --- |
+| R05 — Final integration, production qualification and conditional publication | `R05_INTEGRATED_RELEASE_BLOCKED` | R05 branch: `release/v02-official-publication`. PR #152 merged as `d0b1c43c144493e4adf9b44d3fd24d02f2bd7dbb`; it fixes the non-executable `scripts/build-host-server-input.sh` that failed both server candidate jobs with exit 126. The exact-source candidate producer is [run 39359470865](https://github.com/nghianguyen150612/Synveil/actions/runs/39359470865), `sign_candidate=false`; see [R05 manifest](RELEASE_HARDENING_R05_MANIFEST.md), [P047 report](RELEASE_CANDIDATE_QUALIFICATION_R05.md), and [final artifact matrix](RELEASE_FINAL_ARTIFACT_MATRIX.md). P036 production inventory, production signing/trust, native journeys, Windows ZIP reconciliation, all 21 P047 gates and P048 approval remain blocked. No tag, GitHub Release or stable channel was created. |
+
+The release candidate and qualification decision are separate. Integrating
+source does not pass a P047 gate. Only P048 may approve the final exact-source,
+signed artifact set and authorize `v0.2.0` publication after every mandatory
+gate has qualifying evidence.
+
+## Current public release state
+
+- Product version under preparation: `0.2.0`.
+- Current released product remains `v0.1.0`.
+- Public v0.2.0 Git tag: absent.
+- GitHub Release: absent.
+- Production signing: blocked; no approved signing identity was supplied.
+- P036 signed production inventory: absent.
+- Stable distribution channel: not provisioned or activated.
+- Final qualification and P048 decision: **BLOCKED**.

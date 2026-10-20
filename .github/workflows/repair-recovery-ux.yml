@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [feat/repair-recovery-ux, fix/phase-f-readiness-gates]
+  workflow_dispatch:
 
 jobs:
   recovery-projection:
