@@ -37,6 +37,7 @@ jobs:
           set -euo pipefail
           python3 scripts/validate-release-version.py --expected-version 0.2.0 --source-commit "$GITHUB_SHA"
           python3 -m unittest scripts.tests.test_host_server_input_contract -v
+          python3 -m unittest scripts.tests.test_release_source_fingerprint -v
           if git show-ref --verify --quiet refs/tags/v0.2.0; then
             echo 'R03 must not consume or create the final v0.2.0 tag.' >&2
             exit 1

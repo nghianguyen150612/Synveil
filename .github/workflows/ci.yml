@@ -31,6 +31,9 @@ jobs:
       - name: Validate v0.2 release manifest contract
         run: ./scripts/validate-release-manifest.sh
 
+      - name: Validate release source fingerprint boundaries
+        run: python3 -m unittest scripts.tests.test_release_source_fingerprint -v
+
       - name: Validate v0.2 release download integrity contract
         run: ./scripts/validate-release-download.sh
 
