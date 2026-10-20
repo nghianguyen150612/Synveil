@@ -33,11 +33,19 @@ class SignatureSecurity(unittest.TestCase):
         self.entries = [{'scheme': 'ed25519', 'key_id': key, 'signature_filename': key + '.sig'} for key in ('old', 'new')]
 
     def authenticate(self, keys, *, entries=None, detached=None, raw=None, pin=None):
+        manifest_bytes = self.raw if raw is None else raw
+        descriptor = {
+            'schema_version': 1,
+            'manifest_filename': download.MANIFEST_FILENAME,
+            'manifest_size_bytes': len(manifest_bytes),
+            'manifest_sha256': hashlib.sha256(manifest_bytes).hexdigest(),
+            'signatures': self.entries if entries is None else entries,
+        }
         policy = download.ReleaseTrustPolicy(frozenset(), frozenset(), authentication_method='detached_signature',
             expected_manifest_sha256=pin, trusted_key_ids=frozenset(keys), allowed_signature_schemes=frozenset({'ed25519'}))
         verify = signatures.verifier(keys, self.detached if detached is None else detached)
-        return download.authenticate_manifest(self.raw if raw is None else raw, policy,
-            signature_descriptor={'signatures': self.entries if entries is None else entries}, verifier=verify)
+        return download.authenticate_manifest(manifest_bytes, policy,
+            signature_descriptor=descriptor, verifier=verify)
 
     def test_rotation_real_old_new_overlap_and_reversed_order(self):
         for names, expected in ((('old',), 'old'), (('new',), 'new'), (('old', 'new'), 'new')):
@@ -77,7 +85,13 @@ class SignatureSecurity(unittest.TestCase):
         with mock.patch.dict(os.environ, {'CI':'true', 'SYNVEIL_TRUST_ANY_KEY':'1'}), self.assertRaises(download.AcquisitionError):
             download.authenticate_manifest(self.raw, download.ReleaseTrustPolicy(frozenset(), frozenset(),
                 authentication_method='detached_signature', allowed_signature_schemes=frozenset({'ed25519'})),
-                signature_descriptor={'signatures':[entry]})
+                signature_descriptor={
+                    'schema_version': 1,
+                    'manifest_filename': download.MANIFEST_FILENAME,
+                    'manifest_size_bytes': len(self.raw),
+                    'manifest_sha256': hashlib.sha256(self.raw).hexdigest(),
+                    'signatures': [entry],
+                })
 
     def test_explicit_local_production_policy_and_substitution(self):
         key = self.keys['old']; key_id = 'synveil-release-' + hashlib.sha256(key).hexdigest()

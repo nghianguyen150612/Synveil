@@ -76,8 +76,9 @@ calculated SHA-256. Desktop and server source revisions equal the inventory's
 Synveil `source_commit`; PostgreSQL and edge revisions equal their authenticated
 upstream source commits. Their signed runtime manifests separately bind
 `packaging_revision` to that Synveil commit. The inventory product version
-must equal the checked-out Cargo workspace version; the current source remains
-`0.1.0`, so this gate does not assert a v0.2.0 package. The desktop entry names
+must equal the checked-out Cargo workspace version; R03 sets the development
+candidate source to `0.2.0`. The inventory and all production signatures remain
+absent, so this does not assert a qualified v0.2.0 package. The desktop entry names
 the exact DEB or RPM. Server, PostgreSQL and Caddy entries name a signed
 runtime-manifest-v2 file and its closed payload root. Provenance is separately
 signed and bound to component, version, platform, architecture and source

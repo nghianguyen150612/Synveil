@@ -4,6 +4,7 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -28,6 +29,11 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Pin the Python runtime used by release metadata validators
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
 
       - name: Install native packaging tooling
         run: |
@@ -223,6 +229,7 @@ jobs:
           path: |
             target/packages/*.deb
             target/packages/*.rpm
+            target/packages/SYNVEIL-RELEASE-MANIFEST.json
           if-no-files-found: error
 
       - name: Report packaging summary

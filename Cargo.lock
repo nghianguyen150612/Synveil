@@ -2933,7 +2933,7 @@ dependencies = [
 
 [[package]]
 name = "synveil-api"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2970,7 +2970,7 @@ dependencies = [
 
 [[package]]
 name = "synveil-auth"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "argon2",
  "sha2",
@@ -2986,7 +2986,7 @@ dependencies = [
 
 [[package]]
 name = "synveil-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "nix",
@@ -3007,7 +3007,7 @@ dependencies = [
 
 [[package]]
 name = "synveil-client-sync"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -3037,7 +3037,7 @@ dependencies = [
 
 [[package]]
 name = "synveil-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -3053,7 +3053,7 @@ dependencies = [
 
 [[package]]
 name = "synveil-desktop"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cxx",
  "cxx-gen",
@@ -3074,7 +3074,7 @@ dependencies = [
 
 [[package]]
 name = "synveil-install-engine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fs2",
  "nix",
@@ -3086,14 +3086,14 @@ dependencies = [
 
 [[package]]
 name = "synveil-ios-ffi"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "synveil-core",
 ]
 
 [[package]]
 name = "synveil-metadata"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "sha2",
@@ -3108,7 +3108,7 @@ dependencies = [
 
 [[package]]
 name = "synveil-object-store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3122,7 +3122,7 @@ dependencies = [
 
 [[package]]
 name = "synveil-platform"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "keyring",
  "synveil-core",
@@ -3132,7 +3132,7 @@ dependencies = [
 
 [[package]]
 name = "synveil-server-bootstrap"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "sha2",
@@ -3144,7 +3144,7 @@ dependencies = [
 
 [[package]]
 name = "synveil-server-config"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fs2",
  "getrandom 0.4.3",
@@ -3163,7 +3163,7 @@ dependencies = [
 
 [[package]]
 name = "synveil-server-host"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fs2",
  "libc",
@@ -3189,7 +3189,7 @@ dependencies = [
 
 [[package]]
 name = "synveil-server-network"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3200,7 +3200,7 @@ dependencies = [
 
 [[package]]
 name = "synveil-server-service"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "nix",
@@ -3217,7 +3217,7 @@ dependencies = [
 
 [[package]]
 name = "synveil-server-storage"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fs2",
  "libc",
@@ -3231,7 +3231,7 @@ dependencies = [
 
 [[package]]
 name = "synveil-storage"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "bytes",

@@ -4,11 +4,15 @@ cd "$(dirname "$0")/.."
 
 python3 - <<'PY'
 import json, pathlib, re, sys
+import tomllib
 
 root = pathlib.Path('.')
 contract = json.loads((root/'deploy/linux/package-integration-v1.json').read_text())
 assert contract['schema_version'] == 1
-assert contract['product_version'] == '0.1.0'
+assert contract['product_version_source'] == 'Cargo.toml:[workspace.package].version'
+workspace = tomllib.loads((root/'Cargo.toml').read_text())
+product_version = workspace['workspace']['package']['version']
+assert re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', product_version)
 assert {x['artifact_type'] for x in contract['formats']} == {'deb', 'rpm'}
 
 manifest = (root/'deploy/install/MANIFEST').read_text()

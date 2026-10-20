@@ -35,12 +35,49 @@ def contains(root: Path, pattern: str) -> bool:
     return any(path.is_file() for path in root.glob(pattern))
 
 
+def validate_appdir_icon(appdir: Path) -> None:
+    icon = appdir / "synveil.svg"
+    bundled_icon = appdir / "usr/share/icons/hicolor/scalable/apps/synveil.svg"
+    source_icon = ROOT / "deploy/icons/hicolor/scalable/apps/synveil.svg"
+    if bundled_icon.is_symlink() or not bundled_icon.is_file():
+        fail("APPIMAGE-4–8: bundled Synveil SVG is missing from the hicolor icon directory")
+    bundled_bytes = bundled_icon.read_bytes()
+    if bundled_bytes != source_icon.read_bytes():
+        fail("APPIMAGE-4–8: bundled Synveil SVG differs from the reviewed source icon")
+    if icon.is_symlink():
+        link_target = Path(os.readlink(icon))
+        if link_target.is_absolute():
+            fail("APPIMAGE-4–8: AppDir icon symlink must be relative")
+        try:
+            resolved_icon = icon.resolve(strict=True)
+            resolved_bundle = bundled_icon.resolve(strict=True)
+        except OSError:
+            fail("APPIMAGE-4–8: AppDir icon symlink is dangling")
+        if resolved_icon != resolved_bundle:
+            fail("APPIMAGE-4–8: AppDir icon symlink does not target the bundled Synveil SVG")
+        icon_bytes = resolved_bundle.read_bytes()
+    elif icon.is_file():
+        icon_bytes = icon.read_bytes()
+    else:
+        fail("APPIMAGE-4–8: required AppDir file missing: synveil.svg")
+    if icon_bytes != bundled_bytes:
+        fail("APPIMAGE-4–8: AppDir icon bytes differ from the reviewed Synveil SVG")
+
+
 def validate_appdir(appdir: Path) -> None:
-    required = ["AppRun", "synveil.desktop", "synveil.svg", "usr/bin/synveil-desktop", "usr/bin/synveil-client", "usr/bin/synveil-appimage-integration"]
+    required = ["AppRun", "synveil.desktop", "usr/bin/synveil-desktop", "usr/bin/synveil-client", "usr/bin/synveil-appimage-integration", "usr/share/doc/synveil/APPIMAGE-RUNTIME-LICENSE.txt"]
     for relative in required:
         path = appdir / relative
-        if not path.is_file():
+        if path.is_symlink() or not path.is_file():
             fail(f"APPIMAGE-4–8: required AppDir file missing: {relative}")
+    validate_appdir_icon(appdir)
+    runtime_license = appdir / "usr/share/doc/synveil/APPIMAGE-RUNTIME-LICENSE.txt"
+    expected_license = ROOT / "deploy/packages/appimage/APPIMAGE-RUNTIME-LICENSE.txt"
+    if runtime_license.read_bytes() != expected_license.read_bytes():
+        fail("APPIMAGE-4–8: bundled upstream runtime license notice differs from the pinned source")
+    for relative in ("AppRun", "usr/bin/synveil-desktop", "usr/bin/synveil-client", "usr/bin/synveil-appimage-integration"):
+        if not (appdir / relative).stat().st_mode & stat.S_IXUSR:
+            fail(f"APPIMAGE-4–8: required AppDir executable lacks user execute permission: {relative}")
     apprun = (appdir / "AppRun").read_text()
     desktop = (appdir / "synveil.desktop").read_text()
     if 'exec "$APPDIR/usr/bin/synveil-desktop" "$@"' not in apprun:
@@ -87,6 +124,11 @@ def inspect_artifact(artifact: Path, smoke: bool) -> None:
         fail("APPIMAGE-1–3: artifact filename is not canonical/version-derived")
     if not artifact.is_file() or not artifact.stat().st_mode & stat.S_IXUSR:
         fail("artifact is absent or not executable")
+    with artifact.open("rb") as stream:
+        header = stream.read(20)
+    if (len(header) < 20 or header[:4] != b"\x7fELF" or header[4] != 2
+            or header[5] != 1 or int.from_bytes(header[18:20], "little") != 62):
+        fail("artifact does not embed an x86_64 ELF AppImage runtime")
     with tempfile.TemporaryDirectory(prefix="synveil-appimage-inspect.") as work:
         extract_env = dict(os.environ)
         extract_env.pop("APPIMAGE_EXTRACT_AND_RUN", None)
@@ -106,15 +148,36 @@ def main() -> int:
     args = parser.parse_args()
     # Static source contract always runs.
     for relative in ("deploy/packages/build-appimage.sh", "deploy/packages/appimage/AppRun",
-                     "deploy/packages/appimage/synveil.desktop", "deploy/icons/hicolor/scalable/apps/synveil.svg"):
+                     "deploy/packages/appimage/synveil.desktop", "deploy/packages/appimage/APPIMAGE-RUNTIME-LICENSE.txt",
+                     "scripts/acquire-appimage-runtime.py", "deploy/icons/hicolor/scalable/apps/synveil.svg"):
         if not (ROOT / relative).is_file():
             fail(f"static contract file missing: {relative}")
     builder = (ROOT / "deploy/packages/build-appimage.sh").read_text()
     for token in ("synveil_cargo_version", "SOURCE_DATE_EPOCH", "x86_64", "sha256sum --check", "cmp -s", "--custom-apprun"):
         if token not in builder:
             fail(f"static builder contract missing: {token}")
+    for token in (
+        'local icon_source="$WORK/$1/synveil.svg"',
+        'install -m0644 "$REPO_ROOT/deploy/icons/hicolor/scalable/apps/synveil.svg" "$icon_source"',
+        '--icon-file "$icon_source"',
+    ):
+        if token not in builder:
+            fail(f"AppDir icon must remain available to AppRun after linuxdeploy: {token}")
     if builder.count("--custom-apprun") < 2:
         fail("static builder contract must preserve the reviewed AppRun during deployment and output")
+    for workflow_relative in (
+        ".github/workflows/appimage.yml",
+        ".github/workflows/linux-clean-machine.yml",
+    ):
+        workflow = (ROOT / workflow_relative).read_text()
+        for token in (
+            "scripts/acquire-appimage-runtime.py",
+            '--github-env "$GITHUB_ENV"',
+            'python-version: "3.12"',
+            "gnupg",
+        ):
+            if token not in workflow:
+                fail(f"AppImage-producing workflow {workflow_relative} is missing authenticated runtime input: {token}")
     for token in (
         'rm -f "$appdir/apprun-hooks/linuxdeploy-plugin-qt-hook.sh"',
         'rmdir "$appdir/apprun-hooks"',

@@ -39,13 +39,11 @@ def compile_sources(policy_path: Path, target_version: str, package_format: str)
     if len(content) > 16 * 1024:
         raise ValueError("native policy is too large")
     policy = json.loads(content, object_pairs_hook=_unique_object)
-    if not isinstance(policy, dict) or set(policy) != {"schema_version", "product_version", "upgrade_from"}:
+    if not isinstance(policy, dict) or set(policy) != {"schema_version", "upgrade_from"}:
         raise ValueError("unknown native policy schema")
     if type(policy["schema_version"]) is not int or policy["schema_version"] != 1:
         raise ValueError("unknown native policy schema")
     target = _version(target_version)
-    if policy["product_version"] != target_version:
-        raise ValueError("native policy does not match the build version")
     entries = policy["upgrade_from"]
     if not isinstance(entries, list) or len(entries) > 32:
         raise ValueError("invalid upgrade source inventory")
