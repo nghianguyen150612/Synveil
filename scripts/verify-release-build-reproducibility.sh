@@ -89,9 +89,14 @@ build_release_set() (
     printf '[synveil-artifact] building %s in a fresh target root\n' "$label"
     if [[ "$platform" == linux ]]; then
         cargo build --locked --release --bin synveil-scheduled-maintenance-once
+        cargo build --locked --release -p synveil-client
+        cargo build --locked --release -p synveil-desktop
+    else
+        # Match Windows Installer's producer invocation exactly. Cargo feature
+        # unification depends on the selected workspace packages, so separate
+        # invocations can produce different executable bytes for the same tree.
+        cargo build --locked --release -p synveil-desktop -p synveil-client
     fi
-    cargo build --locked --release -p synveil-client
-    cargo build --locked --release -p synveil-desktop
 
     for name in "${artifact_names[@]}"; do
         local binary="${target_dir}/release/${name}${suffix}"

@@ -197,21 +197,15 @@ jobs:
       - name: Build the native desktop shell
         run: cargo build -p synveil-desktop --locked
 
-      - name: Build the release native desktop shell
+      - name: Build the release Windows desktop and client together
         shell: bash
         run: |
           set -euo pipefail
           source deploy/packages/common/reproducible.sh
           synveil_prepare_reproducible_rust_build "$PWD"
-          cargo build -p synveil-desktop --release --locked
-
-      - name: Build the release background client
-        shell: bash
-        run: |
-          set -euo pipefail
-          source deploy/packages/common/reproducible.sh
-          synveil_prepare_reproducible_rust_build "$PWD"
-          cargo build -p synveil-client --release --locked
+          # Keep Cargo feature resolution identical to the Windows Installer
+          # producer, which builds both portable runtime binaries together.
+          cargo build -p synveil-desktop -p synveil-client --release --locked
 
       - name: Rebuild Windows release binaries after clearing release outputs
         shell: bash
