@@ -30,6 +30,10 @@ def main() -> None:
     require("actions/download-artifact@v4" in workflow and
             "identity.sha256" in workflow and "GITHUB_SHA" in workflow,
             "consumer must authenticate transferred bytes and source")
+    require("$setup = 'target/release-candidate/SynveilSetup.exe'" in workflow and
+            workflow.index("Record exact Setup signature state") <
+            workflow.index("Verify and stage the exact assembled release candidate"),
+            "manual candidate signature check must inspect the downloaded Setup before staging")
     require("$candidateRoot = Join-Path $PWD 'candidate/windows-installer'" in workflow and
             "Join-Path $candidateRoot 'p028-candidate.json'" in workflow and
             "Join-Path $candidateRoot 'SynveilSetup.exe'" in workflow and

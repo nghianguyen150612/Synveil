@@ -110,7 +110,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $setup = 'target/windows-installer/SynveilSetup.exe'
+          $setup = 'target/release-candidate/SynveilSetup.exe'
           $signature = Get-AuthenticodeSignature -FilePath $setup
           if ($signature.Status -ne 'NotSigned') {
             throw 'P047_SIGNING_STATE_FAILURE: this harness input is unsigned-only; signed candidate verification must use an approved signer policy'
