@@ -1440,11 +1440,22 @@ impl OutboundObservationEngine {
                     observed_at: Instant::now(),
                 });
             }
+            if overflowed {
+                // The channel and retained debounce queue no longer form a
+                // complete event history. Do not interpret a partial remove
+                // or create as a durable mutation; reconciliation will inspect
+                // the current tree and conservatively pair possible renames.
+                buffered.clear();
+            }
         }
         if overflowed {
             self.record_watcher_overflow().await?;
         }
-        let inspected = self.flush_due_hints(false).await?;
+        let inspected = if overflowed {
+            0
+        } else {
+            self.flush_due_hints(false).await?
+        };
         if self
             .state
             .observation_state(self.scope.library_id())
@@ -1556,6 +1567,8 @@ impl OutboundObservationEngine {
                 )
                 .await?;
             if !unseen.is_empty() {
+                self.guard_unpaired_scan_renames(state.scan_generation(), &unseen)
+                    .await?;
                 for node in unseen {
                     let observed = self
                         .state
@@ -1605,6 +1618,92 @@ impl OutboundObservationEngine {
             .observation_state(self.scope.library_id())
             .await?
             .ok_or(ClientSyncError::InvalidState)
+    }
+
+    /// A watcher overflow can erase the remove/create pair that would normally
+    /// identify a rename. Before a reconciliation scan turns an unseen tracked
+    /// node into a delete, compare it with active create intents discovered in
+    /// this same scan. Matching node kinds are ambiguous even when file bytes
+    /// changed during the move, so retain both durable paths and fence outbound
+    /// work until the ambiguity is resolved.
+    async fn guard_unpaired_scan_renames(
+        &self,
+        generation: Sequence,
+        unseen_nodes: &[LocalNode],
+    ) -> Result<(), ClientSyncError> {
+        if unseen_nodes.is_empty() {
+            return Ok(());
+        }
+        let maximum = self.config.scan_batch_entries();
+        let creates = self
+            .state
+            .unseen_active_create_intents(self.scope.library_id(), generation, maximum)
+            .await?;
+        let has_more_creates = creates.len() == maximum
+            && self
+                .state
+                .has_more_unseen_active_create_intents(self.scope.library_id(), generation, maximum)
+                .await?;
+
+        for node in unseen_nodes {
+            let source = node.relative_path();
+            if self
+                .state
+                .has_unresolved_observation_issue(
+                    self.scope.library_id(),
+                    source,
+                    ObservationIssueKind::AmbiguousRename,
+                )
+                .await?
+            {
+                continue;
+            }
+            let mut candidates = Vec::new();
+            for intent in &creates {
+                if !create_kind_matches_node(intent.kind(), node.kind())
+                    || intent.observed_relative_path() == source
+                {
+                    continue;
+                }
+                let actual = self
+                    .inspect_for_observation(intent.observed_relative_path())
+                    .await?;
+                if actual.is_some_and(|fingerprint| {
+                    node_kind_matches_fingerprint(node.kind(), fingerprint)
+                }) {
+                    candidates.push(intent.observed_relative_path().clone());
+                }
+            }
+            if candidates.is_empty() && !has_more_creates {
+                continue;
+            }
+
+            self.state
+                .persist_observation_issue(
+                    self.scope.library_id(),
+                    Some(node.node_id()),
+                    Some(source),
+                    ObservationIssueKind::AmbiguousRename,
+                )
+                .await?;
+            self.state
+                .block_unsubmitted_delete(self.scope.library_id(), node.node_id())
+                .await?;
+            for destination in candidates {
+                self.state
+                    .persist_observation_issue(
+                        self.scope.library_id(),
+                        None,
+                        Some(&destination),
+                        ObservationIssueKind::AmbiguousRename,
+                    )
+                    .await?;
+            }
+            self.state
+                .require_reconciliation(self.scope.library_id())
+                .await?;
+        }
+        Ok(())
     }
 
     /// Stop the watcher and conservatively mark a rescan requirement. Any raw
@@ -2542,6 +2641,14 @@ fn node_kind_matches_fingerprint(kind: NodeKind, fingerprint: LocalFingerprint) 
     )
 }
 
+fn create_kind_matches_node(intent: OutboundIntentKind, node: NodeKind) -> bool {
+    matches!(
+        (intent, node),
+        (OutboundIntentKind::CreateFile, NodeKind::File)
+            | (OutboundIntentKind::CreateDirectory, NodeKind::Directory)
+    )
+}
+
 fn expected_node_fingerprint(node: &LocalNode) -> Option<LocalFingerprint> {
     match node.kind() {
         NodeKind::Directory => Some(LocalFingerprint::directory()),
@@ -2605,8 +2712,9 @@ mod tests {
 
     use super::{
         LocalChangeWatcher, ManualChangeSource, ManualChangeWatcher, ObservationConfig,
-        ObservationIssueKind, OutboundIntent, OutboundIntentKind, OutboundObservationEngine,
-        WatchHint, WatchHintKind, coalesce_hints, native_to_managed_relative,
+        ObservationIssueKind, OutboundIntent, OutboundIntentKind, OutboundIntentState,
+        OutboundObservationEngine, WatchHint, WatchHintKind, coalesce_hints,
+        native_to_managed_relative,
     };
     use crate::{
         FilesystemLocalReplica, LocalFingerprint, LocalNode, LocalReplica, LocalStateConfig,
@@ -3437,21 +3545,83 @@ mod tests {
         harness.engine.poll_once().await.unwrap();
 
         assert_eq!(harness.engine.count_pending_intents().await.unwrap(), 0);
-        assert!(
-            harness
-                .state
-                .observation_issues(harness.scope.library_id())
-                .await
-                .unwrap()
-                .iter()
-                .any(|issue| {
-                    issue.kind() == ObservationIssueKind::AmbiguousRename
-                        && (issue.node_id() == Some(file_id)
-                            || issue
-                                .relative_path()
-                                .is_some_and(|path| path.as_str() == "new.txt"))
-                })
-        );
+        let issues = harness
+            .state
+            .observation_issues(harness.scope.library_id())
+            .await
+            .unwrap();
+        assert!(issues.iter().any(|issue| {
+            issue.kind() == ObservationIssueKind::AmbiguousRename
+                && issue.node_id() == Some(file_id)
+        }));
+        assert!(issues.iter().any(|issue| {
+            issue.kind() == ObservationIssueKind::AmbiguousRename
+                && issue
+                    .relative_path()
+                    .is_some_and(|path| path.as_str() == "new.txt")
+        }));
+        harness.close().await;
+    }
+
+    #[tokio::test]
+    async fn overflow_reconciliation_preserves_create_and_blocks_source_delete() {
+        let harness = Harness::manual().await;
+        let file_id = harness
+            .seed_file("old.txt", harness.root_id, b"same-kind")
+            .await;
+        harness.start().await;
+
+        fs::remove_file(harness.root.join("old.txt")).unwrap();
+        harness.observe(WatchHintKind::Remove, &["old.txt"]).await;
+        let delete_id = harness
+            .engine
+            .list_pending_intents()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|intent| {
+                intent.node_id() == Some(file_id)
+                    && intent.kind() == OutboundIntentKind::DeleteOrTrashNode
+            })
+            .expect("remove observation should persist its delete intent")
+            .intent_id();
+
+        fs::write(harness.root.join("new.txt"), b"same-kind").unwrap();
+        harness.source.as_ref().unwrap().overflow().unwrap();
+        harness.engine.poll_once().await.unwrap();
+        harness.settle().await;
+
+        let intents = harness.engine.list_pending_intents().await.unwrap();
+        assert!(!intents.iter().any(|intent| {
+            intent.node_id() == Some(file_id)
+                && intent.kind() == OutboundIntentKind::DeleteOrTrashNode
+        }));
+        let blocked_delete = harness
+            .engine
+            .get_intent(delete_id)
+            .await
+            .unwrap()
+            .expect("ambiguous delete remains durable");
+        assert_eq!(blocked_delete.state(), OutboundIntentState::Blocked);
+        assert!(intents.iter().any(|intent| {
+            intent.kind() == OutboundIntentKind::CreateFile
+                && intent.observed_relative_path().as_str() == "new.txt"
+        }));
+        let issues = harness
+            .state
+            .observation_issues(harness.scope.library_id())
+            .await
+            .unwrap();
+        assert!(issues.iter().any(|issue| {
+            issue.kind() == ObservationIssueKind::AmbiguousRename
+                && issue.node_id() == Some(file_id)
+        }));
+        assert!(issues.iter().any(|issue| {
+            issue.kind() == ObservationIssueKind::AmbiguousRename
+                && issue
+                    .relative_path()
+                    .is_some_and(|path| path.as_str() == "new.txt")
+        }));
         harness.close().await;
     }
 
@@ -3604,12 +3774,10 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[tokio::test]
-    async fn linux_notify_backend_handles_live_rename_move_delete_symlink_and_editor_save() {
-        use std::os::unix::fs::symlink;
-
+    async fn linux_notify_backend_handles_live_rename_or_records_safe_ambiguity() {
         let harness = Harness::native().await;
         let left = harness.seed_directory("left", harness.root_id).await;
-        let right = harness.seed_directory("right", harness.root_id).await;
+        harness.seed_directory("right", harness.root_id).await;
         let file_id = harness.seed_file("left/live.txt", left, b"old").await;
         harness.start().await;
 
@@ -3618,28 +3786,49 @@ mod tests {
             harness.root.join("right/live-renamed.txt"),
         )
         .unwrap();
-        eventually(&harness, |intents| {
-            intents.iter().any(|intent| {
-                intent.node_id() == Some(file_id)
-                    && matches!(
-                        intent.kind(),
-                        OutboundIntentKind::MoveNode | OutboundIntentKind::DeleteOrTrashNode
-                    )
-            })
-        })
-        .await;
-        let native_move_supported = harness
-            .engine
-            .list_pending_intents()
-            .await
-            .unwrap()
-            .iter()
-            .any(|intent| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut saw_move = false;
+        let mut saw_delete = false;
+        let mut saw_ambiguity = false;
+        while Instant::now() < deadline {
+            let _ = harness.engine.poll_once().await;
+            let intents = harness.engine.list_pending_intents().await.unwrap();
+            saw_move = intents.iter().any(|intent| {
                 intent.node_id() == Some(file_id)
                     && intent.kind() == OutboundIntentKind::MoveNode
                     && intent.observed_relative_path().as_str() == "right/live-renamed.txt"
             });
-        if !native_move_supported {
+            saw_delete = intents.iter().any(|intent| {
+                intent.node_id() == Some(file_id)
+                    && intent.kind() == OutboundIntentKind::DeleteOrTrashNode
+            });
+            saw_ambiguity = harness
+                .state
+                .observation_issues(harness.scope.library_id())
+                .await
+                .unwrap()
+                .iter()
+                .any(|issue| {
+                    issue.kind() == ObservationIssueKind::AmbiguousRename
+                        && issue.node_id() == Some(file_id)
+                });
+            if saw_move || saw_delete || saw_ambiguity {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(
+            saw_move || saw_ambiguity,
+            "native rename had no safe durable outcome (delete intent observed: {saw_delete}); intents: {:?}; issues: {:?}",
+            harness.engine.list_pending_intents().await.unwrap(),
+            harness
+                .state
+                .observation_issues(harness.scope.library_id())
+                .await
+                .unwrap()
+        );
+        if saw_ambiguity {
+            assert!(!saw_move && !saw_delete);
             assert!(
                 harness
                     .engine
@@ -3647,37 +3836,57 @@ mod tests {
                     .await
                     .unwrap()
                     .iter()
-                    .any(|intent| intent.node_id() == Some(file_id)
-                        && intent.kind() == OutboundIntentKind::DeleteOrTrashNode)
+                    .all(|intent| intent.node_id() != Some(file_id))
             );
+        } else {
+            assert!(saw_move);
+            assert!(!saw_delete, "a live rename must not become a delete intent");
         }
+        harness.close().await;
+    }
 
-        if native_move_supported {
-            fs::write(harness.root.join(".editor.tmp"), b"new").unwrap();
-            fs::rename(
-                harness.root.join(".editor.tmp"),
-                harness.root.join("right/live-renamed.txt"),
-            )
-            .unwrap();
-            eventually(&harness, |intents| {
-                intents.iter().any(|intent| {
-                    intent.node_id() == Some(file_id)
-                        && intent.kind() == OutboundIntentKind::ModifyFileContent
-                        && intent.observed_relative_path().as_str() == "right/live-renamed.txt"
-                })
-            })
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn linux_notify_backend_handles_live_atomic_editor_save_and_delete() {
+        let harness = Harness::native().await;
+        let file_id = harness
+            .seed_file("tracked.txt", harness.root_id, b"old")
             .await;
+        harness.start().await;
 
-            fs::remove_file(harness.root.join("right/live-renamed.txt")).unwrap();
-            eventually(&harness, |intents| {
-                intents.iter().any(|intent| {
-                    intent.node_id() == Some(file_id)
-                        && intent.kind() == OutboundIntentKind::DeleteOrTrashNode
-                })
+        fs::write(harness.root.join(".editor.tmp"), b"new").unwrap();
+        fs::rename(
+            harness.root.join(".editor.tmp"),
+            harness.root.join("tracked.txt"),
+        )
+        .unwrap();
+        eventually(&harness, "atomic editor save", |intents| {
+            intents.iter().any(|intent| {
+                intent.node_id() == Some(file_id)
+                    && intent.kind() == OutboundIntentKind::ModifyFileContent
+                    && intent.observed_relative_path().as_str() == "tracked.txt"
             })
-            .await;
-        }
+        })
+        .await;
 
+        fs::remove_file(harness.root.join("tracked.txt")).unwrap();
+        eventually(&harness, "live delete", |intents| {
+            intents.iter().any(|intent| {
+                intent.node_id() == Some(file_id)
+                    && intent.kind() == OutboundIntentKind::DeleteOrTrashNode
+            })
+        })
+        .await;
+        harness.close().await;
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn linux_notify_backend_reports_live_symlink_as_unsupported() {
+        use std::os::unix::fs::symlink;
+
+        let harness = Harness::native().await;
+        harness.start().await;
         symlink("/tmp", harness.root.join("unsupported-link")).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
@@ -3703,12 +3912,15 @@ mod tests {
                 .iter()
                 .any(|issue| issue.kind() == ObservationIssueKind::UnsupportedEntryType)
         );
-        let _ = right;
         harness.close().await;
     }
 
     #[cfg(target_os = "linux")]
-    async fn eventually(harness: &Harness, predicate: impl Fn(&[OutboundIntent]) -> bool) {
+    async fn eventually(
+        harness: &Harness,
+        context: &str,
+        predicate: impl Fn(&[OutboundIntent]) -> bool,
+    ) {
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
             let _ = harness.engine.poll_once().await;
@@ -3719,6 +3931,11 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
         let intents = harness.engine.list_pending_intents().await.unwrap();
-        panic!("condition not met; intents: {intents:?}");
+        let issues = harness
+            .state
+            .observation_issues(harness.scope.library_id())
+            .await
+            .unwrap();
+        panic!("{context}: condition not met; intents: {intents:?}; issues: {issues:?}");
     }
 }

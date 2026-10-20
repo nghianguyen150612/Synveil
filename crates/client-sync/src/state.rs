@@ -3682,6 +3682,24 @@ impl LocalStateStore {
         Ok(changed > 0)
     }
 
+    pub(crate) async fn block_unsubmitted_delete(
+        &self,
+        library_id: LibraryId,
+        node_id: NodeId,
+    ) -> Result<(), ClientSyncError> {
+        sqlx::query(
+            "UPDATE outbound_intents SET state = 'BLOCKED', updated_at_ms = ?
+             WHERE library_id = ? AND node_id = ? AND intent_kind = 'DELETE_OR_TRASH_NODE'
+               AND state IN ('PENDING','READY','NEEDS_REBASE_VALIDATION')",
+        )
+        .bind(now_ms()?)
+        .bind(library_id.to_string())
+        .bind(node_id.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     /// Preserve queued work when an inbound event or rebaseline invalidates its
     /// server base. The observer never silently drops or auto-submits it.
     pub(crate) async fn mark_outbound_intents_needing_rebase(
@@ -4026,6 +4044,30 @@ impl LocalStateStore {
             .take(maximum)
             .map(decode_outbound_intent)
             .collect()
+    }
+
+    pub(crate) async fn has_more_unseen_active_create_intents(
+        &self,
+        library_id: LibraryId,
+        generation: Sequence,
+        maximum: usize,
+    ) -> Result<bool, ClientSyncError> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM outbound_intents i
+             LEFT JOIN observation_scan_seen_intents s
+               ON s.library_id = i.library_id AND s.generation = ? AND s.intent_id = i.intent_id
+             WHERE i.library_id = ?
+               AND i.intent_kind IN ('CREATE_DIRECTORY','CREATE_FILE')
+               AND i.state IN ('PENDING','BLOCKED','NEEDS_REBASE_VALIDATION')
+               AND s.intent_id IS NULL",
+        )
+        .bind(sequence_i64(generation)?)
+        .bind(library_id.to_string())
+        .fetch_one(&self.pool)
+        .await?;
+        let count = u64_from_i64(count)?;
+        let maximum = u64::try_from(maximum).map_err(|_| ClientSyncError::ResourceLimit)?;
+        Ok(count > maximum)
     }
 
     pub(crate) async fn mark_scan_intent_seen(
