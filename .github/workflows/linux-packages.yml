@@ -287,6 +287,8 @@ jobs:
       - name: Record the QML toolchain under test
         run: |
           set -euo pipefail
+          report=target/synveil-repro-diagnosis/qt-toolchain.txt
+          mkdir -p "$(dirname "$report")"
           {
             echo "qmake=$(command -v qmake6 || command -v qmake || echo unavailable)"
             if command -v qmake6 >/dev/null 2>&1; then
@@ -299,7 +301,13 @@ jobs:
               echo "qmake=unavailable"
             fi
             echo "rustc=$(rustc -V)"
-          } | tee qt-toolchain.txt
+          } | tee "$report"
+
+      - name: Verify release source inputs before reproducibility build
+        run: |
+          set -euo pipefail
+          source deploy/packages/common/reproducible.sh
+          synveil_assert_release_source_preflight "$PWD"
 
       - name: Build two independent release trees and gate byte-identity
         env:
@@ -366,9 +374,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: synveil-desktop-repro-diagnosis
-          path: |
-            target/synveil-repro-diagnosis/
-            qt-toolchain.txt
+          path: target/synveil-repro-diagnosis/
           if-no-files-found: warn
           retention-days: 30
 
