@@ -4,8 +4,14 @@ on:
   pull_request:
   push:
   workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful release-artifact-candidate workflow run that produced the exact candidate bytes.
+        required: true
+        type: string
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -22,27 +28,50 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download the exact assembled release candidate
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/download-artifact@v4
+        with:
+          name: synveil-release-candidate
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+          path: target/release-candidate
+
+      - uses: actions/setup-python@v6
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          python-version: "3.12"
+
       - uses: dtolnay/rust-toolchain@stable
+        if: github.event_name != 'workflow_dispatch'
       - uses: ilammy/msvc-dev-cmd@v1
+        if: github.event_name != 'workflow_dispatch'
       - name: Select and authenticate the MSVC linker and runtime
+        if: github.event_name != 'workflow_dispatch'
         shell: pwsh
         run: ./scripts/select-msvc-linker.ps1
       - name: Pin the reproducible ZIP writer runtime
+        if: github.event_name != 'workflow_dispatch'
         uses: actions/setup-python@v6
         with:
           python-version: "3.14.7"
       - uses: jurplel/install-qt-action@v4
+        if: github.event_name != 'workflow_dispatch'
         with:
           version: 6.8.3
           arch: win64_msvc2022_64
           cache: true
       - name: Validate checkpoint wiring
+        if: github.event_name != 'workflow_dispatch'
         shell: bash
         run: |
           python3 scripts/validate-windows-installer.py
           python3 scripts/validate-windows-native-acceptance.py
           ./scripts/validate-install-acceptance.sh
       - name: Build runtime once
+        if: github.event_name != 'workflow_dispatch'
         shell: bash
         run: |
           set -euo pipefail
@@ -51,6 +80,7 @@ jobs:
           cargo build --release --locked -p synveil-desktop -p synveil-client
           ./deploy/packages/build-windows.sh --desktop-binary=target/release/synveil-desktop.exe --client-binary=target/release/synveil-client.exe --output-dir=target/windows-packages --staging-dir=target/windows-installer-runtime
       - name: Build exact candidate twice
+        if: github.event_name != 'workflow_dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -59,6 +89,7 @@ jobs:
           ./scripts/build-windows-installer.ps1 -RuntimeStagingDirectory target/windows-installer-runtime
           if ((Get-FileHash target/SynveilSetup.first.exe).Hash -cne (Get-FileHash target/windows-installer/SynveilSetup.exe).Hash) { throw 'P028_REPRODUCIBILITY_FAILURE' }
       - name: Inspect and identify exact candidate
+        if: github.event_name != 'workflow_dispatch'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -71,7 +102,62 @@ jobs:
           $cargo = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
           $version = ($cargo.packages | Where-Object name -eq 'synveil-desktop').version
           if ([string]::IsNullOrWhiteSpace($version)) { throw 'P028_PRODUCT_VERSION_FAILURE' }
-          $identity = [ordered]@{schema_version=1;source_commit=$env:GITHUB_SHA;product_version=$version;filename='SynveilSetup.exe';size_bytes=(Get-Item $setup).Length;sha256=(Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant();release_manifest_sha256=(Get-FileHash target/windows-installer/SYNVEIL-RELEASE-MANIFEST.json -Algorithm SHA256).Hash.ToLowerInvariant();inno_setup_version='6.7.3';qt_version='6.8.3';msvc_tools=$env:VCToolsVersion;windows_caption=$os.Caption;windows_version=$os.Version;windows_build=$os.BuildNumber;architecture=$env:PROCESSOR_ARCHITECTURE}
+          $identity = [ordered]@{schema_version=1;source_commit=$env:GITHUB_SHA;producer_run_id=$null;product_version=$version;filename='SynveilSetup.exe';size_bytes=(Get-Item $setup).Length;sha256=(Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant();signature_status='UNSIGNED';release_manifest_sha256=(Get-FileHash target/windows-installer/SYNVEIL-RELEASE-MANIFEST.json -Algorithm SHA256).Hash.ToLowerInvariant();inno_setup_version='6.7.3';qt_version='6.8.3';msvc_tools=$env:VCToolsVersion;windows_caption=$os.Caption;windows_version=$os.Version;windows_build=$os.BuildNumber;architecture=$env:PROCESSOR_ARCHITECTURE}
+          $identity | ConvertTo-Json | Set-Content target/windows-installer/p028-candidate.json -Encoding utf8
+
+      - name: Record exact Setup signature state
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = 'target/windows-installer/SynveilSetup.exe'
+          $signature = Get-AuthenticodeSignature -FilePath $setup
+          if ($signature.Status -ne 'NotSigned') {
+            throw 'P047_SIGNING_STATE_FAILURE: this harness input is unsigned-only; signed candidate verification must use an approved signer policy'
+          }
+
+      - name: Verify and stage the exact assembled release candidate
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python scripts/verify_release_candidate_run.py `
+            --run-id $env:CANDIDATE_RUN_ID `
+            --artifact-name synveil-release-candidate `
+            --repository $env:GITHUB_REPOSITORY `
+            --expected-source-commit $env:GITHUB_SHA `
+            --artifact-root target/release-candidate `
+            --output target/release-candidate-verification.json
+          if ($LASTEXITCODE -ne 0) { throw 'P047_CANDIDATE_IDENTITY_FAILURE' }
+          $manifestPath = 'target/release-candidate/SYNVEIL-RELEASE-MANIFEST.json'
+          $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+          $installer = @($manifest.artifacts | Where-Object {
+            $_.id -ceq 'windows-x86_64-installer' -and $_.filename -ceq 'SynveilSetup.exe'
+          })
+          if ($installer.Count -ne 1) { throw 'P047_CANDIDATE_IDENTITY_FAILURE: exact Setup record is missing' }
+          $setupPath = 'target/release-candidate/SynveilSetup.exe'
+          $digest = (Get-FileHash $setupPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          $length = (Get-Item $setupPath).Length
+          if ($digest -cne $installer[0].sha256 -or $length -ne $installer[0].size_bytes) {
+            throw 'P047_CANDIDATE_IDENTITY_FAILURE: Setup bytes differ from the signed manifest record'
+          }
+          New-Item target/windows-installer -ItemType Directory -Force | Out-Null
+          Copy-Item $setupPath target/windows-installer/SynveilSetup.exe
+          Copy-Item $manifestPath target/windows-installer/SYNVEIL-RELEASE-MANIFEST.json
+          $identity = [ordered]@{
+            schema_version = 1
+            source_commit = $manifest.source_commit
+            producer_run_id = [string]$env:CANDIDATE_RUN_ID
+            product_version = $manifest.product_version
+            filename = 'SynveilSetup.exe'
+            size_bytes = $length
+            sha256 = $digest
+            signature_status = 'UNSIGNED'
+            release_manifest_sha256 = (Get-FileHash $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
           $identity | ConvertTo-Json | Set-Content target/windows-installer/p028-candidate.json -Encoding utf8
       - uses: actions/upload-artifact@v4
         with:
@@ -109,7 +195,8 @@ jobs:
               $identity.filename -cne 'SynveilSetup.exe' -or
               $actual -cne $identity.sha256 -or
               $actualSize -ne $identity.size_bytes -or
-              $identity.source_commit -cne $env:GITHUB_SHA) {
+              [string]::IsNullOrWhiteSpace($identity.source_commit) -or
+              $identity.signature_status -cne 'UNSIGNED') {
             throw 'P028_CANDIDATE_IDENTITY_FAILURE'
           }
           if ($manifestDigest -cne $identity.release_manifest_sha256) {
@@ -121,6 +208,9 @@ jobs:
               $release.source_commit -cne $identity.source_commit -or
               $release.product_version -cne $identity.product_version) {
             throw 'P028_CANDIDATE_MANIFEST_IDENTITY_FAILURE'
+          }
+          if ((Get-AuthenticodeSignature -FilePath $setupPath).Status -ne 'NotSigned') {
+            throw 'P028_CANDIDATE_SIGNATURE_STATE_FAILURE'
           }
           $records = @($release.artifacts | Where-Object {
             $_.id -ceq 'windows-x86_64-installer' -and $_.filename -ceq $identity.filename

@@ -19,6 +19,16 @@ recorded in the candidate identity, and binds the Setup hash, size, platform,
 architecture, role, product version, and source commit to the manifest before
 running acceptance.
 
+The R04 `workflow_dispatch` path takes a required release-candidate workflow
+run ID. It downloads the assembled `synveil-release-candidate` artifact and
+checks that the producer run succeeded from this repository, that its source
+commit matches both the candidate manifest and the native acceptance workflow
+revision, and that all five product files match their recorded sizes and
+SHA-256 values. It copies the exact `SynveilSetup.exe`
+bytes into the standard-user test job and verifies that the selected R04
+candidate is unsigned. Pull-request builds remain fixture/build evidence and
+are not release-candidate acceptance.
+
 ## Clean machine and topology
 
 A qualifying clean machine is a disposable native Windows instance whose tested

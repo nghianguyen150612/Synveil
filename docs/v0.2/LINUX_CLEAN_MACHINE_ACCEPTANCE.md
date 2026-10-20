@@ -9,6 +9,22 @@ Prompt020. The contract, the executor and the hosted workflow exist and are
 tested. The native evidence does not exist yet, and this document records that
 plainly rather than implying otherwise.
 
+## Exact release-candidate execution
+
+The `workflow_dispatch` path requires `candidate_run_id` from a successful
+`.github/workflows/release-artifact-candidate.yml` run in this repository. It
+downloads the assembled `synveil-release-candidate` artifact from that run,
+checks the producer workflow and source SHA through the GitHub Actions API,
+requires that source SHA to match the native acceptance workflow revision,
+validates the release manifest and each product-file size and SHA-256, then
+passes those same bytes into the Ubuntu 24.04 and Fedora 42 guest jobs. The
+PR path remains a contract/build check and skips the native guest matrix; a
+successful PR workflow is not native acceptance. The exact-run path currently
+accepts only the assembled unsigned candidate because production-signed
+release inputs are not available. Acceptance records must retain the producer
+run ID, source SHA, manifest digest and product digests; local or newly built
+packages cannot substitute for the downloaded candidate.
+
 ## What this is
 
 Prompt004 delivered the acceptance *contract* only: scenario JSON, a result

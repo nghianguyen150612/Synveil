@@ -23,6 +23,11 @@ name: Linux clean-machine acceptance
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful release-artifact-candidate workflow run that produced the exact candidate bytes.
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -60,7 +65,10 @@ jobs:
         run: python3 scripts/linux_acceptance.py self-test
 
       - name: Python compilation
-        run: python3 -m py_compile scripts/install_acceptance.py scripts/linux_acceptance.py
+        run: python3 -m py_compile scripts/install_acceptance.py scripts/linux_acceptance.py scripts/verify_release_candidate_run.py
+
+      - name: Verify exact release-candidate provenance contract
+        run: python3 -m unittest scripts.tests.test_verify_release_candidate_run -v
 
       - name: Artifact path-leak diagnostics name the leaking input
         run: |
@@ -77,40 +85,59 @@ jobs:
           echo "path-leak diagnostics name the full leaking input"
 
   # ---------------------------------------------------------------------
-  # Build each artifact exactly once and publish it for the VM matrix.
-  # Rebuilding inside every guest would break artifact identity (P020 §50/§51).
+  # PR runs build a fixture candidate for workflow validation. Manual native
+  # runs require and import the exact assembled R04/R05 candidate run instead.
+  # The guest matrix never rebuilds or substitutes product bytes.
   # ---------------------------------------------------------------------
   artifacts:
-    name: Build exact acceptance artifacts once
+    name: Build fixture artifacts or import exact release candidate
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       SYNVEIL_ENABLE_QMLCACHEGEN_WRAPPER: "1"
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download the exact assembled release candidate
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/download-artifact@v4
+        with:
+          name: synveil-release-candidate
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+          path: target/packages
+
       - uses: dtolnay/rust-toolchain@stable
+        if: github.event_name != 'workflow_dispatch'
       - uses: actions/setup-python@v6
+        if: github.event_name != 'workflow_dispatch'
         with:
           python-version: "3.12"
       - uses: jurplel/install-qt-action@d325aaf2a8baeeda41ad0b5d39f84a6af9bcf005
+        if: github.event_name != 'workflow_dispatch'
         with:
           version: '6.7.3'
           host: linux
           target: desktop
           arch: linux_gcc_64
       - name: Build dependencies
+        if: github.event_name != 'workflow_dispatch'
         run: |
           sudo apt-get update
           sudo apt-get install -y file shellcheck pkg-config libdbus-1-dev libfuse2 gnupg
           sudo install -d -m 0777 /usr/src/synveil
       - name: Acquire pinned and signed AppImageKit type-2 runtime
+        if: github.event_name != 'workflow_dispatch'
         run: >-
           python3 scripts/acquire-appimage-runtime.py
           --output target/appimage-runtime
           --github-env "$GITHUB_ENV"
       - name: Build DEB and RPM
+        if: github.event_name != 'workflow_dispatch'
         run: ./deploy/packages/build.sh
       - name: Build AppImage
+        if: github.event_name != 'workflow_dispatch'
         run: |
           set -euo pipefail
           mv target/packages/SYNVEIL-RELEASE-MANIFEST.json target/packages/SYNVEIL-NATIVE-RELEASE-MANIFEST.json
@@ -122,7 +149,26 @@ jobs:
             target/packages/SYNVEIL-APPIMAGE-RELEASE-MANIFEST.json
           rm -f target/packages/SYNVEIL-NATIVE-RELEASE-MANIFEST.json target/packages/SYNVEIL-APPIMAGE-RELEASE-MANIFEST.json
       - name: Record exact artifact identity
+        if: github.event_name != 'workflow_dispatch'
         run: |
+          sha256sum target/packages/* >> target/packages/ACCEPTANCE-ARTIFACT-SHA256.txt
+          cat target/packages/ACCEPTANCE-ARTIFACT-SHA256.txt
+
+      - name: Verify candidate run provenance and exact product bytes
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_release_candidate_run.py \
+            --run-id "$CANDIDATE_RUN_ID" \
+            --artifact-name synveil-release-candidate \
+            --repository "$GITHUB_REPOSITORY" \
+            --expected-source-commit "$GITHUB_SHA" \
+            --artifact-root target/packages \
+            --output target/packages/RELEASE-CANDIDATE-VERIFICATION.json
+          printf '%s\n' "$CANDIDATE_RUN_ID" > target/packages/ACCEPTANCE-CANDIDATE-RUN.txt
           sha256sum target/packages/* >> target/packages/ACCEPTANCE-ARTIFACT-SHA256.txt
           cat target/packages/ACCEPTANCE-ARTIFACT-SHA256.txt
       - uses: actions/upload-artifact@v4
@@ -134,6 +180,9 @@ jobs:
             target/packages/*.AppImage
             target/packages/SYNVEIL-RELEASE-MANIFEST.json
             target/packages/ACCEPTANCE-ARTIFACT-SHA256.txt
+            target/packages/candidate-evidence.json
+            target/packages/RELEASE-CANDIDATE-VERIFICATION.json
+            target/packages/ACCEPTANCE-CANDIDATE-RUN.txt
           if-no-files-found: error
 
   # ---------------------------------------------------------------------

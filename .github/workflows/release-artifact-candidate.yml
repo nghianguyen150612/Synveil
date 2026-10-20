@@ -348,6 +348,27 @@ jobs:
             --source-commit "$GITHUB_SHA" \
             target/release-candidate/SYNVEIL-RELEASE-MANIFEST.json
           sha256sum target/release-candidate/*
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import hashlib
+          import json
+          from pathlib import Path
+
+          root = Path("target/release-candidate")
+          manifest_path = root / "SYNVEIL-RELEASE-MANIFEST.json"
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          evidence = json.loads((root / "candidate-evidence.json").read_text(encoding="utf-8"))
+          print("## Exact release candidate identity")
+          print(f"- Producer run: `{__import__('os').environ['GITHUB_RUN_ID']}`")
+          print(f"- Producer workflow: `{__import__('os').environ['GITHUB_WORKFLOW']}`")
+          print(f"- Source commit: `{manifest['source_commit']}`")
+          print(f"- Product version: `{manifest['product_version']}`")
+          print(f"- Status: `{evidence['status']}`")
+          print(f"- Manifest: `{manifest_path.name}`, {manifest_path.stat().st_size} bytes, SHA-256 `{hashlib.sha256(manifest_path.read_bytes()).hexdigest()}`")
+          print("\n| Artifact | Platform / architecture | Bytes | SHA-256 |")
+          print("| --- | --- | ---: | --- |")
+          for item in manifest["artifacts"]:
+              print(f"| `{item['filename']}` | {item['platform']} / {item['architecture']} | {item['size_bytes']} | `{item['sha256']}` |")
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: synveil-release-candidate

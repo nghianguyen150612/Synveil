@@ -54,6 +54,23 @@ jobs:
             --output-dir=target/windows-packages \
             --staging-dir=target/windows-installer-runtime
           test "$(find target/windows-packages -maxdepth 1 -name 'synveil-*-windows-x86_64.zip' -type f | wc -l)" -eq 1
+      - name: Rebuild the selected portable ZIP and require byte identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          source deploy/packages/common/reproducible.sh
+          ./deploy/packages/build-windows.sh \
+            --desktop-binary=target/release/synveil-desktop.exe \
+            --client-binary=target/release/synveil-client.exe \
+            --output-dir=target/windows-packages-reproducible
+          zip="$(find target/windows-packages -maxdepth 1 -name 'synveil-*-windows-x86_64.zip' -type f -print -quit)"
+          zip_repro="$(find target/windows-packages-reproducible -maxdepth 1 -name 'synveil-*-windows-x86_64.zip' -type f -print -quit)"
+          test -n "$zip" && test -n "$zip_repro"
+          synveil_require_identical_artifacts "$zip" "$zip_repro" selected-Windows-portable-ZIP
+          synveil_require_identical_artifacts \
+            target/windows-packages/SYNVEIL-RELEASE-MANIFEST.json \
+            target/windows-packages-reproducible/SYNVEIL-RELEASE-MANIFEST.json \
+            selected-Windows-portable-manifest
       - name: Exercise negative runtime closure cases
         shell: pwsh
         run: |
