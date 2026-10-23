@@ -475,7 +475,8 @@ describe('backup foundation page', () => {
       { ...apis, authApi: { ...apis.authApi, getCurrentSession } },
     )
 
-    expect(await screen.findByRole('heading', { name: 'Backup set not available' })).toHaveFocus()
+    const notFoundHeading = await screen.findByRole('heading', { name: 'Backup set not available' })
+    await waitFor(() => expect(notFoundHeading).toHaveFocus())
     expect(screen.getByText('The requested backup set could not be found.')).toBeInTheDocument()
     expect(screen.queryByText(/owner|foreign|raw ownership/i)).not.toBeInTheDocument()
     expect(getCurrentSession).toHaveBeenCalledOnce()
