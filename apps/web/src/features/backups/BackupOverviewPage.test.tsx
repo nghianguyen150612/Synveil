@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AuthApi, AuthSessionResponse } from '../../api/auth'
@@ -523,11 +523,12 @@ describe('Backup Control Center overview', () => {
       .mockResolvedValueOnce(page([]))
     const api = makeBackupApi({ listBackupSets })
     const apis = authApis()
+    const recoveredSession = deferred<AuthSessionResponse>()
     const getCurrentSession = vi
       .fn<AuthApi['getCurrentSession']>()
       .mockResolvedValueOnce(session)
       .mockRejectedValueOnce(new TypeError('network unavailable'))
-      .mockResolvedValueOnce(session)
+      .mockReturnValueOnce(recoveredSession.promise)
     const authApi: AuthApi = { ...apis.authApi, getCurrentSession }
     render(
       <App
@@ -544,6 +545,13 @@ describe('Backup Control Center overview', () => {
     expect(screen.queryByRole('heading', { name: 'Backup Control Center' })).not.toBeInTheDocument()
     const retry = screen.getByRole('button', { name: /try session recovery again/i })
     fireEvent.click(retry)
+
+    expect(await screen.findByRole('heading', { name: /restoring your session/i })).toHaveFocus()
+    expect(screen.queryByRole('heading', { name: 'Backup Control Center' })).not.toBeInTheDocument()
+
+    await act(async () => {
+      recoveredSession.resolve(session)
+    })
 
     expect(await screen.findByRole('heading', { name: 'Backup Control Center' })).toHaveFocus()
     expect(getCurrentSession).toHaveBeenCalledTimes(3)
