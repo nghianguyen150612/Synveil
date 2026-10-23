@@ -22,6 +22,7 @@
 | Merge base / divergence | common ancestor is the same SHA; `git rev-list --left-right --count origin/develop/v0.3...origin/main` returned `0 0` |
 | Candidate-source commit | `deef2db375764d3157afb5371eb963bbd9b3f1ea`; six later changes through baseline HEAD were release/readiness documentation only |
 | Working branch | `audit/v03-p001-baseline`, created from verified `origin/develop/v0.3` after the clean-tree check |
+| Initial audit commit / PR opening head | `ecb1c4da408e1db86fc77a4ee924aef56f053e59` |
 | Target branch | `develop/v0.3`; never `main` |
 
 The local `origin` fetch refspec tracked `main` only, so `develop/v0.3` was explicitly fetched to `refs/remotes/origin/develop/v0.3`. `git ls-remote --heads origin main develop/v0.3 audit/v03-p001-baseline` verified the two base refs and no pre-existing audit branch. No reset, force-push or rebase was used.
@@ -94,8 +95,18 @@ No production binary, migration, installer integration, real database, or user d
 
 ## PR URL and head SHA
 
-Pre-PR checkpoint: `PENDING_OPEN`. After PR creation this section will record its URL and the exact PR head SHA observed at opening. A subsequent manifest-only metadata commit changes the PR head again; the final branch SHA will be stated in the completion report.
+| Field | Value |
+|---|---|
+| PR | [#156 — docs(v0.3): establish P001 release and repository baseline](https://github.com/nghianguyen150612/Synveil/pull/156) |
+| Target | `develop/v0.3` at `604499fce0dfd134d82da3d5bb5d4a055c5eea8d` when the PR was opened; reverified by `git ls-remote` |
+| Initial PR head SHA | `ecb1c4da408e1db86fc77a4ee924aef56f053e59`, observed at PR creation on 2026-10-23 02:04 UTC |
+| State | OPEN; not merged |
+| Checks at opening | PR workflows were queued/in progress. Base CI run 39885328513 still contained the failed dependency-policy check; PR checks must be rechecked before any merge. |
+
+This manifest follow-up updates PR metadata and therefore advances the live PR head beyond its initial SHA. The final branch SHA is stated in the completion report and can be verified from the PR.
 
 ## Final audit gate
 
-**PENDING_VALIDATION.** P001 passes when the scoped artifacts and focused validator pass and the evidence in these reports remains traceable. Audit completion does not certify v0.2 stable. The PR must remain unmerged while required checks fail or applicable security/approval gates remain unresolved. No P002 work is included.
+**PASS — evidence-backed P001 audit completed; review and PR CI remain open.** The exact repository baseline, v0.2 release disposition, architecture, installation, migrations, compatibility and security boundaries are documented in the two reports; the four-file scope and local evidence links passed the audit validator; available repository checks were run and their blocked/unrun limits are recorded. No production code, database, migration or integration changed. This result does not certify v0.2 as stable.
+
+Before accepting the PR for merge, review its four-file diff, wait for applicable PR checks, and resolve the failed dependency-policy gate for RUSTSEC-2026-0381/RUSTSEC-2026-0382. For P001 acceptance, keep the release blockers, unavailable roadmap and unverified client/platform combinations explicit; an unresolved v0.2 release is compatible with passing the audit. Before starting P002, supply or locate the authoritative P001–P060 roadmap and review its P002 scope, then begin only under a separate instruction. No P002 work is included here.
