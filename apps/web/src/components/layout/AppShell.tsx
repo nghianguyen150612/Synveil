@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useLayoutEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 
 import { useAuth } from '../../auth/useAuth'
@@ -13,7 +13,7 @@ export function AppShell() {
   const location = useLocation()
   const [loggingOut, setLoggingOut] = useState(false)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (status === 'recovering' || status === 'recovery_error') {
       return
     }
