@@ -131,9 +131,9 @@ No new validator or dependency is planned. The existing P001 validator is P001-o
 |---|---|
 | Files added | The three P002 architecture documents above and this manifest. |
 | Files modified | None expected outside those four documentation files. |
-| Architecture content commit SHA | To be filled after the first commit; this field will identify the commit that introduced the four artifacts. |
-| Pull request | To be filled after push and PR creation; target develop/v0.3. |
-| Merge state | Not merged by P002 unless all checks, review and authorization requirements are satisfied. |
+| Architecture content commit SHA | c9b7cf405b1d7e0391ab458d48b612e84bac6497 (introduces the four artifacts). |
+| Pull request | [#160 — docs(v0.3): define P002 architecture and compatibility contracts](https://github.com/nghianguyen150612/Synveil/pull/160), targeting develop/v0.3. |
+| Merge state | OPEN and unmerged. Review/check state must be rechecked at the final report; no merge performed. |
 
 ## P002 gate
 
