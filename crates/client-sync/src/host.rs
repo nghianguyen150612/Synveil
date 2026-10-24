@@ -1024,6 +1024,8 @@ struct HostLibrary {
     observer: Option<Arc<OutboundObservationEngine>>,
     observer_cancellation: Arc<ObserverCancellation>,
     root_availability: AtomicU8,
+    #[cfg(test)]
+    root_availability_updates: tokio::sync::watch::Sender<RootAvailability>,
 }
 
 impl HostLibrary {
@@ -1039,6 +1041,8 @@ impl HostLibrary {
         } else {
             RootAvailability::Unavailable
         };
+        #[cfg(test)]
+        let (root_availability_updates, _) = tokio::sync::watch::channel(root_availability);
         Self {
             scope,
             profile_id,
@@ -1047,6 +1051,8 @@ impl HostLibrary {
             observer,
             observer_cancellation: Arc::new(ObserverCancellation::new()),
             root_availability: AtomicU8::new(root_availability.code()),
+            #[cfg(test)]
+            root_availability_updates,
         }
     }
 
@@ -1057,6 +1063,8 @@ impl HostLibrary {
     fn set_root_availability(&self, availability: RootAvailability) {
         self.root_availability
             .store(availability.code(), Ordering::Release);
+        #[cfg(test)]
+        self.root_availability_updates.send_replace(availability);
     }
 }
 
@@ -3856,12 +3864,27 @@ mod tests {
         library_id: LibraryId,
         expected: RootAvailability,
     ) {
-        tokio::time::timeout(Duration::from_secs(2), async {
+        let mut updates = host
+            .inner
+            .libraries
+            .lock()
+            .await
+            .get(&library_id)
+            .expect("root status library")
+            .root_availability_updates
+            .subscribe();
+
+        // Recovery is published only after the root probe and observer
+        // reinitialization finish. Subscribe to that publication directly so
+        // scheduler delays cannot make a fixed polling cadence miss it. The
+        // deadline is only a bounded liveness guard for filesystem work under
+        // the parallel cross-platform test suite.
+        tokio::time::timeout(Duration::from_secs(10), async {
             loop {
-                if host.root_status(library_id) == Some(expected) {
+                if *updates.borrow_and_update() == expected {
                     break;
                 }
-                tokio::time::sleep(Duration::from_millis(2)).await;
+                updates.changed().await.expect("root status publisher");
             }
         })
         .await
