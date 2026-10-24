@@ -266,6 +266,7 @@ flowchart LR
   API["synveil-api Axum /api/v1"]
   Worker["synveil-worker internal"]
   Migrate["synveil-server-migrate"]
+  Installer["synveil-install-engine"]
   PG[("PostgreSQL canonical metadata")]
   Store[("ObjectStore canonical bytes")]
   Web -->|"HTTPS"| Edge
@@ -278,6 +279,7 @@ flowchart LR
   Worker --> PG
   Worker --> Store
   Migrate --> PG
+  Installer --> InstallJournal[("Append-only install journal")]
   Client --> DesktopSQLite[("Desktop SQLite")]
   Android --> Room[("Room + DataStore")]
   IOS --> IOSSQLite[("SQLite 9 + photo DB 3")]
@@ -370,15 +372,15 @@ flowchart LR
   Verify["Re-inspect + verify effect"]
   Done["Complete with typed result"]
   Recovery["Resume / reconcile / replan / inspection"]
-  Bootstrap["First-admin bootstrap: separate API flow"]
-  Enrollment["Mobile enrollment: separate device flow"]
+  subgraph SeparateFlows["Separate product flows"]
+    Bootstrap["First-admin bootstrap through API"]
+    Enrollment["Mobile device enrollment through API"]
+  end
   User --> Wizard --> Preflight --> Plan
   Plan -->|"confirm"| Journal --> Adapter --> Verify
   Verify -->|"verified"| Journal --> Done
   Adapter -. "process interruption or unknown outcome" .-> Recovery
   Recovery --> Journal
-  Done -.-> Bootstrap
-  Done -.-> Enrollment
 ~~~
 
 ### 7.5 Connectivity and pairing boundaries
@@ -416,6 +418,7 @@ flowchart LR
   API["API authorization and application services"]
   PG[("PostgreSQL: canonical identity, metadata, journals, plans, manifests")]
   Obj[("ObjectStore: canonical bytes under opaque keys")]
+  Install["synveil-install-engine"]
   Journal[("Installer journal: separate lifecycle state")]
   Backup["Operator DB backup / WAL"]
   ObjectBackup["Operator ObjectStore backup"]
@@ -431,5 +434,5 @@ flowchart LR
   PG -. "logical snapshot references / pins" .-> Obj
   PG -. "separate recovery surface" .-> Backup
   Obj -. "separate recovery surface" .-> ObjectBackup
-  Journal -. "not application DB" .-> API
+  Install --> Journal
 ~~~
