@@ -120,3 +120,11 @@ separately qualify the production fix for device-ID binding; then expand and
 pass coverage for version/content/storage, all sync routes, malformed IDs,
 mutation protocol cases, and revocation concurrency. Keep AT-15/AT-16 and full
 P003 acceptance unclaimed until their specified evidence is supplied.
+
+## Post-blocker staging update — 2026-10-25
+
+The test-only PR #163 has been **retargeted as a stacked draft PR** to the P005A repair branch `fix/v03-p005a-device-mutation-binding` (PR #164), not merged. This allows the test diff to be reviewed against the one-line production authorization repair without putting the known failing regression onto `develop/v0.3` prematurely.
+
+Commit `eec125f97ff5c6bd79f21d084bf034910d5d5432` expands the previously failing PostgreSQL probe with durable-state assertions: the mismatched device request must leave the node count, change-journal count and device-mutation-operation count unchanged, and must not persist the forged mutation ID. These assertions are **committed but not yet executed against the stacked PR head**; they must not be reported as passed.
+
+P005A PR #164 is still unmerged and has no independent review. Re-run the ignored PostgreSQL 17 probe with the repair applied and record exact results before P005 is considered complete. After P005A merges, retarget PR #163 to `develop/v0.3` and verify its effective diff remains test/documentation-only. All P004 policy decisions remain pending.
