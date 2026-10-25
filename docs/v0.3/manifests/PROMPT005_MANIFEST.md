@@ -102,11 +102,18 @@ P028 qualification gate, not a P005 test result.
 
 ## Git, PR, and P006 handoff
 
-One logical test-and-documentation change is intended on
-`test/v03-p005-authorization-baseline`; no merge, rebase, squash, or P006 work
-is authorized. Commit SHA and PR URL/state will be entered after publication.
-The PR must remain open while the authorization defect and applicable checks
-are unresolved.
+Implementation commit: `4cce39c5a538f199cbf7c3e3c4e15038e7d7f8de`
+(`test(security): establish P005 legacy authorization regression baseline`).
+
+Draft PR #163 is open at
+https://github.com/nghianguyen150612/Synveil/pull/163, targeting
+`develop/v0.3` at base `3d06751bdaf47ffe518253f8c31080e751a6d380`. It was
+created with the implementation commit as its initial head; PR checks were
+queued or in progress at that point, and ordinary CI does not run the ignored
+database probe by default. A manifest closeout commit records this post-push
+PR evidence without rewriting the published implementation commit. Keep the
+PR open and unmerged while the defect and applicable checks/reviews remain
+unresolved. No squash, rebase, or P006 work is authorized.
 
 P006 prerequisites: obtain the roadmap and required maintainer decisions;
 separately qualify the production fix for device-ID binding; then expand and
