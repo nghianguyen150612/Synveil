@@ -822,12 +822,35 @@ async fn p005_owner_and_device_authorization_probe_reveals_mutation_binding_gap(
         .fetch_one(fixture.database.inspection())
         .await
         .expect("node count must be readable before rejected mutation");
+    let journal_before: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM change_journal WHERE owner_user_id = $1 AND library_id = $2",
+    )
+    .bind(owner_a.owner.into_uuid())
+    .bind(owner_a_library.into_uuid())
+    .fetch_one(fixture.database.inspection())
+    .await
+    .expect("journal count must be readable before rejected mutation");
+    let operations_before: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM device_mutation_operations WHERE owner_user_id = $1 AND device_id = $2 AND library_id = $3",
+    )
+    .bind(owner_a.owner.into_uuid())
+    .bind(owner_a_device_two.id.into_uuid())
+    .bind(owner_a_library.into_uuid())
+    .fetch_one(fixture.database.inspection())
+    .await
+    .expect("mutation operation count must be readable before rejected mutation");
     let forged = mutation_body(
         owner_a_root,
         root_revision,
         "forged-device-two-write",
         base_sequence,
     );
+    let forged_mutation_id = Uuid::parse_str(
+        forged["mutation_id"]
+            .as_str()
+            .expect("forged test request must contain a mutation ID"),
+    )
+    .expect("forged test mutation ID must be a UUID");
     let forged_response = call(
         &fixture.state,
         device_request(
@@ -847,10 +870,48 @@ async fn p005_owner_and_device_authorization_probe_reveals_mutation_binding_gap(
         .fetch_one(fixture.database.inspection())
         .await
         .expect("node count must be readable after unauthorized mutation attempt");
-    assert!(
-        observed_status == StatusCode::NOT_FOUND && before == after,
-        "device-one bearer impersonated device-two at /api/v1/devices/{{device_id}}/libraries/{{library_id}}/mutations: observed HTTP {observed_status}, node count {before}->{after}; expected concealed denial and unchanged state"
+    let journal_after: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM change_journal WHERE owner_user_id = $1 AND library_id = $2",
+    )
+    .bind(owner_a.owner.into_uuid())
+    .bind(owner_a_library.into_uuid())
+    .fetch_one(fixture.database.inspection())
+    .await
+    .expect("journal count must be readable after unauthorized request");
+    let operations_after: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM device_mutation_operations WHERE owner_user_id = $1 AND device_id = $2 AND library_id = $3",
+    )
+    .bind(owner_a.owner.into_uuid())
+    .bind(owner_a_device_two.id.into_uuid())
+    .bind(owner_a_library.into_uuid())
+    .fetch_one(fixture.database.inspection())
+    .await
+    .expect("mutation count must be readable after unauthorized request");
+    let forged_persisted: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM device_mutation_operations WHERE owner_user_id = $1 AND device_id = $2 AND library_id = $3 AND client_mutation_id = $4",
+    )
+    .bind(owner_a.owner.into_uuid())
+    .bind(owner_a_device_two.id.into_uuid())
+    .bind(owner_a_library.into_uuid())
+    .bind(forged_mutation_id)
+    .fetch_one(fixture.database.inspection())
+    .await
+    .expect("forged mutation identity must be inspectable");
+    assert_eq!(
+        observed_status,
+        StatusCode::NOT_FOUND,
+        "device-one bearer impersonated device-two: expected concealed denial, got HTTP {observed_status}"
     );
+    assert_eq!(before, after, "cross-device denial must preserve node count");
+    assert_eq!(
+        journal_before, journal_after,
+        "cross-device denial must not append a journal event"
+    );
+    assert_eq!(
+        operations_before, operations_after,
+        "cross-device denial must not persist a mutation outcome"
+    );
+    assert_eq!(forged_persisted, 0, "forged mutation ID must not persist");
 
     })
     .catch_unwind()
