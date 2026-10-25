@@ -177,6 +177,7 @@ pub(crate) async fn submit(
     Json(payload): Json<SubmitMutationRequest>,
 ) -> Result<Response, ApiError> {
     let device_id = parse_id::<DeviceId>(&device_id)?;
+    principal.require_device(device_id)?;
     let library_id = parse_id::<LibraryId>(&library_id)?;
     let request = parse_request(payload)?;
     let mutation_id = request.mutation_id();
