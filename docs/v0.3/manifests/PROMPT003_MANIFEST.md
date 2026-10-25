@@ -23,8 +23,8 @@
 | P003 working branch | docs/v03-p003-security-threat-model, created from the verified P002 PR head. No reset, rebase, force push or shared-history rewrite. |
 | P003 PR target | docs/v03-p002-architecture while P002 remains open. Do not merge P003 before P002 integration. |
 | P001 state | PRs #156–#159 are merged per P002 manifest. |
-| P003 content commit | To be recorded after the four security documents are committed. |
-| P003 PR URL / merge state | To be recorded after opening the stacked pull request. |
+| P003 content commit | 2902ba3cfd3199e8079a54f5111c232c5105975e; introduces exactly the five requested files. |
+| P003 PR URL / merge state | [#161](https://github.com/nghianguyen150612/Synveil/pull/161), OPEN and unmerged as of 2026-10-25. |
 
 The stacked diff preserves P002 commits and does not duplicate P002 documents. After P002 merges, retarget P003 to develop/v0.3, verify the effective diff contains only the five P003 files and rerun applicable validation before considering merge.
 
@@ -63,13 +63,13 @@ Every P002 ADR remains PROPOSED. No maintainer approval is inferred.
 
 | Check | Result |
 |---|---|
-| Documentation validator | Pending closeout run after all five files are present. |
-| Markdown and relative links | Pending closeout run. |
-| Mermaid | mmdc availability and validation status pending closeout. |
-| Threat and requirement traceability | Pending structural checks for unique IDs, references and High/Critical test coverage. |
-| Source-reference consistency | Pending source path check. |
-| Whitespace and changed-file scope | Pending final diff check; expected scope is exactly these five Markdown files. |
-| Production behavior and feature tests | Not run; no product implementation changed and none is claimed. |
+| Documentation validator | PASS: ./scripts/validate-docs.sh completed all 24 documentation units. |
+| Markdown and relative links | PASS: validator and read-only local-link scan found no broken links. |
+| Mermaid | mmdc is not installed; both diagrams were reviewed as Mermaid flowchart source. No dependency was added. |
+| Threat and requirement traceability | PASS: 43 unique TM IDs, 30 unique SV-SEC IDs and 45 unique AT IDs; every High/Critical threat has mitigation, owner/status and an acceptance-test reference; all 11 P002 ADRs were reviewed once and remain PROPOSED. |
+| Source-reference consistency | PASS: linked repository source paths and evidence links resolve in the checked-out P002 tree. |
+| Whitespace and changed-file scope | PASS: git diff --cached --check; the P003 commit and PR comparison to P002 contain exactly five Markdown files. |
+| Production behavior and feature tests | Not run locally; no product implementation changed and none is claimed. GitHub PR workflows were automatically queued; latest live outcomes are available on PR #161. |
 
 ## Open high-risk decisions
 
@@ -92,9 +92,9 @@ Before P004 implementation, obtain maintainer decisions on the blockers above an
 
 | Field | Value |
 |---|---|
-| P003 content commit SHA | Pending. |
-| P003 closeout manifest commit SHA | Pending. |
-| Branch head SHA | Pending. |
-| Pull request | Pending. |
+| P003 content commit SHA | 2902ba3cfd3199e8079a54f5111c232c5105975e. |
+| P003 closeout manifest commit SHA | This manifest is part of the follow-up closeout commit on the P003 branch; the resulting branch head is the PR #161 head. |
+| Branch head SHA | Recorded in the live PR #161 head and final engineering report. |
+| Pull request | [#161 — docs(v0.3): define P003 threat model and security requirements](https://github.com/nghianguyen150612/Synveil/pull/161). |
 | Pull request base | docs/v03-p002-architecture while P002 PR #160 remains open. |
-| Merge state | Not merged; P002 prerequisite remains open. |
+| Merge state | OPEN and unmerged. P002 PR #160 remains OPEN; P003 must not merge before P002 integration, required checks and maintainer approval. |
