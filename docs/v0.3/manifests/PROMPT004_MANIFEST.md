@@ -109,6 +109,6 @@ P005 may begin only after maintainers provide/confirm the authoritative roadmap 
 
 | Field | Value |
 |---|---|
-| P004 commit SHA | Pending final commit. |
-| PR URL / target | Pending creation; target must be `develop/v0.3`. |
-| PR merge status | Pending; merge only after review and required integration gates pass. Never merge to `main`. |
+| P004 content commit SHA | `4c42001314f45a6e49ca40aa6d22d3b4a36ec2e6` (four scoped documents). A manifest closeout commit follows to record PR metadata. |
+| PR URL / target | [#162](https://github.com/nghianguyen150612/Synveil/pull/162), target `develop/v0.3`. |
+| PR merge status | OPEN, not merged. Merge only after review and required integration gates pass. Never merge to `main`. |
