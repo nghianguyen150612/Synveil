@@ -1,0 +1,70 @@
+name: v0.3 P006 content authorization security regression
+
+on:
+  pull_request:
+    paths:
+      - "crates/api/src/tests.rs"
+      - "crates/storage/tests/downloads.rs"
+      - "crates/api/tests/authorization_postgres.rs"
+      - "docs/v0.3/security/P006_CONTENT_AUTHORIZATION_BASELINE.md"
+      - "docs/v0.3/manifests/PROMPT006_MANIFEST.md"
+      - ".github/workflows/v03-p006-content-security.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  p006-content-authorization:
+    name: P006 version and content authorization regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
+    env:
+      SYNVEIL_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - name: Check out exact PR merge candidate
+        uses: actions/checkout@v4
+      - name: Install API and storage build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libdbus-1-dev postgresql-client
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run P006 owner, version, ETag and Range HTTP tests
+        run: cargo test -p synveil-api --lib --locked p006_ -- --nocapture
+      - name: Run P006 local filesystem ObjectStore HTTP test
+        run: cargo test -p synveil-api --lib --locked api_downloads_use_the_content_service_and_local_object_store -- --nocapture
+      - name: Run storage content and immutable-version tests
+        run: cargo test -p synveil-storage --test downloads --locked
+      - name: Check API Clippy
+        run: cargo clippy -p synveil-api --all-targets --locked -- -D warnings
+      - name: Confirm PostgreSQL 17
+        run: |
+          set -euo pipefail
+          pg_isready -h 127.0.0.1 -p 5432 -U postgres
+          ver=$(psql "$SYNVEIL_TEST_DATABASE_URL" -t -A -c 'SHOW server_version;' | tr -d ' ')
+          [[ "$ver" == 17.* ]] || { echo "Expected PostgreSQL 17"; exit 1; }
+      - name: Retain exact P005 cross-device mutation regression
+        run: |
+          set -euo pipefail
+          cargo test -p synveil-api --test authorization_postgres --locked -- --ignored --test-threads=1 --nocapture
