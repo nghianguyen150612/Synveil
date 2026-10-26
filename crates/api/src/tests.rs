@@ -3064,7 +3064,7 @@ async fn api_downloads_use_the_content_service_and_local_object_store() {
             key.as_str(),
         ),
     };
-    let content_service = ContentReadApplicationService::new(Arc::new(metadata), object_store);
+    let content_service = ContentReadApplicationService::new(Arc::new(metadata), object_store.clone());
     let state = state(true)
         .with_auth_backend(auth_backend)
         .with_download_backend(Arc::new(content_service))
@@ -3083,13 +3083,50 @@ async fn api_downloads_use_the_content_service_and_local_object_store() {
     request
         .headers_mut()
         .insert("range", HeaderValue::from_static("bytes=6-11"));
-    let response = router(state)
+    let response = router(state.clone())
         .oneshot(request)
         .await
         .expect("service-backed range download must not fail");
     assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
     assert_eq!(response.headers()[CONTENT_RANGE], "bytes 6-11/26");
     assert_eq!(response_bytes(response).await, b"object");
+
+    // Exercise real local filesystem-backed immutable bytes with a different
+    // authenticated owner. Even a valid ETag plus a valid byte range cannot
+    // grant access to the copied node/version ID.
+    let other_state = state.with_auth_backend(Arc::new(TestAuthenticationBackend::new()));
+    let (other_session, other_csrf) = login_cookies(&other_state).await;
+    for foreign_path in [
+        format!("/api/v1/nodes/{node_id}/content"),
+        format!("/api/v1/versions/{file_version_id}/content"),
+    ] {
+        let mut request = authenticated_request(
+            Method::GET,
+            &foreign_path,
+            &other_session,
+            &other_csrf,
+        );
+        request.headers_mut().insert(
+            "if-none-match",
+            HeaderValue::from_str(&format!("\"{sha256}\""))
+                .expect("known SHA-256 ETag must be a safe header"),
+        );
+        request
+            .headers_mut()
+            .insert("range", HeaderValue::from_static("bytes=0-3"));
+        let response = router(other_state.clone())
+            .oneshot(request)
+            .await
+            .expect("foreign local object-store request must respond");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert!(!response.headers().contains_key("content-range"));
+        assert!(!response.headers().contains_key("etag"));
+        assert_eq!(json_body(response).await["error"]["code"], "not_found");
+    }
+    assert!(
+        object_store.exists(&key).await.expect("local object must remain readable"),
+        "foreign denied reads must not remove an immutable object"
+    );
 }
 
 #[tokio::test]
