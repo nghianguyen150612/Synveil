@@ -909,7 +909,7 @@ fn run_installer_wizard_preflight(
         .map(|runtime| runtime.handle().clone())
     else {
         object
-            .rust_mut()
+            .as_mut().as_mut().rust_mut()
             .installer_wizard
             .complete_preflight(token, Err(()));
         publish_installer_wizard(object);
@@ -925,7 +925,7 @@ fn run_installer_wizard_preflight(
             .map_err(|_| ());
         let _ = qt_thread.queue(move |mut object| {
             if object
-                .rust_mut()
+                .as_mut().as_mut().rust_mut()
                 .installer_wizard
                 .complete_preflight(token, result)
             {
@@ -1235,16 +1235,16 @@ impl ffi::DesktopUiBridge {
     }
 
     fn open_installer_wizard(mut self: Pin<&mut Self>) {
-        self.rust_mut().installer_wizard.open();
+        self.as_mut().rust_mut().installer_wizard.open();
         publish_installer_wizard(self.as_mut());
     }
 
     fn select_installer_wizard_device(mut self: Pin<&mut Self>, role: QString) {
         let code = String::from(role);
         if let Some(role) = DeviceRole::from_code(&code) {
-            self.rust_mut().installer_wizard.select_device_role(role);
+            self.as_mut().rust_mut().installer_wizard.select_device_role(role);
         } else {
-            self.rust_mut().installer_wizard.reject_invalid_selection();
+            self.as_mut().rust_mut().installer_wizard.reject_invalid_selection();
         }
         publish_installer_wizard(self.as_mut());
     }
@@ -1252,17 +1252,17 @@ impl ffi::DesktopUiBridge {
     fn select_installer_wizard_connection(mut self: Pin<&mut Self>, mode: QString) {
         let code = String::from(mode);
         if let Some(mode) = ConnectionMode::from_code(&code) {
-            self.rust_mut()
+            self.as_mut().rust_mut()
                 .installer_wizard
                 .select_connection_mode(mode);
         } else {
-            self.rust_mut().installer_wizard.reject_invalid_selection();
+            self.as_mut().rust_mut().installer_wizard.reject_invalid_selection();
         }
         publish_installer_wizard(self.as_mut());
     }
 
     fn continue_installer_wizard(mut self: Pin<&mut Self>) {
-        let token = self.rust_mut().installer_wizard.continue_forward();
+        let token = self.as_mut().rust_mut().installer_wizard.continue_forward();
         publish_installer_wizard(self.as_mut());
         if let Some(token) = token {
             run_installer_wizard_preflight(self, token);
@@ -1270,12 +1270,12 @@ impl ffi::DesktopUiBridge {
     }
 
     fn back_installer_wizard(mut self: Pin<&mut Self>) {
-        self.rust_mut().installer_wizard.back();
+        self.as_mut().rust_mut().installer_wizard.back();
         publish_installer_wizard(self.as_mut());
     }
 
     fn retry_installer_wizard_preflight(mut self: Pin<&mut Self>) {
-        let token = self.rust_mut().installer_wizard.retry_safe_preflight();
+        let token = self.as_mut().rust_mut().installer_wizard.retry_safe_preflight();
         publish_installer_wizard(self.as_mut());
         if let Some(token) = token {
             run_installer_wizard_preflight(self, token);
@@ -1283,12 +1283,12 @@ impl ffi::DesktopUiBridge {
     }
 
     fn cancel_installer_wizard(mut self: Pin<&mut Self>) {
-        self.rust_mut().installer_wizard.cancel();
+        self.as_mut().rust_mut().installer_wizard.cancel();
         publish_installer_wizard(self.as_mut());
     }
 
     fn set_installer_wizard_details_open(mut self: Pin<&mut Self>, open: bool) {
-        self.rust_mut()
+        self.as_mut().rust_mut()
             .installer_wizard
             .set_error_details_open(open);
         publish_installer_wizard(self.as_mut());
