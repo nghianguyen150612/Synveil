@@ -712,10 +712,11 @@ impl Default for DesktopUiBridgeRust {
         let profile_id = profile::load_profile_id();
         let profile_ready = profile_id.is_ok();
         let platform_evidence = installer_preflight::detect_platform_evidence();
+        let host_available = platform_evidence.managed_host_supported;
         let installer_wizard = InstallerWizard::with_platform_summary(
             WizardCapabilities::new(
                 installer_wizard::PlatformCode::current(),
-                platform_evidence.managed_host_supported,
+                host_available,
                 profile_ready,
                 false,
             ),
