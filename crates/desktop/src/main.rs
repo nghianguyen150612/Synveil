@@ -5,6 +5,7 @@ use cxx_qt_lib::{QQmlApplicationEngine, QString, QUrl};
 mod actions;
 mod bridge;
 mod host_ui;
+mod installer_preflight;
 mod installer_wizard;
 mod presentation;
 mod profile;

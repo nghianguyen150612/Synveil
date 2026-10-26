@@ -25,6 +25,15 @@ use synveil_server_storage::{
     StorageExclusionSet, StorageLocationWizard, open_existing_managed_local_storage,
 };
 
+/// Return only the number of suitable Private LAN candidates. The underlying
+/// inspection uses the existing bounded `ip` read-only probes and does not
+/// retain or publish interface identifiers or addresses.
+pub fn inspect_private_lan_candidate_count() -> std::result::Result<u8, ()> {
+    network::candidates()
+        .map(|candidates| candidates.len().min(8) as u8)
+        .map_err(|_| ())
+}
+
 const JOURNAL: &str = "/etc/synveil/host-setup.json";
 const CATALOG: &str = "/etc/synveil/host-runtime-catalog.json";
 

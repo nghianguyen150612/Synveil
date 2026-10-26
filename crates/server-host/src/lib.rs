@@ -29,3 +29,32 @@ pub fn supported_platform() -> Option<String> {
         _ => None,
     }
 }
+
+/// A redacted result from the read-only Private LAN capability probe.
+///
+/// This deliberately exposes only a bounded candidate count. Interface names,
+/// addresses, routes, and command output remain inside the Host owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PrivateLanCapability {
+    Available { candidate_count: u8 },
+    NoCandidate,
+    InspectionUnavailable,
+    Unsupported,
+}
+
+/// Inspect the host's existing network interfaces without changing listeners
+/// or network configuration. No candidate identity crosses this boundary.
+#[must_use]
+pub fn inspect_private_lan_capability() -> PrivateLanCapability {
+    #[cfg(target_os = "linux")]
+    {
+        return match native::inspect_private_lan_candidate_count() {
+            Ok(0) => PrivateLanCapability::NoCandidate,
+            Ok(candidate_count) => PrivateLanCapability::Available { candidate_count },
+            Err(()) => PrivateLanCapability::InspectionUnavailable,
+        };
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    PrivateLanCapability::Unsupported
+}
