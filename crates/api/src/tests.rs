@@ -3064,7 +3064,8 @@ async fn api_downloads_use_the_content_service_and_local_object_store() {
             key.as_str(),
         ),
     };
-    let content_service = ContentReadApplicationService::new(Arc::new(metadata), object_store.clone());
+    let content_service =
+        ContentReadApplicationService::new(Arc::new(metadata), object_store.clone());
     let state = state(true)
         .with_auth_backend(auth_backend)
         .with_download_backend(Arc::new(content_service))
@@ -3100,12 +3101,8 @@ async fn api_downloads_use_the_content_service_and_local_object_store() {
         format!("/api/v1/nodes/{node_id}/content"),
         format!("/api/v1/versions/{file_version_id}/content"),
     ] {
-        let mut request = authenticated_request(
-            Method::GET,
-            &foreign_path,
-            &other_session,
-            &other_csrf,
-        );
+        let mut request =
+            authenticated_request(Method::GET, &foreign_path, &other_session, &other_csrf);
         request.headers_mut().insert(
             "if-none-match",
             HeaderValue::from_str(&format!("\"{sha256}\""))
@@ -3124,7 +3121,10 @@ async fn api_downloads_use_the_content_service_and_local_object_store() {
         assert_eq!(json_body(response).await["error"]["code"], "not_found");
     }
     assert!(
-        object_store.exists(&key).await.expect("local object must remain readable"),
+        object_store
+            .exists(&key)
+            .await
+            .expect("local object must remain readable"),
         "foreign denied reads must not remove an immutable object"
     );
 }
@@ -6204,15 +6204,11 @@ async fn conflict_resolution_errors_are_stable_private_and_replay_explicit() {
     );
 }
 
-
 #[tokio::test]
 async fn p006_foreign_version_metadata_and_cursor_are_concealed() {
     let (state, _auth_backend, versions, _download_backend) = version_test_state();
     let (owner_session, owner_csrf) = login_cookies(&state).await;
-    let list_path = format!(
-        "/api/v1/nodes/{}/versions?limit=1",
-        versions.file_node_id()
-    );
+    let list_path = format!("/api/v1/nodes/{}/versions?limit=1", versions.file_node_id());
     let response = router(state.clone())
         .oneshot(authenticated_request(
             Method::GET,
@@ -6285,12 +6281,8 @@ async fn p006_foreign_current_and_historical_etag_range_cannot_open_bytes() {
     let (foreign_session, foreign_csrf) = login_cookies(&foreign_state).await;
     for path in [&current_path, &historical_path] {
         for variant in 0..3 {
-            let mut request = authenticated_request(
-                Method::GET,
-                path,
-                &foreign_session,
-                &foreign_csrf,
-            );
+            let mut request =
+                authenticated_request(Method::GET, path, &foreign_session, &foreign_csrf);
             match variant {
                 0 => {
                     request.headers_mut().insert("if-none-match", etag.clone());
@@ -6311,13 +6303,25 @@ async fn p006_foreign_current_and_historical_etag_range_cannot_open_bytes() {
                 .oneshot(request)
                 .await
                 .expect("foreign content request must respond");
-            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}, {variant}");
+            assert_eq!(
+                response.status(),
+                StatusCode::NOT_FOUND,
+                "{path}, {variant}"
+            );
             assert!(!response.headers().contains_key("etag"));
             assert!(!response.headers().contains_key("content-range"));
             assert_eq!(json_body(response).await["error"]["code"], "not_found");
         }
     }
 
-    assert_eq!(backend.open_calls(), opened_before, "foreign request opened content");
-    assert_eq!(backend.range_calls(), ranged_before, "foreign request opened a byte range");
+    assert_eq!(
+        backend.open_calls(),
+        opened_before,
+        "foreign request opened content"
+    );
+    assert_eq!(
+        backend.range_calls(),
+        ranged_before,
+        "foreign request opened a byte range"
+    );
 }
