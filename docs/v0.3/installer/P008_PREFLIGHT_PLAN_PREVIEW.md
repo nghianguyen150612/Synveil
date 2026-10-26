@@ -1,6 +1,6 @@
 # P008 Read-only Preflight and Plan Preview
 
-**Status: source implementation complete; preview remains unavailable.** P008 is a read-only extension to the P007 wizard. It does not install, repair, configure, or remove Synveil. Local native desktop qualification is blocked by missing DBus development files and Qt 6; hosted P008 checks are pending.
+**Status: source implementation complete; preview remains unavailable.** P008 is a read-only extension to the P007 wizard. It does not install, repair, configure, or remove Synveil. Local native desktop qualification is blocked by missing DBus development files and Qt 6. The hosted Linux desktop build, generated-metadata QML lint, and offscreen Welcome smoke pass; the global format gate fails on inherited P006 drift, while native Linux/Windows Qt 6 and acceptance checks remain pending. See the exact-head run record in [`PROMPT008_MANIFEST.md`](../manifests/PROMPT008_MANIFEST.md).
 
 ## Scope and branch dependency
 

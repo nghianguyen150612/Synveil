@@ -1,6 +1,6 @@
 # Synveil v0.3 — PROMPT008 Manifest
 
-**Status: source implementation complete; local native desktop qualification is blocked and hosted P008 checks are pending.** No install effect is reachable and plan preview remains unavailable. This is a provisional stacked change, not an integrated installer.
+**Status: source implementation complete; local native desktop qualification is blocked. Hosted Linux desktop build, QML lint, and Welcome smoke pass; the workspace-format gate fails on inherited P006 formatting drift, and native Windows/Linux qualification is still pending.** No install effect is reachable and plan preview remains unavailable. This is a provisional stacked change, not an integrated installer.
 
 ## Repository and gate record
 
@@ -51,7 +51,7 @@
 | No secret/raw path in QML state | Summary DTOs contain fixed labels and allowlisted OS fields; redaction test checks QML-facing summaries. | Focused module harness passed. |
 | Tailscale cannot enroll | Tailscale is unavailable in Rust and QML; no enrollment API is referenced by the inspector. | Focused module harness passed. |
 | No real installation success reported | No execution action exists; plan availability stays `Unavailable`; QML preserves preview-only copy. | Focused module harness passed. |
-| Existing onboarding remains reachable | Main/Welcome Host, Connect, and controller routes remain; a Rust source-contract test checks routes and preview-only copy. | Focused module harness passed; native QML smoke is still pending. |
+| Existing onboarding remains reachable | Main/Welcome Host, Connect, and controller routes remain; a Rust source-contract test checks routes and preview-only copy. | Focused module harness and exact-head offscreen Welcome smoke passed. |
 
 ## Local validation record
 
@@ -68,7 +68,9 @@
 | `./scripts/test-desktop-ui.sh` | **BLOCKED BY LOCAL Qt TOOLING** | It stopped before build/test at the `qmake` shim, which points to missing `/usr/lib/qt5/bin/qmake`; Qt 6 `qmake6` is absent. No native QML smoke ran. |
 | `./scripts/validate-docs.sh` | **PASS** | All 24 documentation validation units passed, including the existing installer and release-contract checks. |
 | `git diff --check` | **PASS** | No whitespace errors in the working tree at the last check. |
-| P008 hosted Linux/Windows Qt and QML checks | **PENDING** | Run on the exact P008 PR head. Pending jobs are not a pass. |
+| Hosted desktop build/QML smoke | **PASS on exact source head** | Unified Welcome run [#40346673880](https://github.com/nghianguyen150612/Synveil/actions/runs/40346673880), head `752a0ecd6387b30ae99aea62d5a23f73d0799ce1`: Linux `cargo build -p synveil-desktop --locked`, generated-metadata QML lint, and offscreen Welcome smoke passed. |
+| Hosted workspace source-contract gate | **BLOCKED by inherited P006 format drift** | The same run failed at `cargo fmt --all -- --check` in `crates/api/src/tests.rs`; desktop tests and Clippy were skipped. Updated P008 files pass the scoped package formatter; P006 repair remains isolated in PR #167. |
+| Hosted Rust CI native Linux/Windows Qt 6 and acceptance | **PENDING** | Rust CI #40346674023 and Windows/Linux acceptance workflows were still queued/building at this manifest update. Pending jobs are not a pass. |
 
 The local platform is Debian 13 x86-64. DEB package-manager tools and the `systemctl`/`ip` paths are present; RPM tooling, `/usr/bin/pkexec`, Qt 6 `qmake6`, and DBus development metadata are absent. The managed Host matrix does not include Debian 13. No active AppImage marker was verified. The wizard's Client availability still depends on the existing desktop profile at runtime.
 
