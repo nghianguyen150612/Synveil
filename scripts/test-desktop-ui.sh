@@ -69,6 +69,7 @@ lint_root="$(mktemp -d)"
 lint_module="$lint_root/com/synveil/desktop"
 mkdir -p "$lint_module/qml"
 cp crates/desktop/qml/Main.qml "$lint_module/qml/Main.qml"
+cp crates/desktop/qml/InstallerWizard.qml "$lint_module/qml/InstallerWizard.qml"
 cp "$module_dir/qmldir" "$lint_module/qmldir"
 cp "$module_dir/plugin.qmltypes" "$lint_module/plugin.qmltypes"
 
@@ -77,6 +78,10 @@ qt_qml_dir="$($qt_query_bin -query QT_INSTALL_QML)"
     -I "$qt_qml_dir" \
     -I "$lint_root" \
     "$lint_module/qml/Main.qml"
+"$qmllint_bin" \
+    -I "$qt_qml_dir" \
+    -I "$lint_root" \
+    "$lint_module/qml/InstallerWizard.qml"
 
 smoke_root="$(mktemp -d)"
 trap 'rm -rf -- "$lint_root" "$smoke_root"' EXIT

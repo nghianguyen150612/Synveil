@@ -755,6 +755,16 @@ ApplicationWindow {
                     }
                 }
             }
+            Button {
+                id: easySetupPreviewButton
+                objectName: "easySetupPreviewButton"
+                Layout.fillWidth: true
+                text: qsTr("Easy Setup preview\nReview supported choices without starting installation.")
+                Accessible.name: qsTr("Open Easy Setup preview")
+                Accessible.description: qsTr("Review device and connection choices. This preview does not install software or change network settings.")
+                enabled: !bridge.welcome_action_busy
+                onClicked: bridge.openInstallerWizard()
+            }
         }
     }
 
@@ -2212,5 +2222,10 @@ ApplicationWindow {
                 libraryNameField.forceActiveFocus(Qt.TabFocusReason)
             }
         }
+    }
+
+    InstallerWizard {
+        anchors.fill: parent
+        bridge: root.ui_bridge
     }
 }
