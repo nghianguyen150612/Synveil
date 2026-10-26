@@ -64,6 +64,10 @@ jobs:
           pg_isready -h 127.0.0.1 -p 5432 -U postgres
           ver=$(psql "$SYNVEIL_TEST_DATABASE_URL" -t -A -c 'SHOW server_version;' | tr -d ' ')
           [[ "$ver" == 17.* ]] || { echo "Expected PostgreSQL 17"; exit 1; }
+      - name: Run real PostgreSQL 17 owner-scoped immutable version history
+        run: |
+          set -euo pipefail
+          cargo test -p synveil-metadata --test postgres --locked postgres_version_history_is_owner_scoped_keyset_paged_and_pointer_based -- --ignored --test-threads=1 --nocapture
       - name: Retain exact P005 cross-device mutation regression
         run: |
           set -euo pipefail
