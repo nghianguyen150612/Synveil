@@ -74,3 +74,9 @@ file-version/content and storage boundaries, all sync operations, malformed
 resource identifiers, mutation replay/conflict behavior, and revocation races.
 Keep AT-15/AT-16 and full P003 acceptance explicitly open until their distinct
 future-policy and concurrency evidence exists.
+
+## Post-repair regression outcome — 2026-10-26
+
+The original reproduction above is retained as historical baseline evidence, not an assertion that the defect remains unfixed. The one-line P005A identity binding fix has merged into `develop/v0.3` as `dd82bb3ee01477a3bea0632e0febbe97113c7517`. The P005 test branch includes it, and the exact ignored PostgreSQL 17 test executed in GitHub Actions [run 40181341086](https://github.com/nghianguyen150612/Synveil/actions/runs/40181341086) on head `f88fe2564dd7cc4ed944119a7b323ca230d9a0e3`: **SUCCESS**. The mismatched device request now receives the expected concealed denial before mutation backend access, with no new node, journal entry or persisted mutation outcome, while the other positive/negative cases in this single test pass. This is scoped P005 evidence only.
+
+Unqualified: file-version metadata and current/historical content, actual ObjectStore stream isolation, broader sync/mutation replay, owner/device race and policy revision fencing, future RBAC migration, native/release P028/P036 gates. The authoritative P001–P060 roadmap and maintainer approval of P004-D01–D14 remain outstanding.
