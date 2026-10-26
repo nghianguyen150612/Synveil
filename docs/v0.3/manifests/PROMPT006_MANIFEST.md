@@ -6,10 +6,10 @@
 
 | Item | Evidence |
 |---|---|
-| Repository | \`nghianguyen150612/Synveil\` |
-| Base | \`develop/v0.3\` at \`e11a7778a2ed2ae5a825b6d95a911101fe7e337c\` |
-| P005A | PR #164 merged at \`dd82bb3ee01477a3bea0632e0febbe97113c7517\` |
-| P005 | PR #163 merged at \`e11a7778a2ed2ae5a825b6d95a911101fe7e337c\` |
+| Repository | `nghianguyen150612/Synveil` |
+| Base | `develop/v0.3` at `e11a7778a2ed2ae5a825b6d95a911101fe7e337c` |
+| P005A | PR #164 merged at `dd82bb3ee01477a3bea0632e0febbe97113c7517` |
+| P005 | PR #163 merged at `e11a7778a2ed2ae5a825b6d95a911101fe7e337c` |
 | P005 PostgreSQL regression | Run 40181341086 completed SUCCESS |
 | Scope | Provisional P006 security regression; original P001–P060 roadmap not found |
 | P004 security decisions | D01–D14 pending; no approvals invented |
@@ -17,10 +17,10 @@
 
 ## Changed files
 
-- \`crates/api/src/tests.rs\` — P006 cross-owner Axum version/list/cursor and content ETag/Range cases; real local ObjectStore integration denial.
-- \`.github/workflows/v03-p006-content-security.yml\` — hard-fail focused API and storage tests, real PostgreSQL 17 metadata version test, retained P005 ignored PostgreSQL regression.
-- \`docs/v0.3/security/P006_CONTENT_AUTHORIZATION_BASELINE.md\` — route/matrix evidence and limitations.
-- \`docs/v0.3/manifests/PROMPT006_MANIFEST.md\` — this manifest.
+- `crates/api/src/tests.rs` — P006 cross-owner Axum version/list/cursor and content ETag/Range cases; real local ObjectStore integration denial.
+- `.github/workflows/v03-p006-content-security.yml` — hard-fail focused API and storage tests, real PostgreSQL 17 metadata version test, retained P005 ignored PostgreSQL regression.
+- `docs/v0.3/security/P006_CONTENT_AUTHORIZATION_BASELINE.md` — route/matrix evidence and limitations.
+- `docs/v0.3/manifests/PROMPT006_MANIFEST.md` — this manifest.
 
 ## Acceptance coverage and qualification
 
