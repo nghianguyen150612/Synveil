@@ -6166,3 +6166,121 @@ async fn conflict_resolution_errors_are_stable_private_and_replay_explicit() {
         completed_at.to_string()
     );
 }
+
+
+#[tokio::test]
+async fn p006_foreign_version_metadata_and_cursor_are_concealed() {
+    let (state, _auth_backend, versions, _download_backend) = version_test_state();
+    let (owner_session, owner_csrf) = login_cookies(&state).await;
+    let list_path = format!(
+        "/api/v1/nodes/{}/versions?limit=1",
+        versions.file_node_id()
+    );
+    let response = router(state.clone())
+        .oneshot(authenticated_request(
+            Method::GET,
+            &list_path,
+            &owner_session,
+            &owner_csrf,
+        ))
+        .await
+        .expect("authorized version list must respond");
+    assert_eq!(response.status(), StatusCode::OK);
+    let cursor = json_body(response).await["page"]["next_cursor"]
+        .as_str()
+        .expect("authorized list must return a continuation cursor")
+        .to_owned();
+
+    // Preserve the same version backend and resources, but authenticate as a
+    // different owner. Possession of IDs and the real cursor has no authority.
+    let foreign_state = state.with_auth_backend(Arc::new(TestAuthenticationBackend::new()));
+    let (foreign_session, foreign_csrf) = login_cookies(&foreign_state).await;
+    let denied_paths = [
+        format!("/api/v1/nodes/{}/versions", versions.file_node_id()),
+        format!(
+            "/api/v1/nodes/{}/versions?cursor={cursor}",
+            versions.file_node_id()
+        ),
+        format!("/api/v1/versions/{}", versions.current_version_id()),
+        format!("/api/v1/versions/{}", versions.previous_version_id()),
+    ];
+    for path in denied_paths {
+        let response = router(foreign_state.clone())
+            .oneshot(authenticated_request(
+                Method::GET,
+                &path,
+                &foreign_session,
+                &foreign_csrf,
+            ))
+            .await
+            .expect("foreign metadata request must respond");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(json_body(response).await["error"]["code"], "not_found");
+    }
+}
+
+#[tokio::test]
+async fn p006_foreign_current_and_historical_etag_range_cannot_open_bytes() {
+    let (state, _auth_backend, backend) = download_test_state();
+    let (owner_session, owner_csrf) = login_cookies(&state).await;
+    let current_path = format!("/api/v1/nodes/{}/content", backend.node_id());
+    let historical_path = format!("/api/v1/versions/{}/content", backend.file_version_id());
+
+    let response = router(state.clone())
+        .oneshot(authenticated_request(
+            Method::GET,
+            &current_path,
+            &owner_session,
+            &owner_csrf,
+        ))
+        .await
+        .expect("owner content request must respond");
+    assert_eq!(response.status(), StatusCode::OK);
+    let etag = response.headers()["etag"].clone();
+    assert_eq!(
+        response_bytes(response).await,
+        b"0123456789abcdef0123456789abcdef"
+    );
+    let opened_before = backend.open_calls();
+    let ranged_before = backend.range_calls();
+
+    let foreign_state = state.with_auth_backend(Arc::new(TestAuthenticationBackend::new()));
+    let (foreign_session, foreign_csrf) = login_cookies(&foreign_state).await;
+    for path in [&current_path, &historical_path] {
+        for variant in 0..3 {
+            let mut request = authenticated_request(
+                Method::GET,
+                path,
+                &foreign_session,
+                &foreign_csrf,
+            );
+            match variant {
+                0 => {
+                    request.headers_mut().insert("if-none-match", etag.clone());
+                }
+                1 => {
+                    request
+                        .headers_mut()
+                        .insert("range", HeaderValue::from_static("bytes=0-3"));
+                }
+                _ => {
+                    request.headers_mut().insert("if-none-match", etag.clone());
+                    request
+                        .headers_mut()
+                        .insert("range", HeaderValue::from_static("bytes=0-3"));
+                }
+            }
+            let response = router(foreign_state.clone())
+                .oneshot(request)
+                .await
+                .expect("foreign content request must respond");
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}, {variant}");
+            assert!(!response.headers().contains_key("etag"));
+            assert!(!response.headers().contains_key("content-range"));
+            assert_eq!(json_body(response).await["error"]["code"], "not_found");
+        }
+    }
+
+    assert_eq!(backend.open_calls(), opened_before, "foreign request opened content");
+    assert_eq!(backend.range_calls(), ranged_before, "foreign request opened a byte range");
+}
