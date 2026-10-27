@@ -879,10 +879,16 @@ mod tests {
         assert!(!view.plan_preview_available);
         assert_eq!(view.confirmation_status, "artifact_evidence_unavailable");
         assert!(!view.acknowledgement_available);
-        assert_eq!(
-            view.acknowledgement_reason,
-            "Plan preview unavailable — verified artifact evidence required"
-        );
+        assert_eq!(view.acknowledgement_reason, view.plan_summary);
+        assert!(view
+            .acknowledgement_reason
+            .contains("independently authenticated artifact evidence is unavailable"));
+        assert!(view
+            .acknowledgement_reason
+            .contains("production publisher trust root is unavailable"));
+        assert!(view
+            .acknowledgement_reason
+            .contains("approved channel effect catalog is unavailable"));
         assert!(!view.verified_artifact_available);
         assert!(!view.target_scope_detected);
         assert!(!view.privilege_assessed);

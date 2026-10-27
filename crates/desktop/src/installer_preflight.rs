@@ -1550,10 +1550,10 @@ mod tests {
     fn active_portable_markers_are_unverified_not_publisher_verified() {
         let class = ArtifactEvidenceClass::LocallySuppliedUnverified;
         assert_ne!(class, ArtifactEvidenceClass::VerifiedReleaseArtifact);
-        assert_eq!(
-            PlanPreviewUnavailableReason::VerifiedArtifactEvidenceRequired.label(),
-            "Plan preview unavailable — verified artifact evidence required"
-        );
+        let unavailable = PlanPreviewUnavailableReason::VerifiedArtifactEvidenceRequired.label();
+        assert!(unavailable.contains("independently authenticated artifact evidence"));
+        assert!(unavailable.contains("production publisher trust root"));
+        assert!(unavailable.contains("approved channel effect catalog"));
     }
 
     #[test]
