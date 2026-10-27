@@ -76,7 +76,7 @@ root.
 
 ## Evidence and fail-closed policy
 
-`ArtifactSourceEvidence` distinguishes authenticated-channel observation,
+`ArtifactEvidenceKind` distinguishes authenticated-channel observation,
 authenticated-manifest observation, digest-matched bytes, package-manager
 identity, untrusted local input, missing/unknown input, and invalid/stale/
 revoked/unsupported release. These are observations, not capabilities: a
@@ -84,18 +84,21 @@ caller cannot promote a report, path, filename, extension, URL, HTTPS
 connection, local checksum, adjacent checksum, unsigned CI candidate, or
 publisher string to `VerifiedReleaseArtifact`.
 
-`build_installation_plan_preview` accepts only bounded platform/channel/scope
+`AuthoritativePlanBuilder::build` accepts only bounded platform/channel/scope
 observations and evidence categories; it accepts no effects, commands, local
 paths, publisher strings, or trust roots. It rejects ambiguous selection,
 missing or untrusted input, invalid releases, unknown platform/architecture,
 platform/channel mismatch, and channel/scope mismatch. For otherwise supported
-inputs it returns the concrete blockers: production trust root unavailable,
-approved effect catalog unavailable, and P004 policy pending. It never creates
-`VerifiedArtifactEvidence` or a complete plan. The result is intentionally
-unavailable until the authenticated trust source and effect policy are wired.
-The existing read-only preflight maps its bounded platform, channel, scope, and
-artifact observations into this API and passes the returned blocker categories
-to the Wizard view.
+inputs it returns the concrete blockers: artifact evidence unavailable,
+production trust root unavailable, approved effect catalog unavailable, and
+P004 policy pending. It never creates `VerifiedArtifactEvidence` or a complete
+plan. The result is intentionally unavailable until the authenticated trust
+source and effect policy are wired. The existing read-only preflight maps its
+bounded platform, channel, scope, intent, capability generation, and artifact
+observation into this API and passes the returned blocker categories to the
+Wizard view. Its P008 `VerifiedReleaseArtifact` marker is downgraded to
+incomplete provenance because it does not bind authenticated channel bytes
+and an authenticated manifest to the exact artifact.
 
 The existing trust package covers exact-byte signatures, key/scheme checks,
 descriptor binding, version and generation floors, strict manifest validation,
@@ -137,22 +140,30 @@ to the existing crate-private P009 snapshot constructor. Desktop/QML cannot
 construct a snapshot. No current production source reaches this handoff.
 Existing P009 fingerprinting binds ordered effects, artifact identity,
 channel/platform/architecture context, scope/intent, ownership, privilege,
-preservation, findings, policies, and capability generation; local paths and
-redacted diagnostic text are excluded. Fingerprints remain change-detection
-commitments, not authorization tokens. The P009 generation/cancel/supersession
-rules remain the freshness model; any later execution phase must reacquire and
-revalidate trust and platform state immediately before effects.
+preservation, findings, policies, and capability generation. This increment
+also binds authenticated manifest generation and existing-installation state
+generation; local paths and raw diagnostics are excluded. Tests prove a changed
+manifest, installation-state generation, or refreshed artifact digest changes
+the fingerprint and rejects a prior acknowledgement. Fingerprints remain
+change-detection commitments, not authorization tokens. P010 does not connect
+an artifact byte source or rehash staged bytes, so detecting an on-disk
+replacement is unavailable in this increment. The P009
+generation/cancel/supersession rules remain the freshness model; any later
+execution phase must reacquire and revalidate trust and platform state
+immediately before effects.
 
 ## Wizard behavior and side-effect boundary
 
 The third step continues to show **“Preview only — installation is not
-started.”** It now explains that independently authenticated artifact evidence,
-the production publisher trust root, and an approved channel effect catalog are
-unavailable and names the pending P004 decisions. The acknowledgement remains
-disabled; no Install button or effect summary is fabricated. The presentation
-does not expose artifact paths, keys, environment variables, raw package output,
-OS diagnostics, or commands. P010 does not call `execute`, mutate a journal,
-run a package manager, download files, or request OS authorization.
+started.”** It explains that independently authenticated artifact evidence,
+the production publisher trust root, and an approved channel effect catalog
+are unavailable and names the pending P004 decisions. Since there is no
+validated artifact or plan, the Wizard does not claim a version, authentication
+status, or review fingerprint. Acknowledgement remains disabled; there is no
+Install button or fabricated operation summary. The presentation does not
+expose artifact paths, keys, environment variables, raw package output, OS
+diagnostics, or commands. P010 does not call `execute`, mutate a journal, run a
+package manager, download files, or request OS authorization.
 
 ## Test and validation record
 

@@ -1014,7 +1014,7 @@ mod tests {
             .as_ref()
             .unwrap()
             .plan_build_blockers
-            .contains(&synveil_install_engine::PlanBuildBlocker::TrustRootUnavailable));
+            .contains(&synveil_install_engine::PlanBuildBlocker::ProductionTrustRootUnavailable));
     }
 
     #[test]

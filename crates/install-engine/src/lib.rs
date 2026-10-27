@@ -2,6 +2,7 @@
 //! Platform-neutral, in-memory installation lifecycle policy.
 
 mod adapter;
+mod artifact_plan;
 // AppImage integration is a Linux-only capability: it owns XDG surfaces, a
 // systemd user unit and POSIX ownership/mode checks, all of which are Unix
 // APIs. The module is gated off rather than stubbed on other platforms, so no
@@ -16,19 +17,18 @@ mod journal;
 mod lifecycle;
 mod linux_package;
 mod model;
-mod plan_builder;
 mod review_contract;
 
 pub use adapter::*;
 #[cfg(target_os = "linux")]
 pub use appimage::*;
+pub use artifact_plan::*;
 pub use engine::*;
 pub use error_model::*;
 pub use journal::*;
 pub use lifecycle::*;
 pub use linux_package::*;
 pub use model::*;
-pub use plan_builder::*;
 pub use review_contract::*;
 
 pub const ENGINE_SCHEMA_VERSION: u32 = 1;

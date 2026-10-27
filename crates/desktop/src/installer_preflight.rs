@@ -21,10 +21,10 @@ use std::{
     time::{Duration, Instant},
 };
 use synveil_install_engine::{
-    build_installation_plan_preview, ArtifactSourceEvidence, CpuArchitecture, FindingSeverity,
-    InstallationChannel as EngineInstallationChannel, InstallationIntent, InstallationPlatform,
-    PlanBuildBlocker, PlanBuildRequest, PlanBuildResult, PrivilegeRequirement, ResourceClass,
-    Reversibility, TargetScope,
+    ArtifactEvidenceKind, ArtifactSourceObservation, ArtifactSourceRequest,
+    AuthoritativePlanBuilder, FindingSeverity, PlanArchitecture, PlanBuildBlocker,
+    PlanBuildOutcome, PlanChannel, PlanPlatform, PrivilegeRequirement, ReadOnlyArtifactSource,
+    ResourceClass, Reversibility, TargetScope,
 };
 
 const MAX_COMMAND_OUTPUT: usize = 1024;
@@ -757,29 +757,38 @@ pub fn inspect(request: PreflightRequest) -> PreflightOutcome {
     }
 }
 
+struct PreflightArtifactSource(ArtifactEvidenceKind);
+
+impl ReadOnlyArtifactSource for PreflightArtifactSource {
+    fn observe(&self, _request: ArtifactSourceRequest) -> ArtifactSourceObservation {
+        ArtifactSourceObservation {
+            evidence_kind: self.0,
+            manifest_generation: None,
+        }
+    }
+}
+
 fn plan_build_blockers(
     request: &PreflightRequest,
     platform: &PlatformEvidence,
     channels: &[InstallationChannelEvidence],
 ) -> Vec<PlanBuildBlocker> {
-    let engine_platform = match (
+    let plan_platform = match (
         platform.platform,
         platform.display_name.as_str(),
         platform.version.as_str(),
     ) {
-        (PlatformCode::Linux, "Ubuntu", "24.04") => InstallationPlatform::Ubuntu2404,
-        (PlatformCode::Linux, "Fedora", "42") => InstallationPlatform::Fedora42,
-        (PlatformCode::Windows, _, version) if version.starts_with("11") => {
-            InstallationPlatform::Windows11
-        }
-        (PlatformCode::Other | PlatformCode::MacOs, _, _) => InstallationPlatform::Other,
-        _ => InstallationPlatform::Unknown,
+        (PlatformCode::Linux, "Ubuntu", "24.04") => PlanPlatform::Ubuntu2404,
+        (PlatformCode::Linux, "Fedora", "42") => PlanPlatform::Fedora42,
+        (PlatformCode::Linux, _, _) => PlanPlatform::OtherLinux,
+        (PlatformCode::Windows, _, _) => PlanPlatform::Windows,
+        (PlatformCode::MacOs, _, _) => PlanPlatform::MacOs,
+        (PlatformCode::Other, _, _) => PlanPlatform::Other,
     };
     let architecture = match platform.architecture {
-        "x86-64" => CpuArchitecture::X86_64,
-        "ARM64" => CpuArchitecture::Aarch64,
-        "x86" | "ARM" => CpuArchitecture::Other,
-        _ => CpuArchitecture::Unknown,
+        "x86-64" => PlanArchitecture::X86_64,
+        "ARM64" => PlanArchitecture::Aarch64,
+        _ => PlanArchitecture::Other,
     };
     let selected = request
         .selected_channel
@@ -791,52 +800,47 @@ fn plan_build_blockers(
             let first = active.next()?;
             active.next().is_none().then_some(first)
         });
-    let channel = selected.map_or(EngineInstallationChannel::Unknown, |item| {
-        match item.channel {
-            InstallationChannel::LinuxDeb => EngineInstallationChannel::UbuntuDeb,
-            InstallationChannel::LinuxRpm => EngineInstallationChannel::FedoraRpm,
-            InstallationChannel::LinuxAppImage => EngineInstallationChannel::LinuxAppImage,
-            InstallationChannel::WindowsPerUserSetup => {
-                EngineInstallationChannel::WindowsPerUserSetup
-            }
-            InstallationChannel::WindowsPortable => EngineInstallationChannel::WindowsPortableZip,
-            InstallationChannel::ExistingInstallation => {
-                EngineInstallationChannel::ExistingInstallation
-            }
-        }
+    let channel = selected.map_or(PlanChannel::Unknown, |item| match item.channel {
+        InstallationChannel::LinuxDeb => PlanChannel::UbuntuDeb,
+        InstallationChannel::LinuxRpm => PlanChannel::FedoraRpm,
+        InstallationChannel::LinuxAppImage => PlanChannel::LinuxAppImage,
+        InstallationChannel::WindowsPerUserSetup => PlanChannel::WindowsPerUserSetup,
+        InstallationChannel::WindowsPortable => PlanChannel::WindowsPortableZip,
+        InstallationChannel::ExistingInstallation => PlanChannel::ExistingInstallationMaintenance,
     });
+    let artifact_evidence = selected.map_or(
+        ArtifactEvidenceKind::UnknownOrMissingArtifact,
+        |item| match item.artifact_evidence {
+            ArtifactEvidenceClass::VerifiedReleaseArtifact => {
+                // P008 has not bound authenticated channel and manifest bytes
+                // to this exact artifact; its marker is incomplete provenance.
+                ArtifactEvidenceKind::IncompleteProvenance
+            }
+            ArtifactEvidenceClass::LocallySuppliedUnverified => {
+                ArtifactEvidenceKind::LocallySuppliedUntrustedArtifact
+            }
+            ArtifactEvidenceClass::NativePackageManagerManaged => {
+                ArtifactEvidenceKind::NativePackageManagerManagedIdentity
+            }
+            ArtifactEvidenceClass::NoArtifact | ArtifactEvidenceClass::ArtifactIdentityUnknown => {
+                ArtifactEvidenceKind::UnknownOrMissingArtifact
+            }
+        },
+    );
     let target_scope = selected
         .and_then(|item| item.target_scope)
         .unwrap_or(TargetScope::CurrentUser);
-    let artifact_candidates = selected
-        .map(|item| match item.artifact_evidence {
-            ArtifactEvidenceClass::VerifiedReleaseArtifact => {
-                ArtifactSourceEvidence::ArtifactBytesMatchAuthenticatedMetadataObserved
-            }
-            ArtifactEvidenceClass::LocallySuppliedUnverified => {
-                ArtifactSourceEvidence::LocallySuppliedUntrustedArtifactObserved
-            }
-            ArtifactEvidenceClass::NativePackageManagerManaged => {
-                ArtifactSourceEvidence::NativePackageManagerManagedIdentityObserved
-            }
-            ArtifactEvidenceClass::NoArtifact | ArtifactEvidenceClass::ArtifactIdentityUnknown => {
-                ArtifactSourceEvidence::UnknownOrMissingArtifact
-            }
-        })
-        .into_iter()
-        .collect();
-    let plan_request = PlanBuildRequest {
-        platform: engine_platform,
+    let request = ArtifactSourceRequest {
+        platform: plan_platform,
         architecture,
         channel,
         target_scope,
-        intent: InstallationIntent::Install,
+        intent: synveil_install_engine::InstallationIntent::Install,
         capability_generation: request.generation,
-        artifact_candidates,
     };
-    match build_installation_plan_preview(&plan_request) {
-        PlanBuildResult::Blocked(blockers) => blockers,
-    }
+    let PlanBuildOutcome::Blocked(blockers) =
+        AuthoritativePlanBuilder.build(request, &PreflightArtifactSource(artifact_evidence));
+    blockers
 }
 
 fn inspect_platform() -> PlatformEvidence {

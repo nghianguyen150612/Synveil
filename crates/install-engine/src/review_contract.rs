@@ -68,6 +68,11 @@ pub struct PlanReviewContext {
     pub architecture: String,
     pub channel: String,
     pub capability_generation: u64,
+    /// Authenticated release-channel generation observed for this review.
+    /// `None` is explicit absence and never means generation zero is trusted.
+    pub manifest_generation: Option<u64>,
+    /// Generation for the read-only existing-installation observation.
+    pub installation_state_generation: u64,
     pub platform_policy_id: String,
     pub required_policy_ids: Vec<String>,
     pub preflight_findings: Vec<ReviewFinding>,
@@ -516,6 +521,8 @@ struct CanonicalReviewDocument<'a> {
     architecture: &'a str,
     channel: &'a str,
     capability_generation: u64,
+    manifest_generation: Option<u64>,
+    installation_state_generation: u64,
     platform_policy_id: &'a str,
     required_policy_ids: &'a [String],
     user_choices: &'a BTreeMap<String, bool>,
@@ -603,6 +610,8 @@ fn fingerprint_review(
         architecture: &context.architecture,
         channel: &context.channel,
         capability_generation: context.capability_generation,
+        manifest_generation: context.manifest_generation,
+        installation_state_generation: context.installation_state_generation,
         platform_policy_id: &context.platform_policy_id,
         required_policy_ids: &context.required_policy_ids,
         user_choices: &request.user_choices,
@@ -711,6 +720,8 @@ mod tests {
             architecture: "x86_64".into(),
             channel: "linux_appimage".into(),
             capability_generation: 7,
+            manifest_generation: Some(9),
+            installation_state_generation: 4,
             platform_policy_id: "linux.appimage.policy.v1".into(),
             required_policy_ids: vec!["P004-D02".into(), "P004-D14".into()],
             preflight_findings: vec![],
@@ -938,6 +949,49 @@ mod tests {
         assert_ne!(
             initial,
             snapshot(&request, &plan, changed).unwrap().fingerprint()
+        );
+    }
+
+    #[test]
+    fn manifest_and_existing_installation_generations_change_fingerprint() {
+        let (request, plan) = request_and_plan();
+        let initial = snapshot(&request, &plan, context()).unwrap().fingerprint();
+        let mut changed = context();
+        changed.manifest_generation = Some(10);
+        assert_ne!(
+            initial,
+            snapshot(&request, &plan, changed).unwrap().fingerprint()
+        );
+        let mut changed = context();
+        changed.installation_state_generation += 1;
+        assert_ne!(
+            initial,
+            snapshot(&request, &plan, changed).unwrap().fingerprint()
+        );
+    }
+
+    #[test]
+    fn replacement_artifact_digest_invalidates_previous_review() {
+        let (request, plan) = request_and_plan();
+        let original = snapshot(&request, &plan, context()).unwrap();
+        let mut replacement_plan = plan.clone();
+        if let Some(ArtifactEvidence::VerifiedReleaseArtifact { evidence }) =
+            replacement_plan.artifact.as_mut()
+        {
+            evidence.artifact_sha256 = "d".repeat(64);
+        }
+        let replacement_request = InstallationRequest {
+            verified_artifact: replacement_plan.artifact.clone(),
+            ..request
+        };
+        let replacement = snapshot(&replacement_request, &replacement_plan, context()).unwrap();
+        assert_ne!(original.fingerprint(), replacement.fingerprint());
+
+        let mut prior_review = ConfirmationSession::new(&original);
+        prior_review.acknowledge(&original, 1, 20).unwrap();
+        assert_eq!(
+            prior_review.acknowledge(&replacement, 2, 20),
+            Err(AcknowledgementError::PlanChanged)
         );
     }
 
