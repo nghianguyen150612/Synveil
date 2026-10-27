@@ -28,10 +28,15 @@ use synveil_server_storage::{
 /// Return only the number of suitable Private LAN candidates. The underlying
 /// inspection uses the existing bounded `ip` read-only probes and does not
 /// retain or publish interface identifiers or addresses.
-pub fn inspect_private_lan_candidate_count() -> std::result::Result<u8, ()> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PrivateLanInspectError {
+    InspectionFailed,
+}
+
+pub fn inspect_private_lan_candidate_count() -> std::result::Result<u8, PrivateLanInspectError> {
     network::candidates()
         .map(|candidates| candidates.len().min(8) as u8)
-        .map_err(|_| ())
+        .map_err(|_| PrivateLanInspectError::InspectionFailed)
 }
 
 const JOURNAL: &str = "/etc/synveil/host-setup.json";
