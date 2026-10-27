@@ -10,7 +10,7 @@
 | Starting branch and SHA | `origin/develop/v0.3` at `a840af012e8510ae0d8ac454bd60b769029f3aaa` |
 | Expected starting SHA | `a840af012e8510ae0d8ac454bd60b769029f3aaa` — exact match |
 | Working branch | `feat/v03-p009-plan-confirmation-contract` |
-| P009 implementation commit | `7604d49154b7440c29fe7231af8fa55d86591f73` |
+| P009 implementation commits | `7604d49154b7440c29fe7231af8fa55d86591f73`, `09a8352563c672ecb9b03ff777f0c53bc40585fd` (latest source head) |
 | Draft PR | [#169](https://github.com/nghianguyen150612/Synveil/pull/169), initial head `7604d49154b7440c29fe7231af8fa55d86591f73` |
 | Target branch | `develop/v0.3` |
 | P007 integration | PR #166 merged at `84ee556c8619af0a95b92fb031956e3a46660984` |
@@ -35,7 +35,7 @@ The keyring failure reinforces P004-D14's pending state. No effectful work is in
 - Snapshot creation calls `InstallerEngine::validate`. Constructors remain crate-private while no approved production plan source or provenance gate exists. Synthetic evidence is confined to engine unit tests.
 - Fingerprints use domain separation, review schema v1, fixed-order serde JSON, ordered effect vectors, and sorted user choices. Artifact local paths and redacted evidence text are excluded; identity/evidence class, plans, effect/security metadata, material finding codes and policy context are bound.
 - The acknowledgement is local, idempotent, generation-bound, expires, and is cleared by invalidation, cancel, or restart. It cannot be serialized into an executable credential.
-- The desktop displays the real P008 unavailable reason and a disabled accessible acknowledgement control. P008 still has no authentic plan, so no fingerprint or effect summary is fabricated. “Preview only — installation is not started.” remains visible.
+- The desktop maps typed engine `PlanReviewStatus` values through the Rust view/Qt bridge, displays the real P008 unavailable reason, and keeps the accessible acknowledgement control disabled. A preview DTO marked valid still cannot enable it without a validated engine snapshot. P008 still has no authentic plan, so no fingerprint or effect summary is fabricated. “Preview only — installation is not started.” remains visible.
 - There is no call from the wizard/review contract to `InstallerEngine::execute`, an installation adapter, installer journal, OS authorization, privilege helper, network-listener mutation, or credential operation.
 
 ## Test and validation record
@@ -44,7 +44,7 @@ The keyring failure reinforces P004-D14's pending state. No effectful work is in
 |---|---|---|
 | `cargo fmt --all -- --check` | **PASS** | Exact command passed after P009 Rust edits; rerun after documentation-only closeout if source changes |
 | `cargo test -p synveil-install-engine --locked` | **PASS** | Full package suite passed; includes 12 new review-contract tests plus existing engine/AppImage/package tests |
-| Focused desktop controller harness | **PASS — 29 tests** | Temporary out-of-repository Cargo harness compiled exact checked-in `installer_preflight.rs` and `installer_wizard.rs`; not a desktop bridge or native Qt build |
+| Focused desktop controller harness | **PASS — 30 tests** | Temporary out-of-repository Cargo harness compiled exact checked-in `installer_preflight.rs` and `installer_wizard.rs`; includes valid-looking preview DTO not enabling acknowledgement; not a desktop bridge or native Qt build |
 | `cargo test -p synveil-desktop --locked` | **BLOCKED** | `libdbus-sys` cannot find `dbus-1.pc`; desktop Rust bridge and Qt resources were not compiled by this command |
 | Engine Clippy | **PASS** | `cargo clippy -p synveil-install-engine --all-targets --locked -- -D warnings` |
 | `cargo clippy -p synveil-desktop --all-targets --locked -- -D warnings` | **BLOCKED** | Same missing `dbus-1.pc`; desktop Rust/Qt lint was not reached |
@@ -62,7 +62,7 @@ P004-D02, D03, D11, and D14 remain pending. P010 requires an approved authoritat
 ## Exact source and PR heads
 
 - Source base: `a840af012e8510ae0d8ac454bd60b769029f3aaa`.
-- Implementation-only source commit: `7604d49154b7440c29fe7231af8fa55d86591f73`.
+- Implementation-only source commits: `7604d49154b7440c29fe7231af8fa55d86591f73`, `09a8352563c672ecb9b03ff777f0c53bc40585fd` (latest source head).
 - P009 draft PR: [#169](https://github.com/nghianguyen150612/Synveil/pull/169); initial PR head at creation: `7604d49154b7440c29fe7231af8fa55d86591f73`. The final PR head after this documentation commit is recorded in GitHub and the final engineering report; source history is not rewritten.
 - Target: `develop/v0.3`; the PR remains unmerged pending applicable review and CI.
 - Final native CI, hosted CI, and required local command statuses: the latest exact-head result is recorded in the final engineering report. Never mark queued, skipped, or unexecuted checks PASS.

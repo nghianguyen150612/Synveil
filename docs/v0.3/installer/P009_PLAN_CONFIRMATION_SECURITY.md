@@ -7,7 +7,7 @@
 - Repository: `https://github.com/nghianguyen150612/Synveil`
 - Base branch: `develop/v0.3`
 - Actual starting SHA: `a840af012e8510ae0d8ac454bd60b769029f3aaa`
-- P009 source implementation commit: `7604d49154b7440c29fe7231af8fa55d86591f73`.
+- P009 source implementation commits: `7604d49154b7440c29fe7231af8fa55d86591f73` and `09a8352563c672ecb9b03ff777f0c53bc40585fd` (latest source head).
 - Draft PR: [#169](https://github.com/nghianguyen150612/Synveil/pull/169), targeting `develop/v0.3`; its initial source head is `7604d49154b7440c29fe7231af8fa55d86591f73`. The final PR head also includes this documentation closeout commit and is recorded in the final engineering report.
 - This is the exact expected P008 merge head. P007 #166 is integrated at `84ee556c8619af0a95b92fb031956e3a46660984`, and P008 #168 at the starting SHA.
 - The authoritative `Synveil-v0.3-Context-Roadmap-P001-P060.md` was not found in the checked-in repository or GitHub code search. P009 scope is provisional and reconciles with the checked-in P002/P003/P004 contracts.
@@ -69,7 +69,7 @@ The invalidation enum names changes to device role, connection mode, installatio
 
 Readiness returns a review classification separately from execution blockers. `ReadyForReview` means a validated, complete, non-stale plan can be shown. Execution still includes `ExecutionNotImplemented`; publisher policy, privilege policy, native authorization, and recovery qualification remain separate blockers. Process privilege, a click, a local file, a checksum, or network reachability cannot satisfy those gates.
 
-The P008 controller still has no trusted artifact or authoritative plan builder. Therefore its third page shows role, selected channel, platform/capability evidence, artifact evidence, scope, and findings; plan operations, preservation, privilege, and recovery details remain unavailable with the explicit reason. The acknowledgement control is disabled, and its accessible description states that reason. No fingerprint is invented for the unavailable plan. The page retains **“Preview only — installation is not started.”** No Install, Apply, Repair, Upgrade, listener, credential, or privilege operation is dispatched.
+The P008 controller still has no trusted artifact or authoritative plan builder. Its third page maps typed `PlanReviewStatus` outcomes through the Rust view/Qt bridge and shows role, selected channel, platform/capability evidence, artifact evidence, scope, and findings; plan operations, preservation, privilege, and recovery details remain unavailable with the explicit reason. A preview DTO, even one marked valid, is not an engine snapshot and cannot enable acknowledgement. The acknowledgement control stays disabled, and its accessible description states the reason. No fingerprint is invented for the unavailable plan. The page retains **“Preview only — installation is not started.”** No Install, Apply, Repair, Upgrade, listener, credential, or privilege operation is dispatched.
 
 Host and Connect onboarding routes stay in their existing owners. Tailscale remains unavailable without its integration approval.
 
