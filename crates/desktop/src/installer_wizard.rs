@@ -5,6 +5,7 @@
 //! execution capability.
 
 use crate::installer_preflight::{InstallationChannel, PreflightOutcome, PreflightRequest};
+use synveil_install_engine::PlanReviewStatus;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PlatformCode {
@@ -242,6 +243,9 @@ pub struct WizardView {
     pub installer_preflight_ran: bool,
     pub verified_artifact_available: bool,
     pub plan_preview_available: bool,
+    pub confirmation_status: &'static str,
+    pub acknowledgement_available: bool,
+    pub acknowledgement_reason: String,
     pub target_scope_detected: bool,
     pub privilege_assessed: bool,
     pub blocking_preflight_finding: bool,
@@ -689,6 +693,26 @@ impl InstallerWizard {
             "Plan preview unavailable — verified artifact evidence required",
             PreflightOutcome::plan_summary,
         );
+        let confirmation_status = match outcome.map(|value| &value.plan_preview) {
+            None => PlanReviewStatus::NoPlanAvailable,
+            Some(crate::installer_preflight::PlanPreviewAvailability::Unavailable(
+                crate::installer_preflight::PlanPreviewUnavailableReason::VerifiedArtifactEvidenceRequired,
+            )) => PlanReviewStatus::ArtifactEvidenceUnavailable,
+            Some(crate::installer_preflight::PlanPreviewAvailability::Unavailable(
+                crate::installer_preflight::PlanPreviewUnavailableReason::PlanValidationFailed,
+            )) => PlanReviewStatus::PlanValidationFailed,
+            Some(crate::installer_preflight::PlanPreviewAvailability::Unavailable(
+                crate::installer_preflight::PlanPreviewUnavailableReason::InsufficientCapabilityEvidence,
+            )) => PlanReviewStatus::ReviewDataIncomplete,
+            Some(crate::installer_preflight::PlanPreviewAvailability::Unavailable(
+                crate::installer_preflight::PlanPreviewUnavailableReason::AuthoritativePlanBuilderUnavailable,
+            ))
+            | Some(crate::installer_preflight::PlanPreviewAvailability::Available(_))
+            | Some(crate::installer_preflight::PlanPreviewAvailability::PartiallyAvailable(_)) => {
+                // A preview DTO is not a validated engine snapshot.
+                PlanReviewStatus::NoPlanAvailable
+            }
+        };
         let scope_summary = outcome.map_or_else(
             || "Target scope unavailable until a channel is identified.".to_owned(),
             PreflightOutcome::scope_summary,
@@ -747,6 +771,17 @@ impl InstallerWizard {
             installer_preflight_ran: false,
             verified_artifact_available,
             plan_preview_available: plan_available,
+            confirmation_status: match confirmation_status {
+                PlanReviewStatus::NoPlanAvailable => "no_plan_available",
+                PlanReviewStatus::PlanValidationFailed => "plan_validation_failed",
+                PlanReviewStatus::ArtifactEvidenceUnavailable => "artifact_evidence_unavailable",
+                PlanReviewStatus::AvailableForReview => "available_for_review",
+                PlanReviewStatus::ReviewDataIncomplete => "review_data_incomplete",
+            },
+            // P008 has no acquisition-to-authoritative-plan path. A preview
+            // marker cannot enable acknowledgement or imply an execution gate.
+            acknowledgement_available: false,
+            acknowledgement_reason: plan_summary.to_owned(),
             target_scope_detected: outcome
                 .and_then(PreflightOutcome::selected_channel)
                 .is_some_and(|channel| channel.target_scope.is_some()),
@@ -840,6 +875,12 @@ mod tests {
         assert!(view.report_ready);
         assert!(!view.installer_preflight_ran);
         assert!(!view.plan_preview_available);
+        assert_eq!(view.confirmation_status, "artifact_evidence_unavailable");
+        assert!(!view.acknowledgement_available);
+        assert_eq!(
+            view.acknowledgement_reason,
+            "Plan preview unavailable — verified artifact evidence required"
+        );
         assert!(!view.verified_artifact_available);
         assert!(!view.target_scope_detected);
         assert!(!view.privilege_assessed);
@@ -962,6 +1003,38 @@ mod tests {
     }
 
     #[test]
+    fn preview_dto_never_enables_acknowledgement_without_an_engine_snapshot() {
+        let (mut wizard, _) = reviewed_wizard();
+        wizard.outcome.as_mut().unwrap().plan_preview =
+            crate::installer_preflight::PlanPreviewAvailability::Available(
+                crate::installer_preflight::PlanPreview {
+                    intent: "INSTALL",
+                    target_scope: synveil_install_engine::TargetScope::PortableUser,
+                    installation_channel: InstallationChannel::LinuxAppImage,
+                    artifact_evidence:
+                        crate::installer_preflight::ArtifactEvidenceClass::VerifiedReleaseArtifact,
+                    ordered_operation_categories: vec!["install_payload"],
+                    resources_expected_to_touch: vec![
+                        synveil_install_engine::ResourceClass::PackageOwned,
+                    ],
+                    preservation_expectations: vec![
+                        synveil_install_engine::ResourceClass::CredentialState,
+                    ],
+                    privilege: synveil_install_engine::PrivilegeRequirement::CurrentUser,
+                    reversibility: synveil_install_engine::Reversibility::PartiallyReversible,
+                    verification_requirements: vec!["payload_present"],
+                    blocking_findings: vec![],
+                    confirmation_prerequisites: vec!["publisher_policy"],
+                    validity: crate::installer_preflight::PlanValidity::Valid,
+                },
+            );
+        let view = wizard.view();
+        assert!(view.plan_preview_available);
+        assert_eq!(view.confirmation_status, "no_plan_available");
+        assert!(!view.acknowledgement_available);
+    }
+
+    #[test]
     fn findings_are_safe_categories_and_never_carry_raw_evidence() {
         let (wizard, _) = reviewed_wizard();
         let view = wizard.view();
@@ -1052,6 +1125,16 @@ mod tests {
         assert!(main_qml.contains("bridge.chooseHost()"));
         assert!(main_qml.contains("bridge.chooseConnect()"));
         assert!(wizard_qml.contains("Preview only — installation is not started"));
+        assert!(wizard_qml.contains("id: acknowledgeReviewedPlan"));
+        assert!(wizard_qml.contains("enabled: root.wizardView.acknowledgementAvailable"));
+        assert!(!wizard_qml.contains("acknowledgeReviewedPlan.onClicked"));
+        assert!(!wizard_qml.contains("InstallerEngine::execute"));
+        assert!(!wizard_qml.contains("InstallationJournal"));
+        assert!(!wizard_qml.contains("sudo "));
+        assert!(!wizard_qml.contains("runas"));
+        assert!(!wizard_qml.contains("systemctl"));
+        assert!(!wizard_qml.contains("pkexec"));
+        assert!(wizard_qml.contains("acknowledgementReason"));
         assert!(!wizard_qml.contains("qsTr(\"Install\")"));
         assert!(!wizard_qml.contains("qsTr(\"Apply\")"));
         assert!(!wizard_qml.contains("qsTr(\"Repair\")"));
@@ -1069,5 +1152,10 @@ mod tests {
         assert!(!state_source.contains("InstallationEffect"));
         assert!(!state_source.contains("std::fs::"));
         assert!(!state_source.contains("std::process::"));
+        let review_contract = include_str!("../../install-engine/src/review_contract.rs");
+        assert!(!review_contract.contains("InstallationJournal"));
+        assert!(!review_contract.contains("apply_effect("));
+        assert!(!review_contract.contains("std::net::"));
+        assert!(!review_contract.contains("InstallerEngine::execute"));
     }
 }

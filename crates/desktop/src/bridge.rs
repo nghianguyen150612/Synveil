@@ -3544,6 +3544,12 @@ fn to_qvariant_installer_wizard(view: &installer_wizard::WizardView) -> QVariant
         view.verified_artifact_available,
     );
     insert_bool(&mut map, "planAvailable", view.plan_preview_available);
+    insert_string(&mut map, "confirmationStatus", view.confirmation_status);
+    insert_bool(
+        &mut map,
+        "acknowledgementAvailable",
+        view.acknowledgement_available,
+    );
     insert_bool(&mut map, "scopeDetected", view.target_scope_detected);
     insert_bool(&mut map, "privilegeAssessed", view.privilege_assessed);
     insert_bool(&mut map, "blockingFinding", view.blocking_preflight_finding);
@@ -3555,6 +3561,11 @@ fn to_qvariant_installer_wizard(view: &installer_wizard::WizardView) -> QVariant
     insert_string(&mut map, "findingSummary", &view.finding_summary);
     insert_string(&mut map, "artifactSummary", &view.artifact_summary);
     insert_string(&mut map, "planSummary", &view.plan_summary);
+    insert_string(
+        &mut map,
+        "acknowledgementReason",
+        &view.acknowledgement_reason,
+    );
     insert_string(&mut map, "scopeSummary", &view.scope_summary);
     let channel_options = to_qvariant_channel_options(&view.channel_options);
     map.insert_clone(&QString::from("channelOptions"), &channel_options);

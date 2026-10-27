@@ -40,6 +40,14 @@ Pane {
         return qsTr("Other")
     }
 
+    function confirmationStatusName(code) {
+        if (code === "artifact_evidence_unavailable") return qsTr("artifact evidence unavailable")
+        if (code === "plan_validation_failed") return qsTr("plan validation failed")
+        if (code === "review_data_incomplete") return qsTr("review data incomplete")
+        if (code === "available_for_review") return qsTr("available for review")
+        return qsTr("no authoritative plan available")
+    }
+
     function errorMessage(code) {
         if (code === "safe_preflight_failed") {
             return qsTr("The read-only preview check could not finish. No installation was attempted.")
@@ -450,6 +458,27 @@ Pane {
                                 Layout.fillWidth: true
                                 text: root.wizardView.planSummary
                                 wrapMode: Text.WordWrap
+                            }
+                            Button {
+                                id: acknowledgeReviewedPlan
+                                Layout.fillWidth: true
+                                text: qsTr("Acknowledge reviewed installation plan")
+                                enabled: root.wizardView.acknowledgementAvailable
+                                Accessible.name: text
+                                Accessible.description: enabled
+                                    ? qsTr("Records that you reviewed the displayed plan. This does not authorize the operating system or start an installation.")
+                                    : qsTr("Unavailable: %1. No acknowledgement has been recorded.")
+                                          .arg(root.wizardView.acknowledgementReason)
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: root.wizardView.acknowledgementAvailable
+                                      ? qsTr("Confirmation readiness: a validated plan is available for review. Acknowledgement remains separate from artifact policy and operating-system authorization.")
+                                      : qsTr("Confirmation readiness: %1. %2")
+                                            .arg(root.confirmationStatusName(root.wizardView.confirmationStatus))
+                                            .arg(root.wizardView.acknowledgementReason)
+                                wrapMode: Text.WordWrap
+                                Accessible.name: text
                             }
                             Label {
                                 Layout.fillWidth: true
