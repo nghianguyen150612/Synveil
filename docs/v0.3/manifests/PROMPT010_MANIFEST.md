@@ -117,5 +117,5 @@ security qualification gates.
 | Branch | `feat/v03-p010-artifact-plan-builder` |
 | Base | `develop/v0.3` at `1ac67076e9e1e8c475b4a69578273d3f777a6ae9` |
 | Target | `develop/v0.3` |
-| PR | Existing open PR [#170](https://github.com/nghianguyen150612/Synveil/pull/170), target `develop/v0.3`; update after merge-resolution push |
+| PR | Existing open PR [#170](https://github.com/nghianguyen150612/Synveil/pull/170), updated in place; target `develop/v0.3` |
 | Merge | Not requested or performed |
