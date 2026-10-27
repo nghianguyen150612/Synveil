@@ -278,6 +278,8 @@ pub struct InstallerWizard {
 }
 
 impl InstallerWizard {
+    // Kept for the focused controller harness and future non-Qt consumers.
+    #[allow(dead_code)]
     pub fn new(capabilities: WizardCapabilities) -> Self {
         let initial_platform_summary = format!(
             "{}; distribution and version inspection pending",
@@ -405,6 +407,8 @@ impl InstallerWizard {
 
     /// Future artifact acquisition paths must invalidate any inspected
     /// evidence before presenting a replacement artifact choice.
+    // The approved artifact chooser is not connected to the production UI.
+    #[allow(dead_code)]
     pub fn artifact_changed(&mut self) {
         if matches!(
             self.state,
@@ -690,7 +694,9 @@ impl InstallerWizard {
             PreflightOutcome::artifact_summary,
         );
         let plan_summary = outcome.map_or(
-            "Plan preview unavailable — verified artifact evidence required",
+            crate::installer_preflight::PlanPreviewUnavailableReason::VerifiedArtifactEvidenceRequired
+                .label()
+                .to_owned(),
             PreflightOutcome::plan_summary,
         );
         let confirmation_status = match outcome.map(|value| &value.plan_preview) {
@@ -877,10 +883,16 @@ mod tests {
         assert!(!view.plan_preview_available);
         assert_eq!(view.confirmation_status, "artifact_evidence_unavailable");
         assert!(!view.acknowledgement_available);
-        assert_eq!(
-            view.acknowledgement_reason,
-            "Plan preview unavailable — verified artifact evidence required"
-        );
+        assert_eq!(view.acknowledgement_reason, view.plan_summary);
+        assert!(view
+            .acknowledgement_reason
+            .contains("independently authenticated artifact evidence is unavailable"));
+        assert!(view
+            .acknowledgement_reason
+            .contains("production publisher trust root is unavailable"));
+        assert!(view
+            .acknowledgement_reason
+            .contains("approved channel effect catalog is unavailable"));
         assert!(!view.verified_artifact_available);
         assert!(!view.target_scope_detected);
         assert!(!view.privilege_assessed);
@@ -1000,6 +1012,19 @@ mod tests {
         assert!(!view.plan_preview_available);
         assert!(!view.target_scope_detected);
         assert!(!view.privilege_assessed);
+        assert!(view.plan_summary.contains("publisher trust root"));
+        assert!(view
+            .plan_summary
+            .contains("approved channel effect catalog"));
+        assert!(view
+            .plan_summary
+            .contains("P004-D02, D11, and D14 remain pending"));
+        assert!(wizard
+            .outcome
+            .as_ref()
+            .unwrap()
+            .plan_build_blockers
+            .contains(&synveil_install_engine::PlanBuildBlocker::ProductionTrustRootUnavailable));
     }
 
     #[test]

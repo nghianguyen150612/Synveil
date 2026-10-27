@@ -21,7 +21,10 @@ use std::{
     time::{Duration, Instant},
 };
 use synveil_install_engine::{
-    FindingSeverity, PrivilegeRequirement, ResourceClass, Reversibility, TargetScope,
+    ArtifactEvidenceKind, ArtifactSourceObservation, ArtifactSourceRequest,
+    AuthoritativePlanBuilder, FindingSeverity, PlanArchitecture, PlanBuildBlocker,
+    PlanBuildOutcome, PlanChannel, PlanPlatform, PrivilegeRequirement, ReadOnlyArtifactSource,
+    ResourceClass, Reversibility, TargetScope,
 };
 
 const MAX_COMMAND_OUTPUT: usize = 1024;
@@ -107,6 +110,8 @@ impl InstallationChannel {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ChannelAvailability {
+    // Reserved for future authenticated production previews; never emitted today.
+    #[allow(dead_code)]
     PreviewAvailable,
     PreviewPartiallyAvailable,
     Unsupported,
@@ -235,9 +240,14 @@ pub enum CapabilityFindingCode {
     ArtifactUnavailable,
     ArtifactVerificationIncomplete,
     AuthoritativePlanUnavailable,
+    // Typed fail-closed findings reserved for later effect/inspection adapters.
+    #[allow(dead_code)]
     InvalidPlan,
+    #[allow(dead_code)]
     InspectionFailed,
+    #[allow(dead_code)]
     InspectionCancelled,
+    #[allow(dead_code)]
     StaleInspection,
     InsufficientCapabilityEvidence,
     PrivateLanUnavailable,
@@ -342,8 +352,12 @@ impl CapabilityFinding {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PlanPreviewUnavailableReason {
     VerifiedArtifactEvidenceRequired,
+    // Reserved for future verified plan paths; production stays blocked today.
+    #[allow(dead_code)]
     AuthoritativePlanBuilderUnavailable,
+    #[allow(dead_code)]
     PlanValidationFailed,
+    #[allow(dead_code)]
     InsufficientCapabilityEvidence,
 }
 
@@ -351,7 +365,7 @@ impl PlanPreviewUnavailableReason {
     pub const fn label(self) -> &'static str {
         match self {
             Self::VerifiedArtifactEvidenceRequired => {
-                "Plan preview unavailable — verified artifact evidence required"
+                "Plan preview unavailable — no release source currently supplies independently authenticated artifact evidence; the production publisher trust root and approved channel effect catalog are unavailable. P004-D02, D11, and D14 remain pending."
             }
             Self::AuthoritativePlanBuilderUnavailable => {
                 "Plan preview unavailable — no authoritative plan builder exists for this channel"
@@ -406,6 +420,7 @@ pub struct PreflightOutcome {
     pub findings: Vec<CapabilityFinding>,
     pub selected_channel_supported: bool,
     pub plan_preview: PlanPreviewAvailability,
+    pub plan_build_blockers: Vec<PlanBuildBlocker>,
 }
 
 impl PreflightOutcome {
@@ -468,12 +483,20 @@ impl PreflightOutcome {
             )
     }
 
-    pub fn plan_summary(&self) -> &'static str {
+    pub fn plan_summary(&self) -> String {
+        if !self.plan_build_blockers.is_empty() {
+            return self
+                .plan_build_blockers
+                .iter()
+                .map(|blocker| blocker.label())
+                .collect::<Vec<_>>()
+                .join("; ");
+        }
         match &self.plan_preview {
-            PlanPreviewAvailability::Unavailable(reason) => reason.label(),
+            PlanPreviewAvailability::Unavailable(reason) => reason.label().to_owned(),
             PlanPreviewAvailability::Available(_)
             | PlanPreviewAvailability::PartiallyAvailable(_) => {
-                "Plan preview unavailable — authoritative plan mapping is not enabled in P008"
+                "Plan preview unavailable — authoritative plan mapping is not enabled".to_owned()
             }
         }
     }
@@ -726,6 +749,7 @@ pub fn inspect(request: PreflightRequest) -> PreflightOutcome {
             active.next().is_none().then_some(first)
         });
     let target_scope = selected.and_then(|channel| channel.target_scope);
+    let plan_build_blockers = plan_build_blockers(&request, &platform, &channels);
     let binding = PreflightBinding {
         selection: request,
         platform,
@@ -740,7 +764,94 @@ pub fn inspect(request: PreflightRequest) -> PreflightOutcome {
         findings,
         selected_channel_supported,
         plan_preview,
+        plan_build_blockers,
     }
+}
+
+struct PreflightArtifactSource(ArtifactEvidenceKind);
+
+impl ReadOnlyArtifactSource for PreflightArtifactSource {
+    fn observe(&self, _request: ArtifactSourceRequest) -> ArtifactSourceObservation {
+        ArtifactSourceObservation {
+            evidence_kind: self.0,
+            manifest_generation: None,
+        }
+    }
+}
+
+fn plan_build_blockers(
+    request: &PreflightRequest,
+    platform: &PlatformEvidence,
+    channels: &[InstallationChannelEvidence],
+) -> Vec<PlanBuildBlocker> {
+    let plan_platform = match (
+        platform.platform,
+        platform.display_name.as_str(),
+        platform.version.as_str(),
+    ) {
+        (PlatformCode::Linux, "Ubuntu", "24.04") => PlanPlatform::Ubuntu2404,
+        (PlatformCode::Linux, "Fedora", "42") => PlanPlatform::Fedora42,
+        (PlatformCode::Linux, _, _) => PlanPlatform::OtherLinux,
+        (PlatformCode::Windows, _, _) => PlanPlatform::Windows,
+        (PlatformCode::MacOs, _, _) => PlanPlatform::MacOs,
+        (PlatformCode::Other, _, _) => PlanPlatform::Other,
+    };
+    let architecture = match platform.architecture {
+        "x86-64" => PlanArchitecture::X86_64,
+        "ARM64" => PlanArchitecture::Aarch64,
+        _ => PlanArchitecture::Other,
+    };
+    let selected = request
+        .selected_channel
+        .and_then(|value| channels.iter().find(|item| item.channel == value))
+        .or_else(|| {
+            let mut active = channels.iter().filter(|item| {
+                item.active && item.channel != InstallationChannel::ExistingInstallation
+            });
+            let first = active.next()?;
+            active.next().is_none().then_some(first)
+        });
+    let channel = selected.map_or(PlanChannel::Unknown, |item| match item.channel {
+        InstallationChannel::LinuxDeb => PlanChannel::UbuntuDeb,
+        InstallationChannel::LinuxRpm => PlanChannel::FedoraRpm,
+        InstallationChannel::LinuxAppImage => PlanChannel::LinuxAppImage,
+        InstallationChannel::WindowsPerUserSetup => PlanChannel::WindowsPerUserSetup,
+        InstallationChannel::WindowsPortable => PlanChannel::WindowsPortableZip,
+        InstallationChannel::ExistingInstallation => PlanChannel::ExistingInstallationMaintenance,
+    });
+    let artifact_evidence = selected.map_or(
+        ArtifactEvidenceKind::UnknownOrMissingArtifact,
+        |item| match item.artifact_evidence {
+            ArtifactEvidenceClass::VerifiedReleaseArtifact => {
+                // P008 has not bound authenticated channel and manifest bytes
+                // to this exact artifact; its marker is incomplete provenance.
+                ArtifactEvidenceKind::IncompleteProvenance
+            }
+            ArtifactEvidenceClass::LocallySuppliedUnverified => {
+                ArtifactEvidenceKind::LocallySuppliedUntrustedArtifact
+            }
+            ArtifactEvidenceClass::NativePackageManagerManaged => {
+                ArtifactEvidenceKind::NativePackageManagerManagedIdentity
+            }
+            ArtifactEvidenceClass::NoArtifact | ArtifactEvidenceClass::ArtifactIdentityUnknown => {
+                ArtifactEvidenceKind::UnknownOrMissingArtifact
+            }
+        },
+    );
+    let target_scope = selected
+        .and_then(|item| item.target_scope)
+        .unwrap_or(TargetScope::CurrentUser);
+    let request = ArtifactSourceRequest {
+        platform: plan_platform,
+        architecture,
+        channel,
+        target_scope,
+        intent: synveil_install_engine::InstallationIntent::Install,
+        capability_generation: request.generation,
+    };
+    let PlanBuildOutcome::Blocked(blockers) =
+        AuthoritativePlanBuilder.build(request, &PreflightArtifactSource(artifact_evidence));
+    blockers
 }
 
 fn inspect_platform() -> PlatformEvidence {
@@ -1450,10 +1561,10 @@ mod tests {
     fn active_portable_markers_are_unverified_not_publisher_verified() {
         let class = ArtifactEvidenceClass::LocallySuppliedUnverified;
         assert_ne!(class, ArtifactEvidenceClass::VerifiedReleaseArtifact);
-        assert_eq!(
-            PlanPreviewUnavailableReason::VerifiedArtifactEvidenceRequired.label(),
-            "Plan preview unavailable — verified artifact evidence required"
-        );
+        let unavailable = PlanPreviewUnavailableReason::VerifiedArtifactEvidenceRequired.label();
+        assert!(unavailable.contains("independently authenticated artifact evidence"));
+        assert!(unavailable.contains("production publisher trust root"));
+        assert!(unavailable.contains("approved channel effect catalog"));
     }
 
     #[test]
