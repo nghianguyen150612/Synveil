@@ -191,6 +191,12 @@ Pane {
                         }
                         Label {
                             Layout.fillWidth: true
+                            text: qsTr("Detected platform: %1").arg(root.wizardView.platformSummary)
+                            wrapMode: Text.WordWrap
+                            Accessible.name: text
+                        }
+                        Label {
+                            Layout.fillWidth: true
                             visible: root.wizardView.deviceRole === "client"
                             text: qsTr("Recommended for most people: connect this machine to a Synveil server that is already set up.")
                             wrapMode: Text.WordWrap
@@ -330,6 +336,35 @@ Pane {
                             text: qsTr("Network reachability is not login authorization. Authentication and device enrollment stay in the current client flow.")
                             wrapMode: Text.WordWrap
                         }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: qsTr("Installation channel")
+                            font.pixelSize: 20
+                            font.weight: Font.DemiBold
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: qsTr("Choose the channel to inspect. The check identifies support and missing evidence; it never switches channels or starts installation.")
+                            wrapMode: Text.WordWrap
+                        }
+                        Repeater {
+                            model: root.wizardView.channelOptions
+                            delegate: RadioButton {
+                                required property var modelData
+                                Layout.fillWidth: true
+                                text: qsTr("%1 — %2")
+                                      .arg(modelData.label)
+                                      .arg(modelData.availability)
+                                checked: modelData.selected
+                                enabled: root.wizardView.state === "connection_choice"
+                                Accessible.name: text
+                                Accessible.description: modelData.active
+                                    ? qsTr("A channel marker is present. Its artifact identity and ownership still need verification.")
+                                    : qsTr("This channel will be checked against bounded, read-only host evidence.")
+                                onClicked: root.bridge.selectInstallerWizardChannel(modelData.code)
+                            }
+                        }
                     }
 
                     ColumnLayout {
@@ -365,7 +400,7 @@ Pane {
 
                             Label {
                                 Layout.fillWidth: true
-                                text: qsTr("Installation intent: Easy Setup review")
+                                text: qsTr("Installation intent: preview only; no install action was requested.")
                                 wrapMode: Text.WordWrap
                             }
                             Label {
@@ -380,49 +415,56 @@ Pane {
                             }
                             Label {
                                 Layout.fillWidth: true
-                                text: qsTr("Platform: %1").arg(root.platformName(root.wizardView.platform))
+                                text: qsTr("Detected platform: %1").arg(root.wizardView.platformSummary)
                                 wrapMode: Text.WordWrap
                             }
                             Label {
                                 Layout.fillWidth: true
-                                text: qsTr("Current capability evidence: Host setup %1; client connection setup %2.")
+                                text: qsTr("Role capability evidence: Host setup %1; client connection setup %2.")
                                       .arg(root.wizardView.hostSupported ? qsTr("supported") : qsTr("unavailable"))
                                       .arg(root.wizardView.clientSupported ? qsTr("supported") : qsTr("unavailable"))
                                 wrapMode: Text.WordWrap
                             }
                             Label {
                                 Layout.fillWidth: true
-                                text: root.wizardView.reportReady
-                                      ? qsTr("Read-only capability check: complete.")
-                                      : qsTr("Read-only capability check: unavailable.")
+                                text: !root.wizardView.reportReady
+                                      ? qsTr("Read-only capability check: not completed.")
+                                      : root.wizardView.evidenceComplete
+                                        ? qsTr("Read-only capability check: completed with operating-system evidence.")
+                                        : qsTr("Read-only capability check: completed with incomplete operating-system evidence.")
                                 wrapMode: Text.WordWrap
                             }
                             Label {
                                 Layout.fillWidth: true
                                 text: root.wizardView.preflightRan
-                                      ? qsTr("Installer preflight: completed by a read-only platform adapter.")
-                                      : qsTr("Installer preflight: not run. This desktop path has no read-only platform preflight adapter.")
+                                      ? qsTr("InstallerEngine preflight: completed by a read-only adapter.")
+                                      : qsTr("InstallerEngine preflight: not run. This inspection does not call InstallationAdapter::preflight or create an installation plan.")
                                 wrapMode: Text.WordWrap
                             }
                             Label {
                                 Layout.fillWidth: true
-                                text: root.wizardView.artifactAvailable
-                                      ? qsTr("Verified artifact: evidence is available.")
-                                      : qsTr("Verified artifact: unavailable; no artifact was supplied or verified.")
+                                text: qsTr("Artifact evidence: %1.").arg(root.wizardView.artifactSummary)
                                 wrapMode: Text.WordWrap
                             }
                             Label {
                                 Layout.fillWidth: true
-                                text: root.wizardView.planAvailable
-                                      ? qsTr("Installation plan: an authoritative read-only preview is available.")
-                                      : qsTr("Installation plan: unavailable; the desktop has no read-only plan builder. The existing engine remains authoritative for supplied plans and execution.")
+                                text: root.wizardView.planSummary
                                 wrapMode: Text.WordWrap
                             }
                             Label {
                                 Layout.fillWidth: true
-                                text: root.wizardView.scopeDetected
-                                      ? qsTr("Target scope: reported by the authoritative platform evidence.")
-                                      : qsTr("Target scope: undetermined. Package managers and platform installers own their installation scope.")
+                                text: qsTr("Installation channel: %1").arg(root.wizardView.selectedChannel.length > 0
+                                      ? root.wizardView.selectedChannel : qsTr("not selected"))
+                                wrapMode: Text.WordWrap
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("Detected channel evidence:\n%1").arg(root.wizardView.channelSummary)
+                                wrapMode: Text.WordWrap
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("Target scope: %1").arg(root.wizardView.scopeSummary)
                                 wrapMode: Text.WordWrap
                             }
                             Label {
@@ -434,25 +476,57 @@ Pane {
                             }
                             Label {
                                 Layout.fillWidth: true
-                                text: qsTr("Preservation: this preview changes no files, credentials, settings, server state, network listeners, or installer journal.")
+                                text: qsTr("Ordered operations and resources to be touched: unavailable until a verified artifact and authoritative plan exist.")
+                                wrapMode: Text.WordWrap
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("Preservation: this inspection changes no files, credentials, settings, server state, network listeners, or installer journal. Eventual installation preservation expectations are unavailable without a validated plan.")
+                                wrapMode: Text.WordWrap
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("Reversibility, verification requirements, and confirmation prerequisites: unavailable without an authoritative plan. No installation can be started from this wizard.")
                                 wrapMode: Text.WordWrap
                             }
                             Label {
                                 Layout.fillWidth: true
                                 visible: root.wizardView.blockingFinding
-                                text: qsTr("A blocking preflight finding was reported. The evidence is omitted from this presentation.")
+                                text: qsTr("This inspection has blocking findings. Review the safe findings below.")
                                 wrapMode: Text.WordWrap
                             }
                             Label {
                                 Layout.fillWidth: true
-                                text: qsTr("Preview only — installation is not started")
+                                text: qsTr("Connection capability: %1").arg(root.wizardView.connectionSummary)
+                                wrapMode: Text.WordWrap
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: root.wizardView.findingSummary
+                                wrapMode: Text.WordWrap
+                            }
+                            Button {
+                                text: root.wizardView.detailsOpen
+                                      ? qsTr("Hide technical details") : qsTr("Show safe technical details")
+                                Accessible.name: text
+                                onClicked: root.bridge.setInstallerWizardDetailsOpen(!root.wizardView.detailsOpen)
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                visible: root.wizardView.detailsOpen
+                                text: qsTr("The inspection reports bounded platform and channel categories. Raw paths, command output, credentials, and remote endpoint details are not shown.")
+                                wrapMode: Text.WordWrap
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("Preview only — installation is not started.")
                                 font.weight: Font.DemiBold
                                 wrapMode: Text.WordWrap
                                 Accessible.name: text
                             }
                             Label {
                                 Layout.fillWidth: true
-                                text: qsTr("Safe next action: return to Welcome and choose the existing Host or Connect setup. Those flows keep their current review and authorization boundaries.")
+                                text: qsTr("Safe next action: resolve the missing artifact or capability evidence, then use the existing Host or Connect flow for its own review and authorization boundaries.")
                                 wrapMode: Text.WordWrap
                             }
                         }

@@ -21,10 +21,11 @@ use tokio::runtime::{Builder, Handle, Runtime};
 use zeroize::Zeroizing;
 
 use crate::host_ui::{HostAction, HostSession};
-use crate::{actions, installer_wizard, presentation, profile};
+use crate::{actions, installer_preflight, installer_wizard, presentation, profile};
 use actions::{LatestValue, ReconciliationFence, StartupIntentGate, SyncRequestGate};
 use installer_wizard::{
-    ConnectionMode, DeviceRole, InstallerWizard, PreflightToken, WizardCapabilities,
+    ChannelOptionView, ConnectionMode, DeviceRole, InstallerWizard, PreflightToken,
+    WizardCapabilities,
 };
 use presentation::{UiAttentionItem, UiLibrary, UiRecoveryItem, UiSnapshot};
 
@@ -411,6 +412,9 @@ pub mod ffi {
         #[cxx_name = "selectInstallerWizardConnection"]
         #[qinvokable]
         fn select_installer_wizard_connection(self: Pin<&mut Self>, mode: QString);
+        #[cxx_name = "selectInstallerWizardChannel"]
+        #[qinvokable]
+        fn select_installer_wizard_channel(self: Pin<&mut Self>, channel: QString);
         #[cxx_name = "continueInstallerWizard"]
         #[qinvokable]
         fn continue_installer_wizard(self: Pin<&mut Self>);
@@ -707,13 +711,17 @@ impl Default for DesktopUiBridgeRust {
             std::env::var_os("SYNVEIL_QML_LIVE_TEST_EXIT_ON_TERMINAL").is_some();
         let profile_id = profile::load_profile_id();
         let profile_ready = profile_id.is_ok();
-        let host_available = synveil_server_host::supported_platform().is_some();
-        let installer_wizard = InstallerWizard::new(WizardCapabilities::new(
-            installer_wizard::PlatformCode::current(),
-            host_available,
-            profile_ready,
-            false,
-        ));
+        let platform_evidence = installer_preflight::detect_platform_evidence();
+        let host_available = platform_evidence.managed_host_supported;
+        let installer_wizard = InstallerWizard::with_platform_summary(
+            WizardCapabilities::new(
+                installer_wizard::PlatformCode::current(),
+                host_available,
+                profile_ready,
+                false,
+            ),
+            platform_evidence.summary(),
+        );
         let installer_wizard_view = to_qvariant_installer_wizard(&installer_wizard.view());
         let profile_id = profile_id.unwrap_or_else(|_| ServerProfileId::new());
         let controller = DesktopController::new(DesktopControllerConfig::for_profile(profile_id));
@@ -899,7 +907,7 @@ fn run_installer_wizard_preflight(
     mut object: Pin<&mut ffi::DesktopUiBridge>,
     token: PreflightToken,
 ) {
-    let Some(probe) = object.rust().installer_wizard.probe_for(token) else {
+    let Some(request) = object.rust().installer_wizard.request_for(token) else {
         return;
     };
     let Some(runtime) = object
@@ -919,10 +927,7 @@ fn run_installer_wizard_preflight(
     };
     let qt_thread = object.as_ref().get_ref().qt_thread();
     runtime.spawn(async move {
-        // The current P007 probe only maps bounded capabilities. Keep the
-        // operation off the GUI thread so a later real read-only adapter can
-        // use this same asynchronous completion boundary.
-        let result = tokio::task::spawn_blocking(move || probe.inspect())
+        let result = tokio::task::spawn_blocking(move || installer_preflight::inspect(request))
             .await
             .map_err(|_| ());
         let _ = qt_thread.queue(move |mut object| {
@@ -1266,6 +1271,22 @@ impl ffi::DesktopUiBridge {
                 .rust_mut()
                 .installer_wizard
                 .select_connection_mode(mode);
+        } else {
+            self.as_mut()
+                .rust_mut()
+                .installer_wizard
+                .reject_invalid_selection();
+        }
+        publish_installer_wizard(self.as_mut());
+    }
+
+    fn select_installer_wizard_channel(mut self: Pin<&mut Self>, channel: QString) {
+        let code = String::from(channel);
+        if let Some(channel) = installer_preflight::InstallationChannel::from_code(&code) {
+            self.as_mut()
+                .rust_mut()
+                .installer_wizard
+                .select_installation_channel(channel);
         } else {
             self.as_mut()
                 .rust_mut()
@@ -3514,6 +3535,7 @@ fn to_qvariant_installer_wizard(view: &installer_wizard::WizardView) -> QVariant
     insert_bool(&mut map, "privateLanSupported", view.private_lan_supported);
     insert_bool(&mut map, "manualSupported", view.manual_supported);
     insert_bool(&mut map, "reportReady", view.report_ready);
+    insert_bool(&mut map, "evidenceComplete", view.evidence_complete);
     insert_bool(&mut map, "previewInvalidated", view.preview_invalidated);
     insert_bool(&mut map, "preflightRan", view.installer_preflight_ran);
     insert_bool(
@@ -3525,9 +3547,35 @@ fn to_qvariant_installer_wizard(view: &installer_wizard::WizardView) -> QVariant
     insert_bool(&mut map, "scopeDetected", view.target_scope_detected);
     insert_bool(&mut map, "privilegeAssessed", view.privilege_assessed);
     insert_bool(&mut map, "blockingFinding", view.blocking_preflight_finding);
+    insert_bool(&mut map, "capabilitySupported", view.capability_supported);
+    insert_string(&mut map, "selectedChannel", view.selected_channel);
+    insert_string(&mut map, "platformSummary", &view.platform_summary);
+    insert_string(&mut map, "channelSummary", &view.channel_summary);
+    insert_string(&mut map, "connectionSummary", &view.connection_summary);
+    insert_string(&mut map, "findingSummary", &view.finding_summary);
+    insert_string(&mut map, "artifactSummary", &view.artifact_summary);
+    insert_string(&mut map, "planSummary", &view.plan_summary);
+    insert_string(&mut map, "scopeSummary", &view.scope_summary);
+    let channel_options = to_qvariant_channel_options(&view.channel_options);
+    map.insert_clone(&QString::from("channelOptions"), &channel_options);
     insert_string(&mut map, "errorCode", view.error_code);
     insert_string(&mut map, "unavailableCode", view.unavailable_code);
     QVariant::from(&map)
+}
+
+fn to_qvariant_channel_options(options: &[ChannelOptionView]) -> QVariant {
+    let mut list = QVariantList::default();
+    list.reserve(options.len().try_into().unwrap_or(isize::MAX));
+    for option in options {
+        let mut map = QVariantMap::default();
+        insert_string(&mut map, "code", option.code);
+        insert_string(&mut map, "label", option.label);
+        insert_string(&mut map, "availability", &option.availability);
+        insert_bool(&mut map, "active", option.active);
+        insert_bool(&mut map, "selected", option.selected);
+        list.append(QVariant::from(&map));
+    }
+    QVariant::from(&list)
 }
 
 fn to_qvariant_list(libraries: &[UiLibrary]) -> QVariant {

@@ -4,7 +4,7 @@
 //! installation adapter, journal handle, path, credential, command, or effect
 //! execution capability.
 
-use synveil_install_engine::{FindingSeverity, PreflightFinding, TargetScope};
+use crate::installer_preflight::{InstallationChannel, PreflightOutcome, PreflightRequest};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PlatformCode {
@@ -199,7 +199,6 @@ enum ProcessState {
     },
     Error {
         code: WizardErrorCode,
-        details_open: bool,
         return_to: WizardStep,
     },
 }
@@ -209,67 +208,13 @@ pub struct PreflightToken {
     generation: u64,
 }
 
-/// Read-only input to the asynchronous capability check. This deliberately
-/// contains no path, artifact claim, credential, listener setting, or effect.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PreviewProbe {
-    generation: u64,
-    platform: PlatformCode,
-    host_setup_supported: bool,
-    client_connect_supported: bool,
-    role_supported: bool,
-    connection_supported: bool,
-}
-
-impl PreviewProbe {
-    pub fn inspect(self) -> PreflightReport {
-        PreflightReport {
-            generation: self.generation,
-            platform: self.platform,
-            host_setup_supported: self.host_setup_supported,
-            client_connect_supported: self.client_connect_supported,
-            selected_capabilities_supported: self.role_supported && self.connection_supported,
-            installer_preflight_ran: false,
-            verified_artifact_available: false,
-            plan_preview_available: false,
-            target_scope_detected: false,
-            privilege_assessed: false,
-            blocking_finding_count: 0,
-        }
-        .with_findings(&[])
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PreflightReport {
-    generation: u64,
-    platform: PlatformCode,
-    host_setup_supported: bool,
-    client_connect_supported: bool,
-    selected_capabilities_supported: bool,
-    /// P007 has no channel-specific engine adapter, so no installer preflight
-    /// has been run even though the read-only capability check completed.
-    installer_preflight_ran: bool,
-    verified_artifact_available: bool,
-    plan_preview_available: bool,
-    target_scope_detected: bool,
-    privilege_assessed: bool,
-    blocking_finding_count: u8,
-}
-
-impl PreflightReport {
-    /// Keep only the existence of blocking findings. Engine evidence strings,
-    /// identifiers and capability labels never cross into the UI model.
-    pub fn with_findings(mut self, findings: &[PreflightFinding]) -> Self {
-        self.blocking_finding_count = findings
-            .iter()
-            .filter(|finding| {
-                finding.blocks_planning || finding.severity == FindingSeverity::Blocking
-            })
-            .count()
-            .min(8) as u8;
-        self
-    }
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChannelOptionView {
+    pub code: &'static str,
+    pub label: &'static str,
+    pub availability: String,
+    pub active: bool,
+    pub selected: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -292,6 +237,7 @@ pub struct WizardView {
     pub private_lan_supported: bool,
     pub manual_supported: bool,
     pub report_ready: bool,
+    pub evidence_complete: bool,
     pub preview_invalidated: bool,
     pub installer_preflight_ran: bool,
     pub verified_artifact_available: bool,
@@ -299,6 +245,16 @@ pub struct WizardView {
     pub target_scope_detected: bool,
     pub privilege_assessed: bool,
     pub blocking_preflight_finding: bool,
+    pub selected_channel: &'static str,
+    pub channel_options: Vec<ChannelOptionView>,
+    pub platform_summary: String,
+    pub channel_summary: String,
+    pub connection_summary: String,
+    pub finding_summary: String,
+    pub artifact_summary: String,
+    pub plan_summary: String,
+    pub scope_summary: String,
+    pub capability_supported: bool,
     pub error_code: &'static str,
     pub unavailable_code: &'static str,
 }
@@ -306,24 +262,41 @@ pub struct WizardView {
 #[derive(Debug)]
 pub struct InstallerWizard {
     capabilities: WizardCapabilities,
+    initial_platform_summary: String,
     state: ProcessState,
     device_role: Option<DeviceRole>,
     connection_mode: Option<ConnectionMode>,
     generation: u64,
-    report: Option<PreflightReport>,
+    outcome: Option<PreflightOutcome>,
+    selected_channel: Option<InstallationChannel>,
     preview_invalidated: bool,
+    details_open: bool,
 }
 
 impl InstallerWizard {
     pub fn new(capabilities: WizardCapabilities) -> Self {
+        let initial_platform_summary = format!(
+            "{}; distribution and version inspection pending",
+            capabilities.platform.code()
+        );
+        Self::with_platform_summary(capabilities, initial_platform_summary)
+    }
+
+    pub fn with_platform_summary(
+        capabilities: WizardCapabilities,
+        initial_platform_summary: String,
+    ) -> Self {
         Self {
             capabilities,
+            initial_platform_summary,
             state: ProcessState::Closed,
             device_role: None,
             connection_mode: None,
             generation: 0,
-            report: None,
+            outcome: None,
+            selected_channel: None,
             preview_invalidated: false,
+            details_open: false,
         }
     }
 
@@ -333,8 +306,10 @@ impl InstallerWizard {
             return;
         }
         self.generation = self.generation.wrapping_add(1);
-        self.report = None;
+        self.outcome = None;
+        self.selected_channel = None;
         self.preview_invalidated = false;
+        self.details_open = false;
         self.device_role = self.capabilities.recommended_role();
         self.connection_mode = self.device_role.map(DeviceRole::default_connection);
         self.state = ProcessState::DeviceChoice;
@@ -342,10 +317,12 @@ impl InstallerWizard {
 
     pub fn cancel(&mut self) {
         self.generation = self.generation.wrapping_add(1);
-        self.report = None;
+        self.outcome = None;
         self.preview_invalidated = false;
+        self.details_open = false;
         self.device_role = None;
         self.connection_mode = None;
+        self.selected_channel = None;
         self.state = ProcessState::Closed;
     }
 
@@ -356,7 +333,7 @@ impl InstallerWizard {
         }
         if !self.capabilities.supports_role(role) {
             self.generation = self.generation.wrapping_add(1);
-            self.report = None;
+            self.outcome = None;
             self.state = ProcessState::Unavailable {
                 code: if self.capabilities.host_setup_supported
                     || self.capabilities.client_connect_supported
@@ -384,7 +361,7 @@ impl InstallerWizard {
         }
         if mode == ConnectionMode::Tailscale {
             self.generation = self.generation.wrapping_add(1);
-            self.report = None;
+            self.outcome = None;
             self.state = ProcessState::Unavailable {
                 code: UnavailableCode::TailscalePlanned,
                 return_to: WizardStep::Connection,
@@ -396,7 +373,7 @@ impl InstallerWizard {
             .is_some_and(|role| self.connection_supported(role, mode));
         if !supported {
             self.generation = self.generation.wrapping_add(1);
-            self.report = None;
+            self.outcome = None;
             self.state = ProcessState::Unavailable {
                 code: UnavailableCode::MissingCapability,
                 return_to: WizardStep::Connection,
@@ -406,6 +383,33 @@ impl InstallerWizard {
         if self.connection_mode != Some(mode) {
             self.invalidate_preview();
             self.connection_mode = Some(mode);
+        }
+    }
+
+    pub fn select_installation_channel(&mut self, channel: InstallationChannel) {
+        if self.state != ProcessState::ConnectionChoice
+            || !channel.belongs_to(self.capabilities.platform)
+        {
+            self.fail(WizardErrorCode::InvalidSelection);
+            return;
+        }
+        if self.selected_channel != Some(channel) {
+            self.invalidate_preview();
+            self.selected_channel = Some(channel);
+        }
+    }
+
+    /// Future artifact acquisition paths must invalidate any inspected
+    /// evidence before presenting a replacement artifact choice.
+    pub fn artifact_changed(&mut self) {
+        if matches!(
+            self.state,
+            ProcessState::ConnectionChoice | ProcessState::Review
+        ) {
+            self.invalidate_preview();
+            if self.state == ProcessState::Review {
+                self.state = ProcessState::ConnectionChoice;
+            }
         }
     }
 
@@ -453,6 +457,7 @@ impl InstallerWizard {
             return None;
         }
         self.generation = self.generation.wrapping_add(1);
+        self.outcome = None;
         let token = PreflightToken {
             generation: self.generation,
         };
@@ -462,7 +467,7 @@ impl InstallerWizard {
         Some(token)
     }
 
-    pub fn probe_for(&self, token: PreflightToken) -> Option<PreviewProbe> {
+    pub fn request_for(&self, token: PreflightToken) -> Option<PreflightRequest> {
         if self.state
             != (ProcessState::Preflight {
                 generation: token.generation,
@@ -473,20 +478,20 @@ impl InstallerWizard {
         }
         let role = self.device_role?;
         let mode = self.connection_mode?;
-        Some(PreviewProbe {
+        Some(PreflightRequest {
             generation: token.generation,
-            platform: self.capabilities.platform,
-            host_setup_supported: self.capabilities.host_setup_supported,
-            client_connect_supported: self.capabilities.client_connect_supported,
-            role_supported: self.capabilities.supports_role(role),
-            connection_supported: self.connection_supported(role, mode),
+            role,
+            connection_mode: mode,
+            selected_channel: self.selected_channel,
+            client_profile_available: self.capabilities.client_connect_supported,
+            existing_installation_available: self.capabilities.existing_installation_configurable,
         })
     }
 
     pub fn complete_preflight(
         &mut self,
         token: PreflightToken,
-        report: Result<PreflightReport, ()>,
+        outcome: Result<PreflightOutcome, ()>,
     ) -> bool {
         if self.state
             != (ProcessState::Preflight {
@@ -496,27 +501,26 @@ impl InstallerWizard {
         {
             return false;
         }
-        match report {
-            Ok(report)
-                if report.generation == token.generation
-                    && report.selected_capabilities_supported =>
-            {
-                self.report = Some(report);
+        let Some(request) = self.request_for(token) else {
+            return false;
+        };
+        match outcome {
+            Ok(outcome) if outcome.binding.matches_request(request) => {
+                self.outcome = Some(outcome);
                 self.preview_invalidated = false;
                 self.state = ProcessState::Review;
             }
-            Ok(report) if report.generation == token.generation => {
-                self.report = Some(report);
-                self.state = ProcessState::Unavailable {
-                    code: UnavailableCode::MissingCapability,
-                    return_to: WizardStep::Review,
-                };
-            }
-            _ => {
-                self.report = None;
+            Ok(_) => {
+                self.outcome = None;
                 self.state = ProcessState::Error {
                     code: WizardErrorCode::SafePreflightFailed,
-                    details_open: false,
+                    return_to: WizardStep::Connection,
+                };
+            }
+            Err(()) => {
+                self.outcome = None;
+                self.state = ProcessState::Error {
+                    code: WizardErrorCode::SafePreflightFailed,
                     return_to: WizardStep::Connection,
                 };
             }
@@ -545,13 +549,13 @@ impl InstallerWizard {
             ProcessState::ConnectionChoice => self.state = ProcessState::DeviceChoice,
             ProcessState::Preflight { .. } => {
                 self.generation = self.generation.wrapping_add(1);
-                self.report = None;
+                self.outcome = None;
                 self.state = ProcessState::ConnectionChoice;
             }
             ProcessState::Review => self.state = ProcessState::ConnectionChoice,
             ProcessState::Unavailable { return_to, .. } | ProcessState::Error { return_to, .. } => {
                 self.generation = self.generation.wrapping_add(1);
-                self.report = None;
+                self.outcome = None;
                 self.state = match return_to {
                     WizardStep::Device => ProcessState::DeviceChoice,
                     WizardStep::Connection => ProcessState::ConnectionChoice,
@@ -563,18 +567,14 @@ impl InstallerWizard {
     }
 
     pub fn set_error_details_open(&mut self, open: bool) {
-        if let ProcessState::Error {
-            code, return_to, ..
-        } = self.state
-        {
-            self.state = ProcessState::Error {
-                code,
-                details_open: open,
-                return_to,
-            };
-        } else {
+        if !matches!(
+            self.state,
+            ProcessState::Error { .. } | ProcessState::Review
+        ) {
             self.fail(WizardErrorCode::InvalidTransition);
+            return;
         }
+        self.details_open = open;
     }
 
     pub fn reject_invalid_selection(&mut self) {
@@ -628,13 +628,7 @@ impl InstallerWizard {
                 ..
             }
         );
-        let details_open = matches!(
-            self.state,
-            ProcessState::Error {
-                details_open: true,
-                ..
-            }
-        );
+        let details_open = self.details_open;
         let error_code = match self.state {
             ProcessState::Error { code, .. } => code.code(),
             _ => "",
@@ -643,8 +637,80 @@ impl InstallerWizard {
             ProcessState::Unavailable { code, .. } => code.code(),
             _ => "",
         };
-        let report = self.report;
+        let outcome = self.outcome.as_ref();
         let role = self.device_role;
+        let channel_options = InstallationChannel::choices_for(self.capabilities.platform)
+            .into_iter()
+            .map(|channel| {
+                let evidence = outcome.and_then(|outcome| {
+                    outcome
+                        .binding
+                        .channels
+                        .iter()
+                        .find(|item| item.channel == channel)
+                });
+                ChannelOptionView {
+                    code: channel.code(),
+                    label: channel.label(),
+                    availability: evidence.map_or_else(
+                        || "not inspected".to_owned(),
+                        |item| item.availability.label().to_owned(),
+                    ),
+                    active: evidence.is_some_and(|item| item.active),
+                    selected: self.selected_channel == Some(channel),
+                }
+            })
+            .collect();
+        let selected_channel = self.selected_channel.map_or("", InstallationChannel::code);
+        let platform_summary = outcome.map_or_else(
+            || self.initial_platform_summary.clone(),
+            PreflightOutcome::platform_summary,
+        );
+        let channel_summary = outcome.map_or_else(
+            || "Installation channels have not been inspected.".to_owned(),
+            PreflightOutcome::channel_summary,
+        );
+        let connection_summary = outcome.map_or_else(
+            || {
+                "This is a preference only. The read-only check will not alter network settings."
+                    .to_owned()
+            },
+            PreflightOutcome::connection_summary,
+        );
+        let finding_summary = outcome.map_or_else(
+            || "Read-only capability inspection has not run.".to_owned(),
+            PreflightOutcome::finding_summary,
+        );
+        let artifact_summary = outcome.map_or_else(
+            || "No artifact was supplied or verified.".to_owned(),
+            PreflightOutcome::artifact_summary,
+        );
+        let plan_summary = outcome.map_or(
+            "Plan preview unavailable — verified artifact evidence required",
+            PreflightOutcome::plan_summary,
+        );
+        let scope_summary = outcome.map_or_else(
+            || "Target scope unavailable until a channel is identified.".to_owned(),
+            PreflightOutcome::scope_summary,
+        );
+        let blocking = outcome.is_some_and(|outcome| {
+            outcome.findings.iter().any(|finding| {
+                finding.severity == synveil_install_engine::FindingSeverity::Blocking
+            })
+        });
+        let verified_artifact_available = outcome.is_some_and(|outcome| {
+            outcome.selected_channel().is_some_and(|channel| {
+                channel.artifact_evidence
+                    == crate::installer_preflight::ArtifactEvidenceClass::VerifiedReleaseArtifact
+            })
+        });
+        let plan_available = outcome.is_some_and(|outcome| {
+            matches!(
+                &outcome.plan_preview,
+                crate::installer_preflight::PlanPreviewAvailability::Available(_)
+                    | crate::installer_preflight::PlanPreviewAvailability::PartiallyAvailable(_)
+            )
+        });
         WizardView {
             visible: self.state != ProcessState::Closed,
             state,
@@ -656,32 +722,46 @@ impl InstallerWizard {
             details_open,
             device_role: role.map_or("", DeviceRole::code),
             connection_mode: self.connection_mode.map_or("", ConnectionMode::code),
-            platform: report.map_or(self.capabilities.platform.code(), |value| {
-                value.platform.code()
+            platform: self.capabilities.platform.code(),
+            host_supported: outcome.map_or(self.capabilities.host_setup_supported, |value| {
+                value.binding.platform.managed_host_supported
             }),
-            host_supported: report.map_or(self.capabilities.host_setup_supported, |value| {
-                value.host_setup_supported
-            }),
-            client_supported: report.map_or(self.capabilities.client_connect_supported, |value| {
-                value.client_connect_supported
-            }),
-            existing_supported: self.capabilities.existing_installation_configurable,
+            client_supported: self.capabilities.client_connect_supported,
+            existing_supported: self.capabilities.existing_installation_configurable
+                || outcome.is_some_and(|value| {
+                    value.binding.channels.iter().any(|channel| {
+                        channel.channel == InstallationChannel::ExistingInstallation
+                            && channel.active
+                    })
+                }),
             local_only_supported: role
                 .is_some_and(|role| self.connection_supported(role, ConnectionMode::LocalOnly)),
             private_lan_supported: role
                 .is_some_and(|role| self.connection_supported(role, ConnectionMode::PrivateLan)),
             manual_supported: role
                 .is_some_and(|role| self.connection_supported(role, ConnectionMode::Manual)),
-            report_ready: report.is_some(),
+            report_ready: outcome.is_some(),
+            evidence_complete: outcome
+                .is_some_and(|value| value.binding.platform.operating_system_evidence_complete),
             preview_invalidated: self.preview_invalidated,
-            installer_preflight_ran: report.is_some_and(|value| value.installer_preflight_ran),
-            verified_artifact_available: report
-                .is_some_and(|value| value.verified_artifact_available),
-            plan_preview_available: report.is_some_and(|value| value.plan_preview_available),
-            target_scope_detected: report.is_some_and(|value| value.target_scope_detected),
-            privilege_assessed: report.is_some_and(|value| value.privilege_assessed),
-            blocking_preflight_finding: report
-                .is_some_and(|value| value.blocking_finding_count > 0),
+            installer_preflight_ran: false,
+            verified_artifact_available,
+            plan_preview_available: plan_available,
+            target_scope_detected: outcome
+                .and_then(PreflightOutcome::selected_channel)
+                .is_some_and(|channel| channel.target_scope.is_some()),
+            privilege_assessed: false,
+            blocking_preflight_finding: blocking,
+            selected_channel,
+            channel_options,
+            platform_summary,
+            channel_summary,
+            connection_summary,
+            finding_summary,
+            artifact_summary,
+            plan_summary: plan_summary.to_owned(),
+            scope_summary,
+            capability_supported: outcome.is_some_and(|value| value.selected_channel_supported),
             error_code,
             unavailable_code,
         }
@@ -704,9 +784,9 @@ impl InstallerWizard {
     }
 
     fn invalidate_preview(&mut self) {
-        self.preview_invalidated |= self.report.is_some();
+        self.preview_invalidated |= self.outcome.is_some();
         self.generation = self.generation.wrapping_add(1);
-        self.report = None;
+        self.outcome = None;
     }
 
     fn fail(&mut self, code: WizardErrorCode) {
@@ -721,19 +801,9 @@ impl InstallerWizard {
             }
         };
         self.generation = self.generation.wrapping_add(1);
-        self.report = None;
-        self.state = ProcessState::Error {
-            code,
-            details_open: false,
-            return_to,
-        };
+        self.outcome = None;
+        self.state = ProcessState::Error { code, return_to };
     }
-}
-
-/// No target scope is actionable in P007. The package or platform owner must
-/// provide verified channel evidence before a later plan can carry a scope.
-pub const fn target_scope_supported(_scope: TargetScope) -> bool {
-    false
 }
 
 #[cfg(test)]
@@ -741,7 +811,7 @@ mod tests {
     use super::*;
 
     fn capabilities() -> WizardCapabilities {
-        WizardCapabilities::new(PlatformCode::Linux, true, true, false)
+        WizardCapabilities::new(PlatformCode::current(), true, true, false)
     }
 
     fn open_at_connection() -> InstallerWizard {
@@ -754,8 +824,9 @@ mod tests {
     fn reviewed_wizard() -> (InstallerWizard, PreflightToken) {
         let mut wizard = open_at_connection();
         let token = wizard.continue_forward().expect("preflight starts once");
-        let report = wizard.probe_for(token).expect("current probe").inspect();
-        assert!(wizard.complete_preflight(token, Ok(report)));
+        let request = wizard.request_for(token).expect("current request");
+        let outcome = crate::installer_preflight::inspect(request);
+        assert!(wizard.complete_preflight(token, Ok(outcome)));
         (wizard, token)
     }
 
@@ -786,7 +857,7 @@ mod tests {
         assert_eq!(wizard.view().state, "preflight");
         wizard.back();
         assert_eq!(wizard.view().state, "connection_choice");
-        assert!(wizard.probe_for(token).is_none());
+        assert!(wizard.request_for(token).is_none());
     }
 
     #[test]
@@ -797,7 +868,7 @@ mod tests {
         let generation = wizard.generation;
         wizard.select_device_role(DeviceRole::Host);
         assert!(wizard.generation > generation);
-        assert!(wizard.report.is_none());
+        assert!(wizard.outcome.is_none());
         assert_eq!(wizard.view().device_role, "host");
         assert_eq!(wizard.view().connection_mode, "local_only");
     }
@@ -809,8 +880,43 @@ mod tests {
         let generation = wizard.generation;
         wizard.select_connection_mode(ConnectionMode::PrivateLan);
         assert!(wizard.generation > generation);
-        assert!(wizard.report.is_none());
+        assert!(wizard.outcome.is_none());
         assert_eq!(wizard.view().connection_mode, "private_lan");
+    }
+
+    #[test]
+    fn changing_channel_invalidates_the_bound_preview() {
+        let (mut wizard, _) = reviewed_wizard();
+        wizard.back();
+        let generation = wizard.generation;
+        let channel = InstallationChannel::choices_for(PlatformCode::current())[0];
+        wizard.select_installation_channel(channel);
+        assert!(wizard.generation > generation);
+        assert!(wizard.outcome.is_none());
+        assert_eq!(wizard.view().selected_channel, channel.code());
+    }
+
+    #[test]
+    fn artifact_change_invalidates_the_preview_before_a_new_check() {
+        let (mut wizard, old_token) = reviewed_wizard();
+        let old_outcome = wizard.outcome.clone().expect("completed inspection");
+        wizard.back();
+        wizard.artifact_changed();
+        assert!(wizard.outcome.is_none());
+        assert!(wizard.view().preview_invalidated);
+        assert!(!wizard.complete_preflight(old_token, Ok(old_outcome)));
+    }
+
+    #[test]
+    fn mismatched_preflight_binding_is_ignored() {
+        let mut wizard = open_at_connection();
+        let token = wizard.continue_forward().expect("preflight starts");
+        let request = wizard.request_for(token).expect("current request");
+        let mut outcome = crate::installer_preflight::inspect(request);
+        outcome.binding.selection.generation = outcome.binding.selection.generation.wrapping_add(1);
+        assert!(wizard.complete_preflight(token, Ok(outcome)));
+        assert_eq!(wizard.view().state, "error");
+        assert!(!wizard.view().report_ready);
     }
 
     #[test]
@@ -846,18 +952,6 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_installation_scopes_remain_unavailable() {
-        for scope in [
-            TargetScope::CurrentUser,
-            TargetScope::System,
-            TargetScope::NativePackage,
-            TargetScope::PortableUser,
-        ] {
-            assert!(!target_scope_supported(scope));
-        }
-    }
-
-    #[test]
     fn no_verified_artifact_or_authoritative_plan_is_claimed() {
         let (wizard, _) = reviewed_wizard();
         let view = wizard.view();
@@ -868,26 +962,12 @@ mod tests {
     }
 
     #[test]
-    fn blocking_engine_finding_is_reduced_to_a_bounded_boolean() {
-        let mut wizard = open_at_connection();
-        let token = wizard.continue_forward().expect("preflight starts");
-        let finding = PreflightFinding {
-            finding_id: "/private/path/with-secret".into(),
-            severity: FindingSeverity::Blocking,
-            capability: "raw capability data".into(),
-            redacted_evidence: "raw diagnostic with token=secret".into(),
-            blocks_planning: true,
-        };
-        let report = wizard
-            .probe_for(token)
-            .expect("probe exists")
-            .inspect()
-            .with_findings(&[finding]);
-        assert_eq!(report.blocking_finding_count, 1);
-        assert!(!format!("{report:?}").contains("private/path"));
-        assert!(!format!("{report:?}").contains("secret"));
-        assert!(wizard.complete_preflight(token, Ok(report)));
-        assert!(wizard.view().blocking_preflight_finding);
+    fn findings_are_safe_categories_and_never_carry_raw_evidence() {
+        let (wizard, _) = reviewed_wizard();
+        let view = wizard.view();
+        assert!(!view.finding_summary.contains("/private/path"));
+        assert!(!view.finding_summary.contains("secret"));
+        assert!(!view.finding_summary.contains("token="));
     }
 
     #[test]
@@ -912,10 +992,11 @@ mod tests {
     fn cancellation_invalidates_pending_work_and_only_clears_ephemeral_state() {
         let mut wizard = open_at_connection();
         let token = wizard.continue_forward().expect("preflight starts");
-        let report = wizard.probe_for(token).expect("probe exists").inspect();
+        let request = wizard.request_for(token).expect("request exists");
+        let outcome = crate::installer_preflight::inspect(request);
         wizard.cancel();
         assert_eq!(wizard.view().state, "closed");
-        assert!(!wizard.complete_preflight(token, Ok(report)));
+        assert!(!wizard.complete_preflight(token, Ok(outcome)));
         assert_eq!(wizard.view().device_role, "");
     }
 
@@ -923,10 +1004,11 @@ mod tests {
     fn out_of_order_result_is_ignored_after_selection_changes() {
         let mut wizard = open_at_connection();
         let token = wizard.continue_forward().expect("preflight starts");
-        let report = wizard.probe_for(token).expect("probe exists").inspect();
+        let request = wizard.request_for(token).expect("request exists");
+        let outcome = crate::installer_preflight::inspect(request);
         wizard.back();
         wizard.select_connection_mode(ConnectionMode::PrivateLan);
-        assert!(!wizard.complete_preflight(token, Ok(report)));
+        assert!(!wizard.complete_preflight(token, Ok(outcome)));
         assert_eq!(wizard.view().state, "connection_choice");
         assert!(!wizard.view().report_ready);
     }
@@ -940,8 +1022,9 @@ mod tests {
         wizard.set_error_details_open(true);
         assert!(wizard.view().details_open);
         let retry = wizard.retry_safe_preflight().expect("safe retry");
-        let report = wizard.probe_for(retry).expect("retry probe").inspect();
-        assert!(wizard.complete_preflight(retry, Ok(report)));
+        let request = wizard.request_for(retry).expect("retry request");
+        let outcome = crate::installer_preflight::inspect(request);
+        assert!(wizard.complete_preflight(retry, Ok(outcome)));
         assert_eq!(wizard.view().state, "review");
         wizard.cancel();
         wizard.open();
@@ -969,6 +1052,10 @@ mod tests {
         assert!(main_qml.contains("bridge.chooseHost()"));
         assert!(main_qml.contains("bridge.chooseConnect()"));
         assert!(wizard_qml.contains("Preview only — installation is not started"));
+        assert!(!wizard_qml.contains("qsTr(\"Install\")"));
+        assert!(!wizard_qml.contains("qsTr(\"Apply\")"));
+        assert!(!wizard_qml.contains("qsTr(\"Repair\")"));
+        assert!(!wizard_qml.contains("qsTr(\"Configure\")"));
         assert!(!wizard_qml.contains("hostConfirm("));
         assert!(!wizard_qml.contains("hostReview("));
         assert!(!wizard_qml.contains("systemctl"));
