@@ -351,7 +351,7 @@ impl PlanPreviewUnavailableReason {
     pub const fn label(self) -> &'static str {
         match self {
             Self::VerifiedArtifactEvidenceRequired => {
-                "Plan preview unavailable — verified artifact evidence required"
+                "Plan preview unavailable — authenticated release evidence and approved production trust policy are unavailable"
             }
             Self::AuthoritativePlanBuilderUnavailable => {
                 "Plan preview unavailable — no authoritative plan builder exists for this channel"
@@ -1452,7 +1452,7 @@ mod tests {
         assert_ne!(class, ArtifactEvidenceClass::VerifiedReleaseArtifact);
         assert_eq!(
             PlanPreviewUnavailableReason::VerifiedArtifactEvidenceRequired.label(),
-            "Plan preview unavailable — verified artifact evidence required"
+            "Plan preview unavailable — authenticated release evidence and approved production trust policy are unavailable"
         );
     }
 

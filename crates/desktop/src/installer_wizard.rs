@@ -690,7 +690,7 @@ impl InstallerWizard {
             PreflightOutcome::artifact_summary,
         );
         let plan_summary = outcome.map_or(
-            "Plan preview unavailable — verified artifact evidence required",
+            "Plan preview unavailable — authenticated release evidence and approved production trust policy are unavailable",
             PreflightOutcome::plan_summary,
         );
         let confirmation_status = match outcome.map(|value| &value.plan_preview) {
@@ -879,7 +879,7 @@ mod tests {
         assert!(!view.acknowledgement_available);
         assert_eq!(
             view.acknowledgement_reason,
-            "Plan preview unavailable — verified artifact evidence required"
+            "Plan preview unavailable — authenticated release evidence and approved production trust policy are unavailable"
         );
         assert!(!view.verified_artifact_available);
         assert!(!view.target_scope_detected);
