@@ -310,6 +310,8 @@ mod tests {
                 artifact_size_bytes: 1024,
                 manifest_sha256: "c".repeat(64),
                 authentication_method: "synthetic-test-only".into(),
+                source_provenance_reference: "release-artifact:fixture-ubuntu-deb".into(),
+                trust_policy_identity: "synthetic-test-policy-only".into(),
                 verified_local_path: "/synthetic/fixture.deb".into(),
             },
         };

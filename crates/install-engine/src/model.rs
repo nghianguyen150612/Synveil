@@ -97,6 +97,12 @@ pub struct VerifiedArtifactEvidence {
     pub artifact_size_bytes: u64,
     pub manifest_sha256: String,
     pub authentication_method: String,
+    /// Authenticated source/provenance reference bound to the reviewed bytes.
+    #[serde(default)]
+    pub source_provenance_reference: String,
+    /// Identity of the trust policy used to authenticate the source.
+    #[serde(default)]
+    pub trust_policy_identity: String,
     pub verified_local_path: String,
 }
 

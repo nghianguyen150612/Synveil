@@ -1456,6 +1456,8 @@ mod tests {
                 artifact_size_bytes: 1024,
                 manifest_sha256: "c".repeat(64),
                 authentication_method: "synthetic-test-only".into(),
+                source_provenance_reference: "release-artifact:fixture-appimage".into(),
+                trust_policy_identity: "synthetic-test-policy-only".into(),
                 verified_local_path: "/fixture/AppImage".into(),
             },
         };
@@ -1553,21 +1555,30 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let digest = format!("{:x}", sha2::Sha256::digest(bytes));
-        let (artifact_id, artifact_type, product_version, source_commit, manifest_identity) =
-            match &mut plan.artifact {
-                Some(ArtifactEvidence::VerifiedReleaseArtifact { evidence }) => {
-                    evidence.artifact_sha256 = digest.clone();
-                    evidence.artifact_size_bytes = bytes.len() as u64;
-                    (
-                        evidence.artifact_id.clone(),
-                        evidence.artifact_type.clone(),
-                        evidence.product_version.clone(),
-                        evidence.source_commit.clone(),
-                        evidence.manifest_sha256.clone(),
-                    )
-                }
-                _ => panic!("fixture has release artifact evidence"),
-            };
+        let (
+            artifact_id,
+            artifact_type,
+            product_version,
+            source_commit,
+            manifest_identity,
+            trust_policy_identity,
+            source_provenance_reference,
+        ) = match &mut plan.artifact {
+            Some(ArtifactEvidence::VerifiedReleaseArtifact { evidence }) => {
+                evidence.artifact_sha256 = digest.clone();
+                evidence.artifact_size_bytes = bytes.len() as u64;
+                (
+                    evidence.artifact_id.clone(),
+                    evidence.artifact_type.clone(),
+                    evidence.product_version.clone(),
+                    evidence.source_commit.clone(),
+                    evidence.manifest_sha256.clone(),
+                    evidence.trust_policy_identity.clone(),
+                    evidence.source_provenance_reference.clone(),
+                )
+            }
+            _ => panic!("fixture has release artifact evidence"),
+        };
         request.verified_artifact = plan.artifact.clone();
 
         let identity =
@@ -1580,8 +1591,8 @@ mod tests {
                 expected_size_bytes: Some(bytes.len() as u64),
                 manifest_identity,
                 manifest_generation: context.manifest_generation,
-                trust_policy_identity: "synthetic-test-policy-only".into(),
-                source_provenance_reference: "release-artifact:fixture-appimage".into(),
+                trust_policy_identity,
+                source_provenance_reference,
             })
             .expect("test-only expected evidence");
         let verification_context = ArtifactVerificationContext::from_current_review(

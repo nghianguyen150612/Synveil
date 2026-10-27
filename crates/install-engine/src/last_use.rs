@@ -430,6 +430,8 @@ impl VerifiedArtifactHandle {
             && self.identity.product_version == evidence.product_version
             && self.identity.source_commit == evidence.source_commit
             && self.identity.manifest_identity == evidence.manifest_sha256
+            && self.identity.source_provenance_reference == evidence.source_provenance_reference
+            && self.identity.trust_policy_identity == evidence.trust_policy_identity
             && self.identity.manifest_generation == context.manifest_generation
             && self.identity.expected_sha256.is_some_and(|digest| {
                 evidence.artifact_sha256 == hex_digest(&digest) && self.verified_digest == digest

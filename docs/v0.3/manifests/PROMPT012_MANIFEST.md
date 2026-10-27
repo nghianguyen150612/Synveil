@@ -60,14 +60,17 @@ rollup had 20 success and the single P028 `standard-user-native` failure:
   — installation is not started.” and does not present publisher trust as
   verified.
 - Added exact authenticated artifact size to validated plan evidence and the
-  review fingerprint. Missing size deserializes as zero and fails validation.
+  review fingerprint. Source-provenance reference and trust-policy identity
+  are also required typed plan fields; all three are bound into the review
+  fingerprint, last-use handle comparison, and adapter effect bindings. Missing
+  fields deserialize empty and fail validation.
 
 ## Local validation
 
 | Command or suite | Outcome |
 |---|---|
 | `cargo fmt --all -- --check` | Passed after formatting |
-| `cargo test -p synveil-install-engine --locked` | Passed; 49 unit tests and all package integration suites, including the P012 cases |
+| `cargo test -p synveil-install-engine --locked` | Passed; 50 unit tests and all package integration suites, including the P012 cases |
 | `cargo clippy -p synveil-install-engine --all-targets --locked -- -D warnings` | Passed |
 | `cargo test -p synveil-desktop --locked` | Blocked at `libdbus-sys`: system `dbus-1.pc` is absent |
 | `cargo clippy -p synveil-desktop --all-targets --locked -- -D warnings` | Blocked at the same missing `dbus-1.pc` |
@@ -82,14 +85,16 @@ rollup had 20 success and the single P028 `standard-user-native` failure:
 | Installer security tests | Passed: 23 |
 | `scripts/validate-install-journal.sh` | Passed: 91 journal contract tests |
 | `scripts/validate-installer-security-hardening.py` | Passed |
+| `scripts/validate-p036-production-artifacts.py` | Blocked: `production-artifacts.json` has not been supplied |
 
 ## P012 native hosted qualification
 
-Exact-head P012 GitHub Actions runs are pending until the draft pull request is
-created. Required Linux and Windows compilation/UI checks must complete on the
-P012 code head. Queued, skipped, cancelled, or environment-blocked jobs do not
-count as passes. P028's interactive desktop/new-logon/named-pipe acceptance
-remains an independent release gate even if the P012 native UI jobs pass.
+Exact-head P012 GitHub Actions status is recorded after the latest source and
+documentation commit is pushed. Required Linux and Windows compilation/UI
+checks must complete on that exact head. Queued, skipped, cancelled, or
+environment-blocked jobs do not count as passes. P028's interactive
+desktop/new-logon/named-pipe acceptance remains an independent release gate
+even if the P012 native UI jobs pass.
 
 ## Remaining policy and qualification blockers
 
@@ -112,4 +117,7 @@ remains an independent release gate even if the P012 native UI jobs pass.
 Branch: `feat/v03-p012-last-use-adapter-contracts`
 
 Target: `develop/v0.3`
-Commit and draft PR URL: recorded after push and PR creation.
+Draft PR: [#172](https://github.com/nghianguyen150612/Synveil/pull/172)
+
+Latest commit and exact-head hosted status: recorded after the final source and
+documentation update is pushed.

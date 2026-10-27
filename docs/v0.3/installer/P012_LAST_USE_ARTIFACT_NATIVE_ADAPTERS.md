@@ -48,9 +48,13 @@ policy) remain `RECOMMENDED_PENDING_APPROVAL`.
 outcomes, plus a generation-bound request state machine. The identity binds
 artifact ID/type/version/source revision, expected SHA-256 and exact size,
 manifest identity and generation, trust-policy identity, and provenance
-reference. The review context binds platform, architecture, channel, full plan
-fingerprint, capability generation, installation-state generation, catalog
-version, and policy version. Missing or stale bindings block.
+reference. The trust-policy identity and source-provenance reference are
+required typed plan evidence; both are included in the review fingerprint,
+rechecked against the private last-use handle, and copied into each native
+adapter effect binding. Missing values deserialize empty and fail plan
+validation. The review context binds platform, architecture, channel, full
+plan fingerprint, capability generation, installation-state generation,
+catalog version, and policy version. Missing or stale bindings block.
 
 The only expected-evidence handoff is crate-private and accepts an
 `AuthenticatedManifestArtifact`. It currently has no production caller. The
@@ -156,8 +160,10 @@ installation is not started.”**
 ## Tests and current qualification gaps
 
 P012 adds isolated verifier and adapter fixtures. Tests cover exact digest and
-size, wrong digest, missing digest/size, truncation, append, same-size content
-change, symlink, FIFO, unsupported size, absent trust/manifest evidence, stale
+size, wrong digest, missing digest/size, missing provenance or trust-policy
+identity, fingerprint invalidation when either identity changes, truncation,
+append, same-size content change, symlink, FIFO, unsupported size, absent
+trust/manifest evidence, stale
 manifest context, path replacement, duplicate/cancelled/stale completion,
 unknown effects, owner mismatch, scope mismatch, unsupported Windows system
 and Linux elevated scopes, stale capability bindings, synthetic closed

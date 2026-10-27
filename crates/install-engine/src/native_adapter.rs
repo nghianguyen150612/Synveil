@@ -189,6 +189,8 @@ pub struct AdapterEffectBinding {
     pub artifact_sha256: String,
     pub artifact_size_bytes: u64,
     pub manifest_identity: String,
+    pub source_provenance_reference: String,
+    pub trust_policy_identity: String,
     pub manifest_generation: u64,
     pub capability_generation: u64,
     pub installation_state_generation: u64,
@@ -228,6 +230,10 @@ impl AdapterValidationResult {
         review: &PlanReviewSnapshot,
         context: &PlanReviewContext,
     ) -> bool {
+        let Some(crate::ArtifactEvidence::VerifiedReleaseArtifact { evidence }) = &plan.artifact
+        else {
+            return false;
+        };
         self.status == AdapterValidationStatus::ContractOnly
             && self.fingerprint == Some(review.fingerprint())
             && self.plan_id == plan.plan_id
@@ -238,6 +244,12 @@ impl AdapterValidationResult {
             && self.capability.target_scope == plan.target_scope
             && self.effect_bindings.iter().all(|binding| {
                 binding.plan_fingerprint_sha256 == review.fingerprint().as_hex()
+                    && binding.artifact_identity == evidence.artifact_id
+                    && binding.artifact_sha256 == evidence.artifact_sha256
+                    && binding.artifact_size_bytes == evidence.artifact_size_bytes
+                    && binding.manifest_identity == evidence.manifest_sha256
+                    && binding.source_provenance_reference == evidence.source_provenance_reference
+                    && binding.trust_policy_identity == evidence.trust_policy_identity
                     && binding.manifest_generation == context.manifest_generation.unwrap_or(0)
                     && binding.capability_generation == context.capability_generation
                     && binding.installation_state_generation
@@ -398,6 +410,8 @@ pub fn validate_native_adapter_capability(
                 artifact_sha256: artifact.artifact_sha256.clone(),
                 artifact_size_bytes: artifact.artifact_size_bytes,
                 manifest_identity: artifact.manifest_sha256.clone(),
+                source_provenance_reference: artifact.source_provenance_reference.clone(),
+                trust_policy_identity: artifact.trust_policy_identity.clone(),
                 manifest_generation: context.manifest_generation.unwrap_or(0),
                 capability_generation: context.capability_generation,
                 installation_state_generation: context.installation_state_generation,
@@ -643,6 +657,8 @@ mod tests {
                 artifact_size_bytes: 1024,
                 manifest_sha256: "c".repeat(64),
                 authentication_method: "synthetic-test-only".into(),
+                source_provenance_reference: "release-artifact:fixture-appimage".into(),
+                trust_policy_identity: "synthetic-test-policy-only".into(),
                 verified_local_path: "/private/fixture/AppImage".into(),
             },
         };
@@ -925,6 +941,17 @@ mod tests {
                 .contains(&AdapterValidationBlocker::ClosedCatalogUnavailable)
         );
         assert!(validation.matches_current(&request, &plan, &review, &context));
+
+        let mut changed_binding = validation.clone();
+        changed_binding.effect_bindings[0]
+            .source_provenance_reference
+            .push_str("-changed");
+        assert!(!changed_binding.matches_current(&request, &plan, &review, &context));
+        let mut changed_binding = validation.clone();
+        changed_binding.effect_bindings[0]
+            .trust_policy_identity
+            .push_str("-changed");
+        assert!(!changed_binding.matches_current(&request, &plan, &review, &context));
 
         let mut wrong_owner = entries;
         wrong_owner[0].adapter = EffectAdapter::NativePackageManager;

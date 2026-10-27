@@ -602,6 +602,8 @@ struct CanonicalVerifiedArtifact<'a> {
     artifact_size_bytes: u64,
     manifest_sha256: &'a str,
     authentication_method: &'a str,
+    source_provenance_reference: &'a str,
+    trust_policy_identity: &'a str,
 }
 
 #[derive(Serialize)]
@@ -624,6 +626,8 @@ fn canonical_artifact(artifact: &ArtifactEvidence) -> CanonicalArtifact<'_> {
                     artifact_size_bytes: evidence.artifact_size_bytes,
                     manifest_sha256: &evidence.manifest_sha256,
                     authentication_method: &evidence.authentication_method,
+                    source_provenance_reference: &evidence.source_provenance_reference,
+                    trust_policy_identity: &evidence.trust_policy_identity,
                 },
             }
         }
@@ -706,6 +710,8 @@ mod tests {
                 artifact_size_bytes: 1024,
                 manifest_sha256: "b".repeat(64),
                 authentication_method: "fixture-only".into(),
+                source_provenance_reference: "release-artifact:fixture-appimage".into(),
+                trust_policy_identity: "synthetic-test-policy-only".into(),
                 verified_local_path: "/private/user/downloads/synveil.AppImage".into(),
             },
         }
@@ -911,6 +917,27 @@ mod tests {
             snapshot(&request, &plan, context()),
             Err(EngineErrorCode::InvalidPlan)
         ));
+
+        for change_trust_identity in [false, true] {
+            let (request, mut plan) = request_and_plan();
+            if let Some(ArtifactEvidence::VerifiedReleaseArtifact { evidence }) =
+                plan.artifact.as_mut()
+            {
+                if change_trust_identity {
+                    evidence.trust_policy_identity.clear();
+                } else {
+                    evidence.source_provenance_reference.clear();
+                }
+            }
+            let request = InstallationRequest {
+                verified_artifact: plan.artifact.clone(),
+                ..request
+            };
+            assert!(matches!(
+                snapshot(&request, &plan, context()),
+                Err(EngineErrorCode::InvalidPlan)
+            ));
+        }
     }
 
     #[test]
@@ -1063,6 +1090,33 @@ mod tests {
         };
         let resized = snapshot(&resized_request, &resized_plan, context()).unwrap();
         assert_ne!(original, resized.fingerprint());
+    }
+
+    #[test]
+    fn provenance_reference_and_trust_policy_identity_are_fingerprinted() {
+        let (request, plan) = request_and_plan();
+        let original = snapshot(&request, &plan, context()).unwrap().fingerprint();
+
+        for change_trust_identity in [false, true] {
+            let mut changed_plan = plan.clone();
+            if let Some(ArtifactEvidence::VerifiedReleaseArtifact { evidence }) =
+                changed_plan.artifact.as_mut()
+            {
+                if change_trust_identity {
+                    evidence.trust_policy_identity.push_str("-replacement");
+                } else {
+                    evidence
+                        .source_provenance_reference
+                        .push_str("-replacement");
+                }
+            }
+            let changed_request = InstallationRequest {
+                verified_artifact: changed_plan.artifact.clone(),
+                ..request.clone()
+            };
+            let changed = snapshot(&changed_request, &changed_plan, context()).unwrap();
+            assert_ne!(original, changed.fingerprint());
+        }
     }
 
     #[test]
