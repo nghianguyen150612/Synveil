@@ -690,7 +690,9 @@ impl InstallerWizard {
             PreflightOutcome::artifact_summary,
         );
         let plan_summary = outcome.map_or(
-            "Plan preview unavailable — verified artifact evidence required",
+            crate::installer_preflight::PlanPreviewUnavailableReason::VerifiedArtifactEvidenceRequired
+                .label()
+                .to_owned(),
             PreflightOutcome::plan_summary,
         );
         let confirmation_status = match outcome.map(|value| &value.plan_preview) {
@@ -1000,6 +1002,19 @@ mod tests {
         assert!(!view.plan_preview_available);
         assert!(!view.target_scope_detected);
         assert!(!view.privilege_assessed);
+        assert!(view.plan_summary.contains("publisher trust root"));
+        assert!(view
+            .plan_summary
+            .contains("approved channel effect catalog"));
+        assert!(view
+            .plan_summary
+            .contains("P004-D02, D11, and D14 remain pending"));
+        assert!(wizard
+            .outcome
+            .as_ref()
+            .unwrap()
+            .plan_build_blockers
+            .contains(&synveil_install_engine::PlanBuildBlocker::TrustRootUnavailable));
     }
 
     #[test]

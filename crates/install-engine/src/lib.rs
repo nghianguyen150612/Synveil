@@ -16,6 +16,7 @@ mod journal;
 mod lifecycle;
 mod linux_package;
 mod model;
+mod plan_builder;
 mod review_contract;
 
 pub use adapter::*;
@@ -27,6 +28,7 @@ pub use journal::*;
 pub use lifecycle::*;
 pub use linux_package::*;
 pub use model::*;
+pub use plan_builder::*;
 pub use review_contract::*;
 
 pub const ENGINE_SCHEMA_VERSION: u32 = 1;

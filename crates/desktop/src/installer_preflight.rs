@@ -21,7 +21,10 @@ use std::{
     time::{Duration, Instant},
 };
 use synveil_install_engine::{
-    FindingSeverity, PrivilegeRequirement, ResourceClass, Reversibility, TargetScope,
+    build_installation_plan_preview, ArtifactSourceEvidence, CpuArchitecture, FindingSeverity,
+    InstallationChannel as EngineInstallationChannel, InstallationIntent, InstallationPlatform,
+    PlanBuildBlocker, PlanBuildRequest, PlanBuildResult, PrivilegeRequirement, ResourceClass,
+    Reversibility, TargetScope,
 };
 
 const MAX_COMMAND_OUTPUT: usize = 1024;
@@ -351,7 +354,7 @@ impl PlanPreviewUnavailableReason {
     pub const fn label(self) -> &'static str {
         match self {
             Self::VerifiedArtifactEvidenceRequired => {
-                "Plan preview unavailable — verified artifact evidence required"
+                "Plan preview unavailable — no release source currently supplies independently authenticated artifact evidence; the production publisher trust root and approved channel effect catalog are unavailable. P004-D02, D11, and D14 remain pending."
             }
             Self::AuthoritativePlanBuilderUnavailable => {
                 "Plan preview unavailable — no authoritative plan builder exists for this channel"
@@ -406,6 +409,7 @@ pub struct PreflightOutcome {
     pub findings: Vec<CapabilityFinding>,
     pub selected_channel_supported: bool,
     pub plan_preview: PlanPreviewAvailability,
+    pub plan_build_blockers: Vec<PlanBuildBlocker>,
 }
 
 impl PreflightOutcome {
@@ -468,12 +472,20 @@ impl PreflightOutcome {
             )
     }
 
-    pub fn plan_summary(&self) -> &'static str {
+    pub fn plan_summary(&self) -> String {
+        if !self.plan_build_blockers.is_empty() {
+            return self
+                .plan_build_blockers
+                .iter()
+                .map(|blocker| blocker.label())
+                .collect::<Vec<_>>()
+                .join("; ");
+        }
         match &self.plan_preview {
-            PlanPreviewAvailability::Unavailable(reason) => reason.label(),
+            PlanPreviewAvailability::Unavailable(reason) => reason.label().to_owned(),
             PlanPreviewAvailability::Available(_)
             | PlanPreviewAvailability::PartiallyAvailable(_) => {
-                "Plan preview unavailable — authoritative plan mapping is not enabled in P008"
+                "Plan preview unavailable — authoritative plan mapping is not enabled".to_owned()
             }
         }
     }
@@ -726,6 +738,7 @@ pub fn inspect(request: PreflightRequest) -> PreflightOutcome {
             active.next().is_none().then_some(first)
         });
     let target_scope = selected.and_then(|channel| channel.target_scope);
+    let plan_build_blockers = plan_build_blockers(&request, &platform, &channels);
     let binding = PreflightBinding {
         selection: request,
         platform,
@@ -740,6 +753,89 @@ pub fn inspect(request: PreflightRequest) -> PreflightOutcome {
         findings,
         selected_channel_supported,
         plan_preview,
+        plan_build_blockers,
+    }
+}
+
+fn plan_build_blockers(
+    request: &PreflightRequest,
+    platform: &PlatformEvidence,
+    channels: &[InstallationChannelEvidence],
+) -> Vec<PlanBuildBlocker> {
+    let engine_platform = match (
+        platform.platform,
+        platform.display_name.as_str(),
+        platform.version.as_str(),
+    ) {
+        (PlatformCode::Linux, "Ubuntu", "24.04") => InstallationPlatform::Ubuntu2404,
+        (PlatformCode::Linux, "Fedora", "42") => InstallationPlatform::Fedora42,
+        (PlatformCode::Windows, _, version) if version.starts_with("11") => {
+            InstallationPlatform::Windows11
+        }
+        (PlatformCode::Other | PlatformCode::MacOs, _, _) => InstallationPlatform::Other,
+        _ => InstallationPlatform::Unknown,
+    };
+    let architecture = match platform.architecture {
+        "x86-64" => CpuArchitecture::X86_64,
+        "ARM64" => CpuArchitecture::Aarch64,
+        "x86" | "ARM" => CpuArchitecture::Other,
+        _ => CpuArchitecture::Unknown,
+    };
+    let selected = request
+        .selected_channel
+        .and_then(|value| channels.iter().find(|item| item.channel == value))
+        .or_else(|| {
+            let mut active = channels.iter().filter(|item| {
+                item.active && item.channel != InstallationChannel::ExistingInstallation
+            });
+            let first = active.next()?;
+            active.next().is_none().then_some(first)
+        });
+    let channel = selected.map_or(EngineInstallationChannel::Unknown, |item| {
+        match item.channel {
+            InstallationChannel::LinuxDeb => EngineInstallationChannel::UbuntuDeb,
+            InstallationChannel::LinuxRpm => EngineInstallationChannel::FedoraRpm,
+            InstallationChannel::LinuxAppImage => EngineInstallationChannel::LinuxAppImage,
+            InstallationChannel::WindowsPerUserSetup => {
+                EngineInstallationChannel::WindowsPerUserSetup
+            }
+            InstallationChannel::WindowsPortable => EngineInstallationChannel::WindowsPortableZip,
+            InstallationChannel::ExistingInstallation => {
+                EngineInstallationChannel::ExistingInstallation
+            }
+        }
+    });
+    let target_scope = selected
+        .and_then(|item| item.target_scope)
+        .unwrap_or(TargetScope::CurrentUser);
+    let artifact_candidates = selected
+        .map(|item| match item.artifact_evidence {
+            ArtifactEvidenceClass::VerifiedReleaseArtifact => {
+                ArtifactSourceEvidence::ArtifactBytesMatchAuthenticatedMetadataObserved
+            }
+            ArtifactEvidenceClass::LocallySuppliedUnverified => {
+                ArtifactSourceEvidence::LocallySuppliedUntrustedArtifactObserved
+            }
+            ArtifactEvidenceClass::NativePackageManagerManaged => {
+                ArtifactSourceEvidence::NativePackageManagerManagedIdentityObserved
+            }
+            ArtifactEvidenceClass::NoArtifact | ArtifactEvidenceClass::ArtifactIdentityUnknown => {
+                ArtifactSourceEvidence::UnknownOrMissingArtifact
+            }
+        })
+        .into_iter()
+        .collect();
+    let plan_request = PlanBuildRequest {
+        platform: engine_platform,
+        architecture,
+        channel,
+        target_scope,
+        intent: InstallationIntent::Install,
+        capability_generation: request.generation,
+        artifact_candidates,
+    };
+    match build_installation_plan_preview(&plan_request) {
+        PlanBuildResult::Blocked(blockers) => blockers,
     }
 }
 
