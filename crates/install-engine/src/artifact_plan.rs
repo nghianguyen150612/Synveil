@@ -491,6 +491,8 @@ mod tests {
             manifest_generation: Some(1),
             installation_state_generation: 7,
             platform_policy_id: "synthetic-test-policy".into(),
+            effect_catalog_version: Some(1),
+            security_policy_version: Some(1),
             required_policy_ids: vec!["synthetic-test-policy".into()],
             preflight_findings: vec![],
         };

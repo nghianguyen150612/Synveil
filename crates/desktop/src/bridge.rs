@@ -3545,6 +3545,20 @@ fn to_qvariant_installer_wizard(view: &installer_wizard::WizardView) -> QVariant
     );
     insert_bool(&mut map, "planAvailable", view.plan_preview_available);
     insert_string(&mut map, "confirmationStatus", view.confirmation_status);
+    insert_string(&mut map, "executionGateStatus", view.execution_gate_status);
+    insert_string(
+        &mut map,
+        "authorizationRequirementCategory",
+        view.authorization_requirement_category,
+    );
+    insert_string(&mut map, "executionBlockers", &view.execution_blockers);
+    insert_string(
+        &mut map,
+        "requiredPolicyApprovals",
+        &view.required_policy_approvals,
+    );
+    insert_string(&mut map, "recoveryReadiness", view.recovery_readiness);
+    insert_string(&mut map, "planFreshness", view.plan_freshness);
     insert_bool(
         &mut map,
         "acknowledgementAvailable",

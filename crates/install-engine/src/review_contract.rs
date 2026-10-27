@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
-pub const PLAN_REVIEW_SCHEMA_VERSION: u32 = 1;
+pub const PLAN_REVIEW_SCHEMA_VERSION: u32 = 2;
 const FINGERPRINT_DOMAIN: &[u8] = b"SYNVEIL-INSTALLER-PLAN-REVIEW\0";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -74,6 +74,11 @@ pub struct PlanReviewContext {
     /// Generation for the read-only existing-installation observation.
     pub installation_state_generation: u64,
     pub platform_policy_id: String,
+    /// `None` means that no closed platform catalog is configured. It is
+    /// fingerprinted so a later catalog cannot reuse an older acknowledgement.
+    pub effect_catalog_version: Option<u32>,
+    /// `None` means that the current security policy revision is unavailable.
+    pub security_policy_version: Option<u32>,
     pub required_policy_ids: Vec<String>,
     pub preflight_findings: Vec<ReviewFinding>,
 }
@@ -195,6 +200,21 @@ impl PlanReviewSnapshot {
         &self.context
     }
 
+    pub(crate) fn matches_current(
+        &self,
+        request: &InstallationRequest,
+        plan: &InstallationPlan,
+        context: &PlanReviewContext,
+    ) -> bool {
+        self.status == PlanReviewStatus::AvailableForReview
+            && self.request == *request
+            && self.plan == *plan
+            && self.context == *context
+            && self.is_unchanged_and_valid()
+            && fingerprint_review(request, plan, context)
+                .is_ok_and(|fingerprint| fingerprint == self.fingerprint)
+    }
+
     pub const fn fingerprint(&self) -> PlanReviewFingerprint {
         self.fingerprint
     }
@@ -289,6 +309,29 @@ impl ConfirmationSession {
             self.generation = self.generation.wrapping_add(1);
         }
         self.acknowledgement.as_ref()
+    }
+
+    pub(crate) fn acknowledgement_matches_snapshot(
+        &mut self,
+        snapshot: &PlanReviewSnapshot,
+        now: u64,
+    ) -> bool {
+        if self.acknowledgement(now).is_none() {
+            return false;
+        }
+        let Some(acknowledgement) = self.acknowledgement.as_ref() else {
+            return false;
+        };
+        let acknowledgement_matches = acknowledgement.plan_id == snapshot.plan_id
+            && acknowledgement.fingerprint == snapshot.fingerprint
+            && acknowledgement.generation == snapshot.generation;
+        self.state == ConfirmationState::AcknowledgedLocally
+            && snapshot.is_unchanged_and_valid()
+            && snapshot.status == PlanReviewStatus::AvailableForReview
+            && acknowledgement_matches
+            && self.generation == snapshot.generation
+            && self.plan_id == snapshot.plan_id
+            && self.fingerprint == snapshot.fingerprint
     }
 
     /// Records one idempotent acknowledgement for the same current plan.
@@ -524,6 +567,8 @@ struct CanonicalReviewDocument<'a> {
     manifest_generation: Option<u64>,
     installation_state_generation: u64,
     platform_policy_id: &'a str,
+    effect_catalog_version: Option<u32>,
+    security_policy_version: Option<u32>,
     required_policy_ids: &'a [String],
     user_choices: &'a BTreeMap<String, bool>,
     artifact: CanonicalArtifact<'a>,
@@ -613,6 +658,8 @@ fn fingerprint_review(
         manifest_generation: context.manifest_generation,
         installation_state_generation: context.installation_state_generation,
         platform_policy_id: &context.platform_policy_id,
+        effect_catalog_version: context.effect_catalog_version,
+        security_policy_version: context.security_policy_version,
         required_policy_ids: &context.required_policy_ids,
         user_choices: &request.user_choices,
         artifact: canonical_artifact(artifact),
@@ -723,6 +770,8 @@ mod tests {
             manifest_generation: Some(9),
             installation_state_generation: 4,
             platform_policy_id: "linux.appimage.policy.v1".into(),
+            effect_catalog_version: Some(1),
+            security_policy_version: Some(1),
             required_policy_ids: vec!["P004-D02".into(), "P004-D14".into()],
             preflight_findings: vec![],
         }

@@ -1029,6 +1029,107 @@ struct ReplayState {
     final_verified: bool,
     completed: bool,
 }
+
+pub(crate) struct JournalInspectionSummary {
+    pub disposition: RecoveryDisposition,
+    pub compensation_unavailable: bool,
+    pub final_verification_missing: bool,
+}
+
+/// Validates supplied journal records without opening a path, creating a lock,
+/// or modifying a checkpoint. Disk inspection is intentionally outside P011.
+pub(crate) fn inspect_records_read_only(
+    plan: &InstallationPlan,
+    records: &[JournalEnvelope],
+) -> Result<JournalInspectionSummary, JournalErrorCode> {
+    if records.is_empty() {
+        return Err(JournalErrorCode::JournalMissing);
+    }
+    if records.len() > MAX_CHECKPOINT_RECORDS {
+        return Err(JournalErrorCode::JournalCorrupt);
+    }
+    let fingerprint = plan_fingerprint(plan).map_err(|error| error.code)?;
+    let mut previous: Option<&str> = None;
+    for (generation, envelope) in records.iter().enumerate() {
+        if envelope.schema_version != JOURNAL_SCHEMA_VERSION
+            || envelope.generation != generation as u64
+        {
+            return Err(JournalErrorCode::JournalCorrupt);
+        }
+        if envelope.plan_fingerprint_sha256 != fingerprint {
+            return Err(JournalErrorCode::JournalPlanMismatch);
+        }
+        if envelope.previous_record_sha256.as_deref() != previous {
+            return Err(JournalErrorCode::JournalCorrupt);
+        }
+        let hash_input = HashInput {
+            schema_version: envelope.schema_version,
+            generation: envelope.generation,
+            plan_fingerprint_sha256: &envelope.plan_fingerprint_sha256,
+            previous_record_sha256: envelope.previous_record_sha256.as_deref(),
+            record: &envelope.record,
+        };
+        let expected_hash = hex_hash(
+            &serde_json::to_vec(&hash_input).map_err(|_| JournalErrorCode::JournalCorrupt)?,
+        );
+        if envelope.record_sha256 != expected_hash {
+            return Err(JournalErrorCode::JournalCorrupt);
+        }
+        previous = Some(&envelope.record_sha256);
+    }
+
+    let state = replay(plan, records).map_err(|error| error.code)?;
+    let unknown_prior_outcome = state
+        .effects
+        .values()
+        .any(|effect| matches!(effect, EffectState::MutationStarted | EffectState::Partial));
+    let replan_required = state.effects.values().any(|effect| {
+        matches!(
+            effect,
+            EffectState::FailureBeforeMutation | EffectState::Compensated
+        )
+    });
+    let inspection_required = state
+        .effects
+        .values()
+        .any(|effect| matches!(effect, EffectState::CompensationStarted))
+        || (state.final_verified && !state.completed);
+    let has_incomplete_effects =
+        !state.completed && state.effects.len() < plan.ordered_effects.len();
+    let compensation_unavailable = has_incomplete_effects
+        && plan.ordered_effects.iter().any(|effect| {
+            matches!(
+                state.effects.get(&effect.effect_id),
+                Some(EffectState::Verified)
+            ) && effect.safe_inverse.is_none()
+        });
+    let all_effects_verified = plan.ordered_effects.iter().all(|effect| {
+        matches!(
+            state.effects.get(&effect.effect_id),
+            Some(EffectState::Verified)
+        )
+    });
+    let final_verification_missing =
+        !state.completed && all_effects_verified && !state.final_verified;
+    let disposition = if state.completed {
+        RecoveryDisposition::AlreadyCompleted
+    } else if unknown_prior_outcome {
+        RecoveryDisposition::StillUnknown
+    } else if replan_required {
+        RecoveryDisposition::ReplanRequired
+    } else if inspection_required {
+        RecoveryDisposition::InspectionRequired
+    } else {
+        RecoveryDisposition::ResumeReady
+    };
+
+    Ok(JournalInspectionSummary {
+        disposition,
+        compensation_unavailable,
+        final_verification_missing,
+    })
+}
+
 fn replay(
     plan: &InstallationPlan,
     records: &[JournalEnvelope],
@@ -1160,6 +1261,38 @@ fn replay(
         final_verified,
         completed,
     })
+}
+
+#[cfg(test)]
+pub(crate) fn seal_test_records(
+    plan: &InstallationPlan,
+    records: impl IntoIterator<Item = JournalRecord>,
+) -> Vec<JournalEnvelope> {
+    let fingerprint = plan_fingerprint(plan).expect("fixture plan fingerprint");
+    let mut envelopes = Vec::new();
+    for (generation, record) in records.into_iter().enumerate() {
+        let previous_record_sha256 = envelopes
+            .last()
+            .map(|item: &JournalEnvelope| item.record_sha256.clone());
+        let input = HashInput {
+            schema_version: JOURNAL_SCHEMA_VERSION,
+            generation: generation as u64,
+            plan_fingerprint_sha256: &fingerprint,
+            previous_record_sha256: previous_record_sha256.as_deref(),
+            record: &record,
+        };
+        let record_sha256 =
+            hex_hash(&serde_json::to_vec(&input).expect("fixture journal record serialization"));
+        envelopes.push(JournalEnvelope {
+            schema_version: JOURNAL_SCHEMA_VERSION,
+            generation: generation as u64,
+            plan_fingerprint_sha256: fingerprint.clone(),
+            previous_record_sha256,
+            record,
+            record_sha256,
+        });
+    }
+    envelopes
 }
 
 /// Mirrors the Prompt007 reverse-order compensation policy while adding the
