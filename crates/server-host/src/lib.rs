@@ -48,11 +48,11 @@ pub enum PrivateLanCapability {
 pub fn inspect_private_lan_capability() -> PrivateLanCapability {
     #[cfg(target_os = "linux")]
     {
-        return match native::inspect_private_lan_candidate_count() {
+        match native::inspect_private_lan_candidate_count() {
             Ok(0) => PrivateLanCapability::NoCandidate,
             Ok(candidate_count) => PrivateLanCapability::Available { candidate_count },
-            Err(()) => PrivateLanCapability::InspectionUnavailable,
-        };
+            Err(_) => PrivateLanCapability::InspectionUnavailable,
+        }
     }
 
     #[cfg(not(target_os = "linux"))]
