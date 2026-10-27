@@ -49,8 +49,8 @@ The keyring failure reinforces P004-D14's pending state. No effectful work is in
 | Engine Clippy | **PASS** | `cargo clippy -p synveil-install-engine --all-targets --locked -- -D warnings` |
 | `cargo clippy -p synveil-desktop --all-targets --locked -- -D warnings` | **BLOCKED** | Same missing `dbus-1.pc`; desktop Rust/Qt lint was not reached |
 | `./scripts/test-desktop-ui.sh` | **BLOCKED** | After staging intended files and adding Cargo to PATH, script stopped because its `qmake` shim points to missing `/usr/lib/qt5/bin/qmake`; Qt 6 `qmake6` is absent. QML compilation and offscreen smoke did not run |
-| `./scripts/validate-docs.sh` | **PASS** | All 24 documentation validation units passed before final manifest edits; rerun after closeout |
-| `git diff --check` | **PASS** | Passed before final manifest edits; rerun after closeout |
+| `./scripts/validate-docs.sh` | **PASS** | All 24 documentation validation units passed after the final manifest and security document content was written |
+| `git diff --check` | **PASS** | Both staged and unstaged diff checks passed after the final documentation content was written |
 | Native Linux Qt/QML | **NOT QUALIFIED** | Must record local or exact-head hosted result; no queued job is a pass |
 | Native Windows Qt/QML | **NOT QUALIFIED** | Must record exact-head hosted result; no queued job is a pass |
 | PostgreSQL 17 inherited P006 gate | **PASS on repaired P006 head; P006 joined ObjectStore case remains absent** | See run #40320179564 and limitation above |
