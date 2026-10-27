@@ -482,6 +482,38 @@ Pane {
                             }
                             Label {
                                 Layout.fillWidth: true
+                                text: qsTr("Execution readiness: %1").arg(root.wizardView.executionGateStatus)
+                                wrapMode: Text.WordWrap
+                                Accessible.name: text
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("Authorization requirement: %1. No native authorization has been requested.")
+                                      .arg(root.wizardView.authorizationRequirementCategory)
+                                wrapMode: Text.WordWrap
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("Execution blockers: %1").arg(root.wizardView.executionBlockers)
+                                wrapMode: Text.WordWrap
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("Required policy approvals: %1").arg(root.wizardView.requiredPolicyApprovals)
+                                wrapMode: Text.WordWrap
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("Recovery readiness: %1").arg(root.wizardView.recoveryReadiness)
+                                wrapMode: Text.WordWrap
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("Plan freshness: %1").arg(root.wizardView.planFreshness)
+                                wrapMode: Text.WordWrap
+                            }
+                            Label {
+                                Layout.fillWidth: true
                                 text: qsTr("Installation channel: %1").arg(root.wizardView.selectedChannel.length > 0
                                       ? root.wizardView.selectedChannel : qsTr("not selected"))
                                 wrapMode: Text.WordWrap

@@ -5,7 +5,10 @@
 //! execution capability.
 
 use crate::installer_preflight::{InstallationChannel, PreflightOutcome, PreflightRequest};
-use synveil_install_engine::PlanReviewStatus;
+use synveil_install_engine::{
+    evaluate_execution_readiness, AuthorizationRequirementCategory, ExecutionGateInput,
+    PlanReviewStatus,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PlatformCode {
@@ -244,6 +247,12 @@ pub struct WizardView {
     pub verified_artifact_available: bool,
     pub plan_preview_available: bool,
     pub confirmation_status: &'static str,
+    pub execution_gate_status: &'static str,
+    pub authorization_requirement_category: &'static str,
+    pub execution_blockers: String,
+    pub required_policy_approvals: String,
+    pub recovery_readiness: &'static str,
+    pub plan_freshness: &'static str,
     pub acknowledgement_available: bool,
     pub acknowledgement_reason: String,
     pub target_scope_detected: bool,
@@ -590,6 +599,7 @@ impl InstallerWizard {
     }
 
     pub fn view(&self) -> WizardView {
+        let execution_gate = evaluate_execution_readiness(ExecutionGateInput::unavailable());
         let state = match self.state {
             ProcessState::Closed => "closed",
             ProcessState::DeviceChoice => "device_choice",
@@ -784,6 +794,17 @@ impl InstallerWizard {
                 PlanReviewStatus::AvailableForReview => "available_for_review",
                 PlanReviewStatus::ReviewDataIncomplete => "review_data_incomplete",
             },
+            execution_gate_status: execution_gate.status.code(),
+            authorization_requirement_category:
+                AuthorizationRequirementCategory::AuthorizationPolicyUnavailable.code(),
+            execution_blockers: execution_gate.blocker_summary(),
+            required_policy_approvals: execution_gate.required_policy_approvals.join(", "),
+            recovery_readiness: execution_gate.recovery_readiness.code(),
+            plan_freshness: if execution_gate.plan_freshness_verified {
+                "verified_for_current_review"
+            } else {
+                "not_assessed_without_authoritative_plan"
+            },
             // P008 has no acquisition-to-authoritative-plan path. A preview
             // marker cannot enable acknowledgement or imply an execution gate.
             acknowledgement_available: false,
@@ -896,6 +917,22 @@ mod tests {
         assert!(!view.verified_artifact_available);
         assert!(!view.target_scope_detected);
         assert!(!view.privilege_assessed);
+        assert_eq!(view.execution_gate_status, "awaiting_verified_plan");
+        assert_eq!(
+            view.authorization_requirement_category,
+            "authorization_policy_unavailable"
+        );
+        assert!(view
+            .execution_blockers
+            .contains("Production Wizard execution is disabled"));
+        assert!(view.required_policy_approvals.contains("P004-D02"));
+        assert!(view.required_policy_approvals.contains("P004-D11"));
+        assert!(view.required_policy_approvals.contains("P004-D14"));
+        assert_eq!(view.recovery_readiness, "recovery_policy_pending");
+        assert_eq!(
+            view.plan_freshness,
+            "not_assessed_without_authoritative_plan"
+        );
     }
 
     #[test]
@@ -1152,6 +1189,11 @@ mod tests {
         assert!(wizard_qml.contains("Preview only — installation is not started"));
         assert!(wizard_qml.contains("id: acknowledgeReviewedPlan"));
         assert!(wizard_qml.contains("enabled: root.wizardView.acknowledgementAvailable"));
+        assert!(wizard_qml.contains("authorizationRequirementCategory"));
+        assert!(wizard_qml.contains("executionBlockers"));
+        assert!(wizard_qml.contains("requiredPolicyApprovals"));
+        assert!(wizard_qml.contains("recoveryReadiness"));
+        assert!(wizard_qml.contains("planFreshness"));
         assert!(!wizard_qml.contains("acknowledgeReviewedPlan.onClicked"));
         assert!(!wizard_qml.contains("InstallerEngine::execute"));
         assert!(!wizard_qml.contains("InstallationJournal"));
