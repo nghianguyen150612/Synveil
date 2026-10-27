@@ -278,6 +278,8 @@ pub struct InstallerWizard {
 }
 
 impl InstallerWizard {
+    // Kept for the focused controller harness and future non-Qt consumers.
+    #[allow(dead_code)]
     pub fn new(capabilities: WizardCapabilities) -> Self {
         let initial_platform_summary = format!(
             "{}; distribution and version inspection pending",
@@ -405,6 +407,8 @@ impl InstallerWizard {
 
     /// Future artifact acquisition paths must invalidate any inspected
     /// evidence before presenting a replacement artifact choice.
+    // The approved artifact chooser is not connected to the production UI.
+    #[allow(dead_code)]
     pub fn artifact_changed(&mut self) {
         if matches!(
             self.state,
