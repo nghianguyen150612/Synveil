@@ -110,6 +110,8 @@ impl InstallationChannel {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ChannelAvailability {
+    // Reserved for future authenticated production previews; never emitted today.
+    #[allow(dead_code)]
     PreviewAvailable,
     PreviewPartiallyAvailable,
     Unsupported,
@@ -238,9 +240,14 @@ pub enum CapabilityFindingCode {
     ArtifactUnavailable,
     ArtifactVerificationIncomplete,
     AuthoritativePlanUnavailable,
+    // Typed fail-closed findings reserved for later effect/inspection adapters.
+    #[allow(dead_code)]
     InvalidPlan,
+    #[allow(dead_code)]
     InspectionFailed,
+    #[allow(dead_code)]
     InspectionCancelled,
+    #[allow(dead_code)]
     StaleInspection,
     InsufficientCapabilityEvidence,
     PrivateLanUnavailable,
@@ -345,8 +352,12 @@ impl CapabilityFinding {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PlanPreviewUnavailableReason {
     VerifiedArtifactEvidenceRequired,
+    // Reserved for future verified plan paths; production stays blocked today.
+    #[allow(dead_code)]
     AuthoritativePlanBuilderUnavailable,
+    #[allow(dead_code)]
     PlanValidationFailed,
+    #[allow(dead_code)]
     InsufficientCapabilityEvidence,
 }
 
