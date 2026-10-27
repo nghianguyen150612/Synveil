@@ -93,7 +93,7 @@ certificates/signatures are fixture-only.
 | `git diff --check` | **PASS** | Final staged source and documentation diff clean |
 | Release channel/manifest/signature/download and installer-security suites | **PASS** | Channel 101; manifest 36; release download 79; installer security 23; release signing 3; P036 signing 1 |
 | `python3 scripts/validate-p036-production-artifacts.py` | **BLOCKED** | External `production-artifacts.json` absent |
-| Hosted Linux and Windows desktop/native P010 checks | **PENDING** | Exact-head jobs required; P009 failures are inherited context, not P010 passes |
+| Hosted checks for source commit `e96af5a` | **BLOCKED / PARTIAL** | Desktop test step passed; no-deps desktop Clippy failed with exit 101. Linux AppImage passed. Linux clean-machine contract and fixture build passed, but its platform acceptance matrix and Phase C gate were skipped. Linux/Windows Qt, Windows native/standard-user, Rust CI, and security workflows remained pending when recorded. The previous `bc8eeec` desktop-test assertion failures were corrected in `e96af5a`. |
 
 P010 tests use synthetic evidence strictly to check bounded plan shape and
 engine validation. They do not mint `VerifiedReleaseArtifact`, and there is no
