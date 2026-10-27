@@ -11,7 +11,7 @@ fn main() {
         QmlModule::new("com.synveil.desktop")
             .version(1, 0)
             .depend("QtQml")
-            .qml_files(["qml/Main.qml"]),
+            .qml_files(["qml/Main.qml", "qml/InstallerWizard.qml"]),
     )
     .crate_include_root(Some("src".to_owned()))
     .files(["src/bridge.rs"])

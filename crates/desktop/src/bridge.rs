@@ -21,8 +21,11 @@ use tokio::runtime::{Builder, Handle, Runtime};
 use zeroize::Zeroizing;
 
 use crate::host_ui::{HostAction, HostSession};
-use crate::{actions, presentation, profile};
+use crate::{actions, installer_wizard, presentation, profile};
 use actions::{LatestValue, ReconciliationFence, StartupIntentGate, SyncRequestGate};
+use installer_wizard::{
+    ConnectionMode, DeviceRole, InstallerWizard, PreflightToken, WizardCapabilities,
+};
 use presentation::{UiAttentionItem, UiLibrary, UiRecoveryItem, UiSnapshot};
 
 type QVariantList = QList<QVariant>;
@@ -302,6 +305,7 @@ pub mod ffi {
         #[qproperty(bool, tray_available)]
         #[qproperty(bool, profile_ready)]
         #[qproperty(QString, welcome_destination)]
+        #[qproperty(QVariant, installer_wizard_view)]
         #[qproperty(bool, host_available)]
         #[qproperty(QString, host_feedback)]
         #[qproperty(QString, host_step)]
@@ -397,6 +401,31 @@ pub mod ffi {
         #[cxx_name = "showWelcome"]
         #[qinvokable]
         fn show_welcome(self: Pin<&mut Self>);
+
+        #[cxx_name = "openInstallerWizard"]
+        #[qinvokable]
+        fn open_installer_wizard(self: Pin<&mut Self>);
+        #[cxx_name = "selectInstallerWizardDevice"]
+        #[qinvokable]
+        fn select_installer_wizard_device(self: Pin<&mut Self>, role: QString);
+        #[cxx_name = "selectInstallerWizardConnection"]
+        #[qinvokable]
+        fn select_installer_wizard_connection(self: Pin<&mut Self>, mode: QString);
+        #[cxx_name = "continueInstallerWizard"]
+        #[qinvokable]
+        fn continue_installer_wizard(self: Pin<&mut Self>);
+        #[cxx_name = "backInstallerWizard"]
+        #[qinvokable]
+        fn back_installer_wizard(self: Pin<&mut Self>);
+        #[cxx_name = "retryInstallerWizardPreflight"]
+        #[qinvokable]
+        fn retry_installer_wizard_preflight(self: Pin<&mut Self>);
+        #[cxx_name = "cancelInstallerWizard"]
+        #[qinvokable]
+        fn cancel_installer_wizard(self: Pin<&mut Self>);
+        #[cxx_name = "setInstallerWizardDetailsOpen"]
+        #[qinvokable]
+        fn set_installer_wizard_details_open(self: Pin<&mut Self>, open: bool);
 
         #[cxx_name = "installTray"]
         #[qinvokable]
@@ -617,6 +646,7 @@ pub struct DesktopUiBridgeRust {
     pub(crate) tray_available: bool,
     pub(crate) profile_ready: bool,
     pub(crate) welcome_destination: QString,
+    pub(crate) installer_wizard_view: QVariant,
     pub(crate) host_available: bool,
     pub(crate) host_feedback: QString,
     pub(crate) host_step: QString,
@@ -660,6 +690,7 @@ pub struct DesktopUiBridgeRust {
     tray: Option<cxx::UniquePtr<ffi::NativeTray>>,
     host_session: Arc<std::sync::Mutex<HostSession>>,
     host_generation: u64,
+    installer_wizard: InstallerWizard,
 }
 
 impl Default for DesktopUiBridgeRust {
@@ -676,6 +707,14 @@ impl Default for DesktopUiBridgeRust {
             std::env::var_os("SYNVEIL_QML_LIVE_TEST_EXIT_ON_TERMINAL").is_some();
         let profile_id = profile::load_profile_id();
         let profile_ready = profile_id.is_ok();
+        let host_available = synveil_server_host::supported_platform().is_some();
+        let installer_wizard = InstallerWizard::new(WizardCapabilities::new(
+            installer_wizard::PlatformCode::current(),
+            host_available,
+            profile_ready,
+            false,
+        ));
+        let installer_wizard_view = to_qvariant_installer_wizard(&installer_wizard.view());
         let profile_id = profile_id.unwrap_or_else(|_| ServerProfileId::new());
         let controller = DesktopController::new(DesktopControllerConfig::for_profile(profile_id));
         let launch_manager = BackgroundClientManager::for_profile(profile_id);
@@ -799,7 +838,8 @@ impl Default for DesktopUiBridgeRust {
             tray_available: false,
             profile_ready,
             welcome_destination: QString::from("initializing"),
-            host_available: synveil_server_host::supported_platform().is_some(),
+            installer_wizard_view,
+            host_available,
             host_feedback: QString::from(
                 "Choose storage and device access, then review the changes to prepare this Host.",
             ),
@@ -843,8 +883,60 @@ impl Default for DesktopUiBridgeRust {
             tray: None,
             host_session: Arc::new(std::sync::Mutex::new(HostSession::default())),
             host_generation: 0,
+            installer_wizard,
         }
     }
+}
+
+fn publish_installer_wizard(mut object: Pin<&mut ffi::DesktopUiBridge>) {
+    let view = object.rust().installer_wizard.view();
+    object
+        .as_mut()
+        .set_installer_wizard_view(to_qvariant_installer_wizard(&view));
+}
+
+fn run_installer_wizard_preflight(
+    mut object: Pin<&mut ffi::DesktopUiBridge>,
+    token: PreflightToken,
+) {
+    let Some(probe) = object.rust().installer_wizard.probe_for(token) else {
+        return;
+    };
+    let Some(runtime) = object
+        .rust()
+        .runtime
+        .as_ref()
+        .map(|runtime| runtime.handle().clone())
+    else {
+        object
+            .as_mut()
+            .as_mut()
+            .rust_mut()
+            .installer_wizard
+            .complete_preflight(token, Err(()));
+        publish_installer_wizard(object);
+        return;
+    };
+    let qt_thread = object.as_ref().get_ref().qt_thread();
+    runtime.spawn(async move {
+        // The current P007 probe only maps bounded capabilities. Keep the
+        // operation off the GUI thread so a later real read-only adapter can
+        // use this same asynchronous completion boundary.
+        let result = tokio::task::spawn_blocking(move || probe.inspect())
+            .await
+            .map_err(|_| ());
+        let _ = qt_thread.queue(move |mut object| {
+            if object
+                .as_mut()
+                .as_mut()
+                .rust_mut()
+                .installer_wizard
+                .complete_preflight(token, result)
+            {
+                publish_installer_wizard(object);
+            }
+        });
+    });
 }
 
 impl cxx_qt::Initialize for ffi::DesktopUiBridge {
@@ -855,6 +947,7 @@ impl cxx_qt::Initialize for ffi::DesktopUiBridge {
         // neutral screen until DesktopController publishes its bounded result.
         self.as_mut()
             .set_welcome_destination(QString::from("initializing"));
+        publish_installer_wizard(self.as_mut());
     }
 }
 
@@ -1143,6 +1236,81 @@ impl ffi::DesktopUiBridge {
             self.as_mut()
                 .set_welcome_destination(QString::from("welcome"));
         }
+    }
+
+    fn open_installer_wizard(mut self: Pin<&mut Self>) {
+        self.as_mut().rust_mut().installer_wizard.open();
+        publish_installer_wizard(self.as_mut());
+    }
+
+    fn select_installer_wizard_device(mut self: Pin<&mut Self>, role: QString) {
+        let code = String::from(role);
+        if let Some(role) = DeviceRole::from_code(&code) {
+            self.as_mut()
+                .rust_mut()
+                .installer_wizard
+                .select_device_role(role);
+        } else {
+            self.as_mut()
+                .rust_mut()
+                .installer_wizard
+                .reject_invalid_selection();
+        }
+        publish_installer_wizard(self.as_mut());
+    }
+
+    fn select_installer_wizard_connection(mut self: Pin<&mut Self>, mode: QString) {
+        let code = String::from(mode);
+        if let Some(mode) = ConnectionMode::from_code(&code) {
+            self.as_mut()
+                .rust_mut()
+                .installer_wizard
+                .select_connection_mode(mode);
+        } else {
+            self.as_mut()
+                .rust_mut()
+                .installer_wizard
+                .reject_invalid_selection();
+        }
+        publish_installer_wizard(self.as_mut());
+    }
+
+    fn continue_installer_wizard(mut self: Pin<&mut Self>) {
+        let token = self.as_mut().rust_mut().installer_wizard.continue_forward();
+        publish_installer_wizard(self.as_mut());
+        if let Some(token) = token {
+            run_installer_wizard_preflight(self, token);
+        }
+    }
+
+    fn back_installer_wizard(mut self: Pin<&mut Self>) {
+        self.as_mut().rust_mut().installer_wizard.back();
+        publish_installer_wizard(self.as_mut());
+    }
+
+    fn retry_installer_wizard_preflight(mut self: Pin<&mut Self>) {
+        let token = self
+            .as_mut()
+            .rust_mut()
+            .installer_wizard
+            .retry_safe_preflight();
+        publish_installer_wizard(self.as_mut());
+        if let Some(token) = token {
+            run_installer_wizard_preflight(self, token);
+        }
+    }
+
+    fn cancel_installer_wizard(mut self: Pin<&mut Self>) {
+        self.as_mut().rust_mut().installer_wizard.cancel();
+        publish_installer_wizard(self.as_mut());
+    }
+
+    fn set_installer_wizard_details_open(mut self: Pin<&mut Self>, open: bool) {
+        self.as_mut()
+            .rust_mut()
+            .installer_wizard
+            .set_error_details_open(open);
+        publish_installer_wizard(self.as_mut());
     }
 
     fn start_controller(mut self: Pin<&mut Self>) {
@@ -3326,6 +3494,42 @@ fn update_tray(mut object: Pin<&mut ffi::DesktopUiBridge>) {
     }
 }
 
+fn to_qvariant_installer_wizard(view: &installer_wizard::WizardView) -> QVariant {
+    let mut map = QVariantMap::default();
+    insert_bool(&mut map, "visible", view.visible);
+    insert_string(&mut map, "state", view.state);
+    insert_i32(&mut map, "step", view.step);
+    insert_bool(&mut map, "busy", view.busy);
+    insert_bool(&mut map, "canContinue", view.can_continue);
+    insert_bool(&mut map, "canBack", view.can_back);
+    insert_bool(&mut map, "canRetry", view.can_retry);
+    insert_bool(&mut map, "detailsOpen", view.details_open);
+    insert_string(&mut map, "deviceRole", view.device_role);
+    insert_string(&mut map, "connectionMode", view.connection_mode);
+    insert_string(&mut map, "platform", view.platform);
+    insert_bool(&mut map, "hostSupported", view.host_supported);
+    insert_bool(&mut map, "clientSupported", view.client_supported);
+    insert_bool(&mut map, "existingSupported", view.existing_supported);
+    insert_bool(&mut map, "localOnlySupported", view.local_only_supported);
+    insert_bool(&mut map, "privateLanSupported", view.private_lan_supported);
+    insert_bool(&mut map, "manualSupported", view.manual_supported);
+    insert_bool(&mut map, "reportReady", view.report_ready);
+    insert_bool(&mut map, "previewInvalidated", view.preview_invalidated);
+    insert_bool(&mut map, "preflightRan", view.installer_preflight_ran);
+    insert_bool(
+        &mut map,
+        "artifactAvailable",
+        view.verified_artifact_available,
+    );
+    insert_bool(&mut map, "planAvailable", view.plan_preview_available);
+    insert_bool(&mut map, "scopeDetected", view.target_scope_detected);
+    insert_bool(&mut map, "privilegeAssessed", view.privilege_assessed);
+    insert_bool(&mut map, "blockingFinding", view.blocking_preflight_finding);
+    insert_string(&mut map, "errorCode", view.error_code);
+    insert_string(&mut map, "unavailableCode", view.unavailable_code);
+    QVariant::from(&map)
+}
+
 fn to_qvariant_list(libraries: &[UiLibrary]) -> QVariant {
     let mut list = QVariantList::default();
     list.reserve(libraries.len().try_into().unwrap_or(isize::MAX));
@@ -3477,6 +3681,12 @@ fn insert_string(map: &mut QVariantMap, key: &str, value: &str) {
 }
 
 fn insert_bool(map: &mut QVariantMap, key: &str, value: bool) {
+    let key = QString::from(key);
+    let value = QVariant::from(&value);
+    map.insert_clone(&key, &value);
+}
+
+fn insert_i32(map: &mut QVariantMap, key: &str, value: i32) {
     let key = QString::from(key);
     let value = QVariant::from(&value);
     map.insert_clone(&key, &value);
