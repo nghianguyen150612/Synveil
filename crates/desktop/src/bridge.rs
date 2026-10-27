@@ -3544,6 +3544,7 @@ fn to_qvariant_installer_wizard(view: &installer_wizard::WizardView) -> QVariant
         view.verified_artifact_available,
     );
     insert_bool(&mut map, "planAvailable", view.plan_preview_available);
+    insert_string(&mut map, "confirmationStatus", view.confirmation_status);
     insert_bool(
         &mut map,
         "acknowledgementAvailable",
