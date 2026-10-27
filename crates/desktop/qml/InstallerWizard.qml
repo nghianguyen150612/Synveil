@@ -451,6 +451,26 @@ Pane {
                                 text: root.wizardView.planSummary
                                 wrapMode: Text.WordWrap
                             }
+                            Button {
+                                id: acknowledgeReviewedPlan
+                                Layout.fillWidth: true
+                                text: qsTr("Acknowledge reviewed installation plan")
+                                enabled: root.wizardView.acknowledgementAvailable
+                                Accessible.name: text
+                                Accessible.description: enabled
+                                    ? qsTr("Records that you reviewed the displayed plan. This does not authorize the operating system or start an installation.")
+                                    : qsTr("Unavailable: %1. No acknowledgement has been recorded.")
+                                          .arg(root.wizardView.acknowledgementReason)
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: root.wizardView.acknowledgementAvailable
+                                      ? qsTr("Confirmation readiness: a validated plan is available for review. Acknowledgement remains separate from artifact policy and operating-system authorization.")
+                                      : qsTr("Confirmation readiness: unavailable — %1.")
+                                            .arg(root.wizardView.acknowledgementReason)
+                                wrapMode: Text.WordWrap
+                                Accessible.name: text
+                            }
                             Label {
                                 Layout.fillWidth: true
                                 text: qsTr("Installation channel: %1").arg(root.wizardView.selectedChannel.length > 0

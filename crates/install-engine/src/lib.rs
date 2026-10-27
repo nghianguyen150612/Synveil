@@ -16,6 +16,7 @@ mod journal;
 mod lifecycle;
 mod linux_package;
 mod model;
+mod review_contract;
 
 pub use adapter::*;
 #[cfg(target_os = "linux")]
@@ -26,5 +27,6 @@ pub use journal::*;
 pub use lifecycle::*;
 pub use linux_package::*;
 pub use model::*;
+pub use review_contract::*;
 
 pub const ENGINE_SCHEMA_VERSION: u32 = 1;
