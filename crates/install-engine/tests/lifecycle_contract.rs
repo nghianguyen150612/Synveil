@@ -14,6 +14,7 @@ fn art(v: &str, c: &str) -> VerifiedArtifactEvidence {
         product_version: v.into(),
         source_commit: c.into(),
         artifact_sha256: "aa".repeat(32),
+        artifact_size_bytes: 1,
         manifest_sha256: "bb".repeat(32),
         authentication_method: "P006".into(),
         verified_local_path: "/verified".into(),

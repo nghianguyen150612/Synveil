@@ -3548,6 +3548,27 @@ fn to_qvariant_installer_wizard(view: &installer_wizard::WizardView) -> QVariant
     insert_string(&mut map, "executionGateStatus", view.execution_gate_status);
     insert_string(
         &mut map,
+        "artifactVerificationAvailability",
+        view.artifact_verification_availability,
+    );
+    insert_string(&mut map, "byteIntegrityStatus", view.byte_integrity_status);
+    insert_string(
+        &mut map,
+        "publisherTrustStatus",
+        view.publisher_trust_status,
+    );
+    insert_string(
+        &mut map,
+        "lastUseVerificationStatus",
+        view.last_use_verification_status,
+    );
+    insert_string(
+        &mut map,
+        "adapterCapabilityCategory",
+        view.adapter_capability_category,
+    );
+    insert_string(
+        &mut map,
         "authorizationRequirementCategory",
         view.authorization_requirement_category,
     );

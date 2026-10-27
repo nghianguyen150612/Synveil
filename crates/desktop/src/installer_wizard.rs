@@ -6,8 +6,8 @@
 
 use crate::installer_preflight::{InstallationChannel, PreflightOutcome, PreflightRequest};
 use synveil_install_engine::{
-    evaluate_execution_readiness, AuthorizationRequirementCategory, ExecutionGateInput,
-    PlanReviewStatus,
+    evaluate_execution_readiness, AuthorizationRequirementCategory, ByteIntegrityStatus,
+    ExecutionGateInput, LastUseVerificationStatus, PlanReviewStatus, PublisherTrustStatus,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -248,6 +248,11 @@ pub struct WizardView {
     pub plan_preview_available: bool,
     pub confirmation_status: &'static str,
     pub execution_gate_status: &'static str,
+    pub artifact_verification_availability: &'static str,
+    pub byte_integrity_status: &'static str,
+    pub publisher_trust_status: &'static str,
+    pub last_use_verification_status: &'static str,
+    pub adapter_capability_category: &'static str,
     pub authorization_requirement_category: &'static str,
     pub execution_blockers: String,
     pub required_policy_approvals: String,
@@ -795,6 +800,35 @@ impl InstallerWizard {
                 PlanReviewStatus::ReviewDataIncomplete => "review_data_incomplete",
             },
             execution_gate_status: execution_gate.status.code(),
+            artifact_verification_availability: "unavailable_without_authenticated_release_source",
+            byte_integrity_status: match execution_gate.byte_integrity_status {
+                ByteIntegrityStatus::Verified => "verified_bytes_only",
+                ByteIntegrityStatus::Unavailable => "not_verified",
+                ByteIntegrityStatus::Mismatch => "mismatch",
+            },
+            publisher_trust_status: match execution_gate.publisher_trust_status {
+                PublisherTrustStatus::Unavailable => "unavailable",
+            },
+            last_use_verification_status: match execution_gate.last_use_verification_status {
+                LastUseVerificationStatus::Unavailable => "unavailable",
+                LastUseVerificationStatus::ByteIntegrityVerified => "byte_integrity_verified_only",
+                LastUseVerificationStatus::Blocked => "blocked",
+            },
+            adapter_capability_category: match self.selected_channel {
+                Some(InstallationChannel::LinuxDeb) => "ubuntu_deb_apt_dpkg_contract_only",
+                Some(InstallationChannel::LinuxRpm) => "fedora_rpm_dnf_rpm_contract_only",
+                Some(InstallationChannel::LinuxAppImage) => {
+                    "linux_current_user_appimage_contract_only"
+                }
+                Some(InstallationChannel::WindowsPerUserSetup) => {
+                    "windows_current_user_setup_contract_only"
+                }
+                Some(InstallationChannel::WindowsPortable) => "windows_portable_zip_contract_only",
+                Some(InstallationChannel::ExistingInstallation) => {
+                    "existing_installation_identity_unavailable"
+                }
+                None => "unavailable_without_authoritative_plan",
+            },
             authorization_requirement_category:
                 AuthorizationRequirementCategory::AuthorizationPolicyUnavailable.code(),
             execution_blockers: execution_gate.blocker_summary(),
@@ -918,6 +952,17 @@ mod tests {
         assert!(!view.target_scope_detected);
         assert!(!view.privilege_assessed);
         assert_eq!(view.execution_gate_status, "awaiting_verified_plan");
+        assert_eq!(
+            view.artifact_verification_availability,
+            "unavailable_without_authenticated_release_source"
+        );
+        assert_eq!(view.byte_integrity_status, "not_verified");
+        assert_eq!(view.publisher_trust_status, "unavailable");
+        assert_eq!(view.last_use_verification_status, "unavailable");
+        assert_eq!(
+            view.adapter_capability_category,
+            "unavailable_without_authoritative_plan"
+        );
         assert_eq!(
             view.authorization_requirement_category,
             "authorization_policy_unavailable"
@@ -1189,6 +1234,12 @@ mod tests {
         assert!(wizard_qml.contains("Preview only — installation is not started"));
         assert!(wizard_qml.contains("id: acknowledgeReviewedPlan"));
         assert!(wizard_qml.contains("enabled: root.wizardView.acknowledgementAvailable"));
+        assert!(wizard_qml.contains("artifactVerificationAvailability"));
+        assert!(wizard_qml.contains("byteIntegrityStatus"));
+        assert!(wizard_qml.contains("publisherTrustStatus"));
+        assert!(wizard_qml.contains("lastUseVerificationStatus"));
+        assert!(wizard_qml.contains("adapterCapabilityCategory"));
+        assert!(!wizard_qml.contains("Verified publisher"));
         assert!(wizard_qml.contains("authorizationRequirementCategory"));
         assert!(wizard_qml.contains("executionBlockers"));
         assert!(wizard_qml.contains("requiredPolicyApprovals"));

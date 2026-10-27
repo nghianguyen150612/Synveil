@@ -5,12 +5,14 @@
 //! or execution entrypoint. Production execution is deliberately disabled.
 
 use crate::{
-    ArtifactEvidence, ConfirmationInvalidationReason, ConfirmationSession, ConfirmationState,
+    AdapterValidationBlocker, AdapterValidationResult, AdapterValidationStatus, ArtifactEvidence,
+    ByteIntegrityStatus, ConfirmationInvalidationReason, ConfirmationSession, ConfirmationState,
     EffectAuthority, EffectPhase, InstallationPlan, InstallationRequest, InstallerEngine,
-    JournalEnvelope, JournalErrorCode, PlanReviewContext, PlanReviewFingerprint,
-    PlanReviewSnapshot, PlanReviewStatus, Precondition, PrivilegeRequirement, ReconciliationPolicy,
-    RecoveryDisposition, ResourceClass, RetryPolicy, Reversibility, TargetScope,
-    VerificationContract,
+    JournalEnvelope, JournalErrorCode, LastUseVerificationBlocker, LastUseVerificationResult,
+    LastUseVerificationStatus, PlanReviewContext, PlanReviewFingerprint, PlanReviewSnapshot,
+    PlanReviewStatus, Precondition, PrivilegeRequirement, PublisherTrustStatus,
+    ReconciliationPolicy, RecoveryDisposition, ResourceClass, RetryPolicy, Reversibility,
+    TargetScope, UseTimeIdentityStatus, VerificationContract,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -77,6 +79,18 @@ pub enum ExecutionBlocker {
     JournalEvidenceUnavailable,
     RecoveryReadinessBlocked,
     LastUseVerificationUnavailable,
+    LastUseVerificationStale,
+    LastUseVerificationSizeMismatch,
+    LastUseVerificationDigestMismatch,
+    LastUseVerificationIdentityChanged,
+    LastUseExpectedDigestUnavailable,
+    PublisherTrustPolicyUnavailable,
+    UseTimeIdentityNotGuaranteed,
+    InstallationStateGenerationUnavailable,
+    NativeAdapterCapabilityUnavailable,
+    NativeAdapterCapabilityUnsupported,
+    NativeAdapterBindingStale,
+    NativeAdapterCatalogMismatch,
     ProductionExecutionCapabilityDisabled,
 }
 
@@ -145,6 +159,42 @@ impl ExecutionBlocker {
             }
             Self::LastUseVerificationUnavailable => {
                 "Staged artifact bytes and trusted policy cannot be rechecked at last use."
+            }
+            Self::LastUseVerificationStale => {
+                "Last-use artifact evidence belongs to a different plan or generation."
+            }
+            Self::LastUseVerificationSizeMismatch => {
+                "Last-use artifact bytes do not have the exact authenticated size."
+            }
+            Self::LastUseVerificationDigestMismatch => {
+                "Last-use artifact bytes do not match the trusted expected SHA-256."
+            }
+            Self::LastUseVerificationIdentityChanged => {
+                "The artifact or staging identity changed during last-use verification."
+            }
+            Self::LastUseExpectedDigestUnavailable => {
+                "A trusted expected artifact digest is unavailable."
+            }
+            Self::PublisherTrustPolicyUnavailable => {
+                "An approved publisher trust root and policy are unavailable."
+            }
+            Self::UseTimeIdentityNotGuaranteed => {
+                "The future installer consumer cannot yet be bound to the verified file handle."
+            }
+            Self::InstallationStateGenerationUnavailable => {
+                "The current installation-state generation is unavailable."
+            }
+            Self::NativeAdapterCapabilityUnavailable => {
+                "No typed platform adapter capability is bound to this plan."
+            }
+            Self::NativeAdapterCapabilityUnsupported => {
+                "The platform adapter does not support this channel or target scope."
+            }
+            Self::NativeAdapterBindingStale => {
+                "The adapter capability was evaluated for an older plan or generation."
+            }
+            Self::NativeAdapterCatalogMismatch => {
+                "The effect catalog does not match the exact adapter and resource owner."
             }
             Self::ProductionExecutionCapabilityDisabled => {
                 "Production Wizard execution is disabled in this contract-only milestone."
@@ -322,6 +372,8 @@ pub struct ExecutionGateInput<'a> {
     pub review: Option<&'a PlanReviewSnapshot>,
     pub current_review_context: Option<&'a PlanReviewContext>,
     pub acknowledgement: Option<&'a mut ConfirmationSession>,
+    pub last_use_verification: Option<&'a LastUseVerificationResult>,
+    pub adapter_validation: Option<&'a AdapterValidationResult>,
     pub recovery_readiness: RecoveryReadiness,
     pub now: u64,
 }
@@ -336,6 +388,8 @@ impl<'a> ExecutionGateInput<'a> {
             review: None,
             current_review_context: None,
             acknowledgement: None,
+            last_use_verification: None,
+            adapter_validation: None,
             recovery_readiness: RecoveryReadiness::RecoveryPolicyPending,
             now: 0,
         }
@@ -350,6 +404,10 @@ pub struct ExecutionReadinessReport {
     pub acknowledgement_status: ConfirmationState,
     pub recovery_readiness: RecoveryReadiness,
     pub native_authorization_availability: NativeAuthorizationAvailability,
+    pub byte_integrity_status: ByteIntegrityStatus,
+    pub publisher_trust_status: PublisherTrustStatus,
+    pub last_use_verification_status: LastUseVerificationStatus,
+    pub adapter_validation: Option<AdapterValidationResult>,
     pub required_policy_approvals: Vec<&'static str>,
     pub blockers: Vec<ExecutionBlocker>,
     pub authorization_requirements: Vec<EffectAuthorizationRequirement>,
@@ -387,6 +445,16 @@ pub fn evaluate_execution_readiness(mut input: ExecutionGateInput<'_>) -> Execut
     let mut fingerprint = None;
     let mut native_authorization_availability = NativeAuthorizationAvailability::PolicyUnavailable;
     let mut status = ExecutionGateStatus::AwaitingVerifiedPlan;
+    let byte_integrity_status = input.last_use_verification.map_or(
+        ByteIntegrityStatus::Unavailable,
+        LastUseVerificationResult::byte_integrity_status,
+    );
+    let publisher_trust_status = PublisherTrustStatus::Unavailable;
+    let last_use_verification_status = input.last_use_verification.map_or(
+        LastUseVerificationStatus::Unavailable,
+        LastUseVerificationResult::status,
+    );
+    let adapter_validation = input.adapter_validation.cloned();
 
     match (input.request, input.plan) {
         (Some(request), Some(plan)) => {
@@ -411,8 +479,9 @@ pub fn evaluate_execution_readiness(mut input: ExecutionGateInput<'_>) -> Execut
                 blockers.push(ExecutionBlocker::SyntheticArtifactRejected);
                 blockers.push(ExecutionBlocker::ArtifactProvenanceUnavailable);
             } else {
-                // P010 has no production artifact-byte verifier connected to the
-                // Wizard. A caller-provided evidence string is not a trust root.
+                // P012's byte verifier is available only behind a crate-owned
+                // trusted-source handoff. No authenticated source or approved
+                // production root is connected to the Wizard yet.
                 blockers.push(ExecutionBlocker::ArtifactProvenanceUnavailable);
             }
 
@@ -423,6 +492,9 @@ pub fn evaluate_execution_readiness(mut input: ExecutionGateInput<'_>) -> Execut
                 }
                 if context.capability_generation == 0 {
                     blockers.push(ExecutionBlocker::CapabilityGenerationUnavailable);
+                }
+                if context.installation_state_generation == 0 {
+                    blockers.push(ExecutionBlocker::InstallationStateGenerationUnavailable);
                 }
                 if context.effect_catalog_version.is_none() {
                     blockers.push(ExecutionBlocker::EffectCatalogVersionUnavailable);
@@ -506,6 +578,31 @@ pub fn evaluate_execution_readiness(mut input: ExecutionGateInput<'_>) -> Execut
                 blockers.push(ExecutionBlocker::ReviewAcknowledgementRequired);
             }
 
+            match (input.adapter_validation, input.review, context) {
+                (Some(adapter), Some(review), Some(context)) => {
+                    if !adapter.matches_current(request, plan, review, context) {
+                        blockers.push(ExecutionBlocker::NativeAdapterBindingStale);
+                    }
+                    if adapter.status == AdapterValidationStatus::Unsupported {
+                        blockers.push(ExecutionBlocker::NativeAdapterCapabilityUnsupported);
+                    }
+                    if adapter.status == AdapterValidationStatus::CatalogMismatch
+                        || adapter.blockers.iter().any(|blocker| {
+                            matches!(
+                                blocker,
+                                AdapterValidationBlocker::ClosedCatalogMismatch
+                                    | AdapterValidationBlocker::EffectOwnerMismatch
+                                    | AdapterValidationBlocker::EffectNotOwnedByAdapter
+                                    | AdapterValidationBlocker::UnknownEffectId
+                            )
+                        })
+                    {
+                        blockers.push(ExecutionBlocker::NativeAdapterCatalogMismatch);
+                    }
+                }
+                _ => blockers.push(ExecutionBlocker::NativeAdapterCapabilityUnavailable),
+            }
+
             for effect in &plan.ordered_effects {
                 let Some(effect_id) = EffectId::parse(&effect.effect_id) else {
                     continue;
@@ -567,7 +664,44 @@ pub fn evaluate_execution_readiness(mut input: ExecutionGateInput<'_>) -> Execut
     if !blockers.contains(&ExecutionBlocker::RequiredPolicyApprovalPending) {
         blockers.push(ExecutionBlocker::RequiredPolicyApprovalPending);
     }
-    blockers.push(ExecutionBlocker::LastUseVerificationUnavailable);
+    match (
+        input.last_use_verification,
+        input.request,
+        input.plan,
+        input.review,
+        input.current_review_context,
+    ) {
+        (
+            Some(LastUseVerificationResult::ByteIntegrityVerified(handle)),
+            Some(request),
+            Some(plan),
+            Some(review),
+            Some(context),
+        ) => {
+            if !handle.context_matches(request, plan, review, context) {
+                blockers.push(ExecutionBlocker::LastUseVerificationStale);
+            }
+            match handle.publisher_trust_status() {
+                PublisherTrustStatus::Unavailable => {
+                    blockers.push(ExecutionBlocker::PublisherTrustPolicyUnavailable)
+                }
+            }
+            if handle.use_time_identity_status() == UseTimeIdentityStatus::NotGuaranteed {
+                blockers.push(ExecutionBlocker::UseTimeIdentityNotGuaranteed);
+            }
+        }
+        (Some(LastUseVerificationResult::Blocked(blocker)), _, _, _, _) => {
+            blockers.extend(last_use_blockers(*blocker));
+        }
+        _ => blockers.push(ExecutionBlocker::LastUseVerificationUnavailable),
+    }
+    if input.adapter_validation.is_some_and(|adapter| {
+        adapter
+            .blockers
+            .contains(&AdapterValidationBlocker::ClosedCatalogMismatch)
+    }) {
+        blockers.push(ExecutionBlocker::NativeAdapterCatalogMismatch);
+    }
     // There is intentionally no input that can turn on production execution.
     blockers.push(ExecutionBlocker::ProductionExecutionCapabilityDisabled);
 
@@ -586,6 +720,10 @@ pub fn evaluate_execution_readiness(mut input: ExecutionGateInput<'_>) -> Execut
         acknowledgement_status,
         recovery_readiness,
         native_authorization_availability,
+        byte_integrity_status,
+        publisher_trust_status,
+        last_use_verification_status,
+        adapter_validation,
         required_policy_approvals: if input
             .current_review_context
             .is_some_and(|context| context.connection_mode == "tailscale")
@@ -599,6 +737,46 @@ pub fn evaluate_execution_readiness(mut input: ExecutionGateInput<'_>) -> Execut
         plan_freshness_verified,
         current_plan_id,
         fingerprint,
+    }
+}
+
+fn last_use_blockers(blocker: LastUseVerificationBlocker) -> Vec<ExecutionBlocker> {
+    match blocker {
+        LastUseVerificationBlocker::TrustedExpectedDigestUnavailable
+        | LastUseVerificationBlocker::ExpectedSizeUnavailable => {
+            vec![ExecutionBlocker::LastUseExpectedDigestUnavailable]
+        }
+        LastUseVerificationBlocker::DigestMismatch => {
+            vec![ExecutionBlocker::LastUseVerificationDigestMismatch]
+        }
+        LastUseVerificationBlocker::ExactSizeMismatch
+        | LastUseVerificationBlocker::UnsupportedArtifactSize => {
+            vec![ExecutionBlocker::LastUseVerificationSizeMismatch]
+        }
+        LastUseVerificationBlocker::AuthenticatedManifestUnavailable
+        | LastUseVerificationBlocker::ApprovedTrustPolicyUnavailable => {
+            vec![ExecutionBlocker::PublisherTrustPolicyUnavailable]
+        }
+        LastUseVerificationBlocker::FileIdentityChanged
+        | LastUseVerificationBlocker::ConcurrentModification => {
+            vec![ExecutionBlocker::LastUseVerificationIdentityChanged]
+        }
+        LastUseVerificationBlocker::StaleVerificationContext => {
+            vec![ExecutionBlocker::LastUseVerificationStale]
+        }
+        LastUseVerificationBlocker::UseTimeIdentityNotGuaranteed => {
+            vec![ExecutionBlocker::UseTimeIdentityNotGuaranteed]
+        }
+        LastUseVerificationBlocker::MissingArtifactBytes
+        | LastUseVerificationBlocker::InvalidExpectedEvidence
+        | LastUseVerificationBlocker::UnsafePath
+        | LastUseVerificationBlocker::UnsafePathAncestry
+        | LastUseVerificationBlocker::UnsupportedFileType
+        | LastUseVerificationBlocker::OwnershipOrAccessRejected
+        | LastUseVerificationBlocker::PlatformFileIdentityUnavailable
+        | LastUseVerificationBlocker::IoUnavailable => {
+            vec![ExecutionBlocker::LastUseVerificationUnavailable]
+        }
     }
 }
 
@@ -1256,11 +1434,16 @@ pub fn classify_recovery_readiness(
 mod tests {
     use super::*;
     use crate::{
+        ArtifactIdentity, ArtifactVerificationContext, AuthenticatedManifestArtifact,
         ENGINE_SCHEMA_VERSION, InstallationEffect, InstallationIntent, JournalRecord,
-        PROTECTED_RESOURCES, PlanReviewContext, Precondition, VerificationContract,
-        VerifiedArtifactEvidence,
+        LastUseVerificationRequest, PROTECTED_RESOURCES, PlanReviewContext, Precondition,
+        VerificationContract, VerifiedArtifactEvidence,
     };
+    #[cfg(target_os = "linux")]
+    use sha2::Digest;
     use std::collections::BTreeMap;
+    #[cfg(target_os = "linux")]
+    use std::fs;
 
     fn fixture() -> (InstallationRequest, InstallationPlan, PlanReviewContext) {
         let artifact = ArtifactEvidence::VerifiedReleaseArtifact {
@@ -1270,6 +1453,7 @@ mod tests {
                 product_version: "1.0.0".into(),
                 source_commit: "a".repeat(40),
                 artifact_sha256: "b".repeat(64),
+                artifact_size_bytes: 1024,
                 manifest_sha256: "c".repeat(64),
                 authentication_method: "synthetic-test-only".into(),
                 verified_local_path: "/fixture/AppImage".into(),
@@ -1358,6 +1542,72 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    fn verified_last_use_fixture(
+        request: &mut InstallationRequest,
+        plan: &mut InstallationPlan,
+        context: &PlanReviewContext,
+        review: &PlanReviewSnapshot,
+        bytes: &[u8],
+    ) -> (tempfile::TempDir, LastUseVerificationResult) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let digest = format!("{:x}", sha2::Sha256::digest(bytes));
+        let (artifact_id, artifact_type, product_version, source_commit, manifest_identity) =
+            match &mut plan.artifact {
+                Some(ArtifactEvidence::VerifiedReleaseArtifact { evidence }) => {
+                    evidence.artifact_sha256 = digest.clone();
+                    evidence.artifact_size_bytes = bytes.len() as u64;
+                    (
+                        evidence.artifact_id.clone(),
+                        evidence.artifact_type.clone(),
+                        evidence.product_version.clone(),
+                        evidence.source_commit.clone(),
+                        evidence.manifest_sha256.clone(),
+                    )
+                }
+                _ => panic!("fixture has release artifact evidence"),
+            };
+        request.verified_artifact = plan.artifact.clone();
+
+        let identity =
+            ArtifactIdentity::from_authenticated_manifest(AuthenticatedManifestArtifact {
+                artifact_id,
+                artifact_type,
+                product_version,
+                source_commit,
+                expected_sha256: Some(digest),
+                expected_size_bytes: Some(bytes.len() as u64),
+                manifest_identity,
+                manifest_generation: context.manifest_generation,
+                trust_policy_identity: "synthetic-test-policy-only".into(),
+                source_provenance_reference: "release-artifact:fixture-appimage".into(),
+            })
+            .expect("test-only expected evidence");
+        let verification_context = ArtifactVerificationContext::from_current_review(
+            context.platform.clone(),
+            context.architecture.clone(),
+            context.channel.clone(),
+            review.fingerprint().as_hex(),
+            context.manifest_generation,
+            context.capability_generation,
+            context.installation_state_generation,
+            context.effect_catalog_version,
+            context.security_policy_version,
+        )
+        .expect("exact review context");
+        let directory = tempfile::tempdir().expect("isolated temporary directory");
+        let path = directory.path().join("artifact.bin");
+        fs::write(&path, bytes).expect("synthetic bytes");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("private fixture");
+        let verification_request = LastUseVerificationRequest::from_authenticated_source(
+            identity,
+            verification_context,
+            path,
+        );
+        (directory, crate::verify_last_use(verification_request))
+    }
+
     #[test]
     fn missing_plan_and_synthetic_artifact_fail_closed() {
         let report = evaluate_execution_readiness(ExecutionGateInput::unavailable());
@@ -1382,6 +1632,8 @@ mod tests {
             review: Some(&review),
             current_review_context: Some(&context),
             acknowledgement: None,
+            last_use_verification: None,
+            adapter_validation: None,
             recovery_readiness: RecoveryReadiness::RecoveryPolicyPending,
             now: 1,
         });
@@ -1417,6 +1669,19 @@ mod tests {
     }
 
     #[test]
+    fn zero_or_missing_authenticated_artifact_size_invalidates_plan_validation() {
+        let (mut request, mut plan, _) = fixture();
+        if let Some(ArtifactEvidence::VerifiedReleaseArtifact { evidence }) = &mut plan.artifact {
+            evidence.artifact_size_bytes = 0;
+        }
+        request.verified_artifact = plan.artifact.clone();
+        assert_eq!(
+            InstallerEngine.validate(&request, &plan),
+            Err(crate::EngineErrorCode::InvalidPlan)
+        );
+    }
+
+    #[test]
     fn catalog_rejects_unknown_effect_owner_mismatch_and_scope_mismatch() {
         let (request, plan, context) = fixture();
         let catalog = catalog_entry(&plan);
@@ -1442,6 +1707,8 @@ mod tests {
             review: Some(&review),
             current_review_context: Some(&context),
             acknowledgement: None,
+            last_use_verification: None,
+            adapter_validation: None,
             recovery_readiness: RecoveryReadiness::RecoveryPolicyPending,
             now: 1,
         });
@@ -1512,6 +1779,8 @@ mod tests {
             review: Some(&review),
             current_review_context: Some(&context),
             acknowledgement: None,
+            last_use_verification: None,
+            adapter_validation: None,
             recovery_readiness: RecoveryReadiness::RecoveryPolicyPending,
             now: 1,
         });
@@ -1535,6 +1804,8 @@ mod tests {
             review: Some(&review),
             current_review_context: Some(&context),
             acknowledgement: Some(&mut acknowledgement),
+            last_use_verification: None,
+            adapter_validation: None,
             recovery_readiness: RecoveryReadiness::Ready,
             now: 11,
         });
@@ -1580,6 +1851,174 @@ mod tests {
             report.status,
             ExecutionGateStatus::EligibleForFutureExecution
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn typed_last_use_and_adapter_evidence_reach_gate_but_never_enable_production() {
+        let (mut request, mut plan, context) = fixture();
+        let bytes = b"synthetic bytes for a non-production verification fixture";
+        let expected_digest = format!("{:x}", sha2::Sha256::digest(bytes));
+        if let Some(ArtifactEvidence::VerifiedReleaseArtifact { evidence }) = &mut plan.artifact {
+            evidence.artifact_sha256 = expected_digest;
+            evidence.artifact_size_bytes = bytes.len() as u64;
+        }
+        request.verified_artifact = plan.artifact.clone();
+        let review = PlanReviewSnapshot::validate_and_create(&request, &plan, context.clone())
+            .expect("synthetic review snapshot");
+        let (directory, last_use) =
+            verified_last_use_fixture(&mut request, &mut plan, &context, &review, bytes);
+        let adapter = crate::validate_native_adapter_capability(
+            &request,
+            &plan,
+            &review,
+            &context,
+            &[catalog_entry(&plan)],
+        );
+        let mut acknowledgement = ConfirmationSession::new(&review);
+        assert!(acknowledgement.acknowledge(&review, 10, 60).unwrap());
+        let report = evaluate_execution_readiness(ExecutionGateInput {
+            request: Some(&request),
+            plan: Some(&plan),
+            review: Some(&review),
+            current_review_context: Some(&context),
+            acknowledgement: Some(&mut acknowledgement),
+            last_use_verification: Some(&last_use),
+            adapter_validation: Some(&adapter),
+            recovery_readiness: RecoveryReadiness::Ready,
+            now: 11,
+        });
+        assert_eq!(report.byte_integrity_status, ByteIntegrityStatus::Verified);
+        assert_eq!(
+            report.last_use_verification_status,
+            LastUseVerificationStatus::ByteIntegrityVerified
+        );
+        assert_eq!(
+            report.publisher_trust_status,
+            PublisherTrustStatus::Unavailable
+        );
+        assert!(
+            report
+                .blockers
+                .contains(&ExecutionBlocker::PublisherTrustPolicyUnavailable)
+        );
+        assert!(
+            report
+                .blockers
+                .contains(&ExecutionBlocker::UseTimeIdentityNotGuaranteed)
+        );
+        assert!(
+            report
+                .blockers
+                .contains(&ExecutionBlocker::ProductionExecutionCapabilityDisabled)
+        );
+        assert!(
+            report
+                .blockers
+                .contains(&ExecutionBlocker::ApprovedEffectCatalogUnavailable)
+        );
+        assert_ne!(
+            report.status,
+            ExecutionGateStatus::EligibleForFutureExecution
+        );
+        assert!(report.adapter_validation.is_some());
+        drop(directory);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn last_use_and_adapter_bindings_stale_on_plan_and_generation_changes() {
+        let (mut request, mut plan, context) = fixture();
+        let bytes = b"context binding fixture";
+        let digest = format!("{:x}", sha2::Sha256::digest(bytes));
+        if let Some(ArtifactEvidence::VerifiedReleaseArtifact { evidence }) = &mut plan.artifact {
+            evidence.artifact_sha256 = digest;
+            evidence.artifact_size_bytes = bytes.len() as u64;
+        }
+        request.verified_artifact = plan.artifact.clone();
+        let review = PlanReviewSnapshot::validate_and_create(&request, &plan, context.clone())
+            .expect("synthetic review snapshot");
+        let (directory, last_use) =
+            verified_last_use_fixture(&mut request, &mut plan, &context, &review, bytes);
+        let adapter = crate::validate_native_adapter_capability(
+            &request,
+            &plan,
+            &review,
+            &context,
+            &[catalog_entry(&plan)],
+        );
+
+        for (field, changed_context) in [
+            (
+                "manifest",
+                PlanReviewContext {
+                    manifest_generation: Some(4),
+                    ..context.clone()
+                },
+            ),
+            (
+                "capability",
+                PlanReviewContext {
+                    capability_generation: 9,
+                    ..context.clone()
+                },
+            ),
+            (
+                "installation",
+                PlanReviewContext {
+                    installation_state_generation: 6,
+                    ..context.clone()
+                },
+            ),
+        ] {
+            let report = evaluate_execution_readiness(ExecutionGateInput {
+                request: Some(&request),
+                plan: Some(&plan),
+                review: Some(&review),
+                current_review_context: Some(&changed_context),
+                acknowledgement: None,
+                last_use_verification: Some(&last_use),
+                adapter_validation: Some(&adapter),
+                recovery_readiness: RecoveryReadiness::Ready,
+                now: 1,
+            });
+            assert!(
+                report
+                    .blockers
+                    .contains(&ExecutionBlocker::LastUseVerificationStale),
+                "{field} generation must invalidate byte evidence"
+            );
+            assert!(
+                report
+                    .blockers
+                    .contains(&ExecutionBlocker::NativeAdapterBindingStale)
+            );
+        }
+
+        let mut changed_plan = plan.clone();
+        changed_plan.plan_id.push_str("-changed");
+        let report = evaluate_execution_readiness(ExecutionGateInput {
+            request: Some(&request),
+            plan: Some(&changed_plan),
+            review: Some(&review),
+            current_review_context: Some(&context),
+            acknowledgement: None,
+            last_use_verification: Some(&last_use),
+            adapter_validation: Some(&adapter),
+            recovery_readiness: RecoveryReadiness::Ready,
+            now: 1,
+        });
+        assert!(
+            report
+                .blockers
+                .contains(&ExecutionBlocker::LastUseVerificationStale)
+        );
+        assert!(
+            report
+                .blockers
+                .contains(&ExecutionBlocker::NativeAdapterBindingStale)
+        );
+        drop(directory);
     }
 
     #[test]
@@ -1701,6 +2140,8 @@ mod tests {
             review: Some(&review),
             current_review_context: Some(&context),
             acknowledgement: None,
+            last_use_verification: None,
+            adapter_validation: None,
             recovery_readiness: RecoveryReadiness::RecoveryPolicyPending,
             now: 1,
         });
@@ -1720,6 +2161,8 @@ mod tests {
             review: Some(&review),
             current_review_context: Some(&context),
             acknowledgement: Some(&mut confirmation),
+            last_use_verification: None,
+            adapter_validation: None,
             recovery_readiness: RecoveryReadiness::RecoveryPolicyPending,
             now: 12,
         });
