@@ -77,12 +77,14 @@ jobs:
           python3 scripts/validate-windows-installer.py
           python3 scripts/validate-windows-native-acceptance.py
           python3 scripts/test_windows_native_evidence.py
+          cargo check --locked -p synveil-client --example p013_windows_control_probe
+          cargo test -p synveil-client --test desktop_control_ipc --locked
           ./scripts/validate-install-acceptance.sh
       - name: Parse PowerShell acceptance tools without running them
         if: github.event_name != 'workflow_dispatch'
         shell: pwsh
         run: |
-          $scriptPaths = @('scripts/qualify-windows-native-environment.ps1','scripts/test-windows-gui-journey.ps1')
+          $scriptPaths = @('scripts/qualify-windows-native-environment.ps1','scripts/test-windows-gui-journey.ps1','scripts/collect-windows-new-logon-evidence.ps1','scripts/collect-windows-logoff-evidence.ps1','scripts/provision-windows-p013-test-user.ps1','scripts/cleanup-windows-p013-test-user.ps1')
           foreach ($scriptPath in $scriptPaths) {
             $tokens = $null
             $parseErrors = $null
@@ -251,7 +253,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item target/windows-native-evidence -ItemType Directory -Force | Out-Null
-          @{schema_version=1;result='BLOCKED';reason='GitHub-hosted Windows runners do not provide a qualified interactive desktop or genuine new-logon session; named-pipe end-to-end acceptance is not yet wired.';interactive_gui='BLOCKED';real_logon='BLOCKED';named_pipe='BLOCKED';diagnostics_redacted=$true;cleanup_result=@{status='complete';details='standard-user harness cleanup completed'}} | ConvertTo-Json -Depth 4 | Set-Content target/windows-native-evidence/p028-blockers.json
+          @{schema_version=1;result='BLOCKED';reason='GitHub-hosted Windows service sessions do not provide qualified interactive desktop or genuine new-logon evidence; P013 installed-component pipe probes are source-checked but not accepted from this service session.';interactive_gui='BLOCKED';real_logon='BLOCKED';named_pipe='BLOCKED';diagnostics_redacted=$true;cleanup_result=@{status='complete';details='standard-user harness cleanup completed'}} | ConvertTo-Json -Depth 4 | Set-Content target/windows-native-evidence/p028-blockers.json
           throw 'BLOCKED_BY_ENVIRONMENT: required P028 GUI/logon evidence unavailable and named-pipe gate pending'
       - name: Upload bounded native evidence
         if: always()

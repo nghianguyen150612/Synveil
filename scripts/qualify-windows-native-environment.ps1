@@ -131,6 +131,10 @@ try { $sidDigest = [Convert]::ToHexString($sidHasher.ComputeHash([Text.Encoding]
 finally { $sidHasher.Dispose() }
 $adminSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
 $hasAdminGroup = @($identity.Groups | Where-Object { $_.Value -eq $adminSid.Value }).Count -gt 0
+$markedAccounts = @(Get-CimInstance Win32_UserAccount -Filter "SID='$($identity.User.Value)'" | Where-Object { $_.LocalAccount })
+$disposableTestUser = $markedAccounts.Count -eq 1 -and
+    $markedAccounts[0].Name -match '^synveil_p013_[0-9a-f]{8}$' -and
+    $markedAccounts[0].Description -ceq 'SYNVEIL P013 DISPOSABLE ACCEPTANCE ACCOUNT'
 
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 $artifactRecords = @($manifest.artifacts | Where-Object {
@@ -142,7 +146,7 @@ $manifestCandidateMatch = $manifest.schema_version -eq 1 -and $manifest.product 
     [long]$artifactRecords[0].size_bytes -eq $setupItem.Length
 
 $checkNames = @(
-    'candidate_identity','architecture','windows_build_policy','standard_user_token',
+    'candidate_identity','architecture','windows_build_policy','disposable_test_user','standard_user_token',
     'interactive_session','false_interactive_claim_rejection','real_logon','logon_trigger',
     'setup_process_identity','pipe_endpoint_discovery','installed_binary_identity',
     'installed_process_identity','pipe_protocol_v1','pipe_ping','pipe_wrong_user',
@@ -155,13 +159,14 @@ $checkNames = @(
     'application_shutdown','logon_expected_sid','logon_no_elevated_token',
     'logon_startup_state','logon_no_duplicate_processes','logon_logout_shutdown',
     'install_root','uninstall_preservation','cleanup','timeout_cancellation',
-    'evidence_redaction','no_wizard_execution_activation'
+    'evidence_redaction','no_wizard_execution_activation','harness_revision','component_results'
 )
 $checks = [ordered]@{}
 foreach ($name in $checkNames) { $checks[$name] = 'NOT_RUN' }
 $checks.candidate_identity = if ($manifestCandidateMatch) { 'PASS' } else { 'FAIL' }
 $checks.architecture = if ($isX64) { 'PASS' } else { 'FAIL' }
 $checks.windows_build_policy = if ($isWindows11) { 'PASS' } else { 'FAIL' }
+$checks.disposable_test_user = if ($disposableTestUser) { 'PASS' } else { 'FAIL' }
 $checks.standard_user_token = if (-not $administrator -and -not $hasAdminGroup -and -not $elevated) { 'PASS' } else { 'FAIL' }
 $checks.interactive_session = if ($interactive) { 'PASS' } else { 'BLOCKED_BY_ENVIRONMENT' }
 $checks.false_interactive_claim_rejection = 'PASS'
@@ -170,10 +175,12 @@ $checks.no_wizard_execution_activation = 'PASS'
 
 $sessionClass = if ($interactive) { 'genuine_interactive' } elseif ($currentProcessSession -eq 0) { 'service' } elseif ($wtsSessionHasUser -and -not $processMatchesWtsUser) { 'alternate_credentials_noninteractive' } else { 'unsupported' }
 $interactiveStatus = if ($interactive) { 'PASS' } else { 'BLOCKED_BY_ENVIRONMENT' }
-$unrunRequired = @($checks.GetEnumerator() | Where-Object { $_.Value -in @('NOT_RUN','INCOMPLETE') }).Count -gt 0
-$result = if (-not $isWindows11 -or -not $isX64 -or $administrator -or $hasAdminGroup -or $elevated) { 'FAIL' }
+$environmentChecksPass = @('candidate_identity','architecture','windows_build_policy','disposable_test_user',
+    'standard_user_token','interactive_session','false_interactive_claim_rejection','evidence_redaction',
+    'no_wizard_execution_activation') | Where-Object { $checks[$_] -ne 'PASS' }
+$result = if (-not $isWindows11 -or -not $isX64 -or -not $disposableTestUser -or $administrator -or $hasAdminGroup -or $elevated) { 'FAIL' }
     elseif (-not $interactive) { 'BLOCKED_BY_ENVIRONMENT' }
-    elseif ($unrunRequired) { 'INCOMPLETE' } else { 'PASS' }
+    elseif (@($environmentChecksPass).Count -gt 0) { 'INCOMPLETE' } else { 'PASS' }
 
 $manifestSha = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
 $harnessSha = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -195,7 +202,7 @@ $record = [ordered]@{
         architecture = if ($isX64) { 'x86_64' } else { [string]$arch }
         harness_revision_sha256 = $harnessSha
         operator_approved = $true
-        qualification = if ($env:GITHUB_ACTIONS -eq 'true') { 'github_hosted_service' } elseif ($isWindows11 -and $isX64 -and $interactive -and -not $administrator -and -not $hasAdminGroup -and -not $elevated) { 'qualified_isolated_native' } else { 'unsupported' }
+        qualification = if ($env:GITHUB_ACTIONS -eq 'true') { 'github_hosted_service' } elseif ($isWindows11 -and $isX64 -and $interactive -and $disposableTestUser -and -not $administrator -and -not $hasAdminGroup -and -not $elevated) { 'qualified_isolated_native' } else { 'unsupported' }
     }
     privilege = [ordered]@{
         category = if ($administrator -or $hasAdminGroup -or $elevated) { 'administrator' } else { 'standard_user' }

@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import json
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -11,6 +16,11 @@ spec = importlib.util.spec_from_file_location("windows_native_evidence", MODULE)
 assert spec and spec.loader
 contract = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(contract)
+SUMMARY_MODULE = Path(__file__).with_name("summarize-windows-native-acceptance.py")
+summary_spec = importlib.util.spec_from_file_location("windows_native_summary", SUMMARY_MODULE)
+assert summary_spec and summary_spec.loader
+summary = importlib.util.module_from_spec(summary_spec)
+summary_spec.loader.exec_module(summary)
 
 
 def passing_record() -> dict:
@@ -46,6 +56,9 @@ def passing_record() -> dict:
         "checks": checks,
         "cleanup": {"status": "PASS", "independently_verified": True},
         "redaction": {"no_credentials_or_user_paths": True, "raw_pipe_payloads_recorded": False},
+        "ui_evidence": {"mode": "native_ui_automation", "state_assertions": True,
+                        "screenshots_status": "NOT_CAPTURED"},
+        "component_evidence_sha256": {name: "e" * 64 for name in ("environment", "gui", "logon", "logoff", "cleanup")},
     }
 
 
@@ -58,6 +71,94 @@ class EvidenceContractTests(unittest.TestCase):
 
     def test_complete_qualified_evidence_passes(self) -> None:
         contract.validate(passing_record())
+
+    def test_component_evidence_digests_are_required_and_validated(self) -> None:
+        record = passing_record()
+        del record["component_evidence_sha256"]["gui"]
+        self.assertRejected(record, "component_evidence_sha256 is incomplete")
+        record = passing_record()
+        record["component_evidence_sha256"]["gui"] = "bad"
+        self.assertRejected(record, "SHA-256")
+
+    def test_missing_component_records_cannot_aggregate_to_pass(self) -> None:
+        candidate = {
+            "filename": "SynveilSetup.exe", "sha256": "b" * 64, "size_bytes": 123,
+            "source_commit": "a" * 40, "release_manifest_sha256": "c" * 64,
+            "expected_sha256": "b" * 64, "expected_size_bytes": 123,
+            "expected_release_manifest_sha256": "c" * 64,
+            "signature_status": "UNSIGNED_FIXTURE",
+        }
+        digests = {name: None for name in ("environment", "gui", "logon", "logoff", "cleanup")}
+        source_check = summary.current_source_matches
+        summary.current_source_matches = lambda _source: True
+        try:
+            record = summary.make_summary({}, digests, candidate, True, "a" * 40, contract.REQUIRED_CHECKS)
+        finally:
+            summary.current_source_matches = source_check
+        self.assertEqual(record["result"], "INCOMPLETE")
+        self.assertEqual(record["checks"]["pipe_ping"], "NOT_RUN")
+        self.assertEqual(record["checks"]["harness_revision"], "NOT_RUN")
+        contract.validate(record)
+
+    def test_component_harness_revision_mismatch_fails_summary(self) -> None:
+        candidate = {
+            "filename": "SynveilSetup.exe", "sha256": "b" * 64, "size_bytes": 123,
+            "source_commit": "a" * 40, "release_manifest_sha256": "c" * 64,
+            "expected_sha256": "b" * 64, "expected_size_bytes": 123,
+            "expected_release_manifest_sha256": "c" * 64,
+            "signature_status": "UNSIGNED_FIXTURE",
+        }
+        names = ("environment", "gui", "logon", "logoff", "cleanup")
+        components = {name: {"result": "PASS", "harness_revision_sha256": "0" * 64} for name in names}
+        digests = {name: "e" * 64 for name in names}
+        source_check = summary.current_source_matches
+        summary.current_source_matches = lambda _source: True
+        try:
+            record = summary.make_summary(components, digests, candidate, True, "a" * 40,
+                                          contract.REQUIRED_CHECKS)
+        finally:
+            summary.current_source_matches = source_check
+        self.assertEqual(record["checks"]["harness_revision"], "FAIL")
+        self.assertEqual(record["result"], "FAIL")
+        contract.validate(record)
+
+    def test_summary_cli_records_missing_component_evidence_without_pass(self) -> None:
+        source = "a" * 40
+        setup_bytes = b"P013 candidate identity fixture"
+        setup_hash = hashlib.sha256(setup_bytes).hexdigest()
+        with tempfile.TemporaryDirectory(prefix="p013-summary-test-") as temporary:
+            root = Path(temporary)
+            setup_path = root / "SynveilSetup.exe"
+            setup_path.write_bytes(setup_bytes)
+            release = {
+                "schema_version": 1, "product": "Synveil", "source_commit": source,
+                "artifacts": [{"id": "windows-x86_64-installer", "filename": "SynveilSetup.exe",
+                               "sha256": setup_hash, "size_bytes": len(setup_bytes)}],
+            }
+            release_path = root / "release.json"
+            release_path.write_text(json.dumps(release), encoding="utf-8")
+            manifest_hash = hashlib.sha256(release_path.read_bytes()).hexdigest()
+            identity_path = root / "candidate.json"
+            identity_path.write_text(json.dumps({
+                "filename": "SynveilSetup.exe", "source_commit": source,
+                "sha256": setup_hash, "size_bytes": len(setup_bytes),
+                "release_manifest_sha256": manifest_hash, "signature_status": "UNSIGNED",
+            }), encoding="utf-8")
+            evidence_path = root / "components"
+            evidence_path.mkdir()
+            output_path = root / "summary.json"
+            run = subprocess.run([
+                sys.executable, str(SUMMARY_MODULE),
+                "--candidate-identity", str(identity_path), "--setup", str(setup_path),
+                "--release-manifest", str(release_path), "--source-commit", source,
+                "--evidence-directory", str(evidence_path), "--output", str(output_path),
+            ], check=False, capture_output=True, text=True)
+            self.assertEqual(run.returncode, 1, run.stderr)
+            record = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(record["result"], "FAIL")
+            self.assertEqual(record["checks"]["candidate_identity"], "FAIL")
+            self.assertEqual(record["checks"]["component_results"], "NOT_RUN")
+            contract.validate(record)
 
     def test_candidate_digest_mismatch_shape_is_rejected(self) -> None:
         record = passing_record()
@@ -102,6 +203,11 @@ class EvidenceContractTests(unittest.TestCase):
         record = passing_record()
         record["privilege"]["elevated"] = True
         self.assertRejected(record, "elevated token")
+
+    def test_unmarked_daily_use_profile_cannot_claim_disposable_test_identity(self) -> None:
+        record = passing_record()
+        record["checks"]["disposable_test_user"] = "NOT_RUN"
+        self.assertRejected(record, "failed checks")
 
     def test_presence_without_native_session_observations_is_rejected(self) -> None:
         record = passing_record()
@@ -213,6 +319,17 @@ class EvidenceContractTests(unittest.TestCase):
         record = passing_record()
         del record["checks"]["real_logon"]
         self.assertRejected(record, "checks are incomplete")
+
+    def test_missing_screenshots_are_classified_when_native_ui_assertions_exist(self) -> None:
+        record = passing_record()
+        record["ui_evidence"]["screenshots_status"] = "NOT_CAPTURED"
+        contract.validate(record)
+
+    def test_missing_ui_assertions_cannot_be_replaced_by_screenshots(self) -> None:
+        record = passing_record()
+        record["ui_evidence"] = {"mode": "unavailable", "state_assertions": False,
+                                 "screenshots_status": "CAPTURED"}
+        self.assertRejected(record, "screenshots cannot replace")
 
     def test_each_required_surface_is_independently_fail_closed(self) -> None:
         for name in sorted(contract.REQUIRED_CHECKS):

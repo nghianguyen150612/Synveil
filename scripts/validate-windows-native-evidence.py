@@ -15,7 +15,7 @@ HEX64 = re.compile(r"^[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 STATUSES = {"PASS", "FAIL", "BLOCKED_BY_ENVIRONMENT", "NOT_RUN", "INCOMPLETE"}
 REQUIRED_CHECKS = {
-    "candidate_identity", "architecture", "windows_build_policy", "standard_user_token",
+    "candidate_identity", "architecture", "windows_build_policy", "disposable_test_user", "standard_user_token",
     "interactive_session", "false_interactive_claim_rejection", "real_logon", "logon_trigger",
     "setup_process_identity", "pipe_endpoint_discovery", "installed_binary_identity",
     "installed_process_identity", "pipe_protocol_v1", "pipe_ping", "pipe_wrong_user",
@@ -28,7 +28,7 @@ REQUIRED_CHECKS = {
     "application_shutdown", "logon_expected_sid", "logon_no_elevated_token",
     "logon_startup_state", "logon_no_duplicate_processes", "logon_logout_shutdown",
     "install_root", "uninstall_preservation", "cleanup", "timeout_cancellation",
-    "evidence_redaction", "no_wizard_execution_activation",
+    "evidence_redaction", "no_wizard_execution_activation", "harness_revision", "component_results",
 }
 
 
@@ -60,10 +60,11 @@ def validate(record: dict[str, Any]) -> None:
     _keys(record, {
         "schema_version", "result", "execution_id", "executed_at_utc", "source_commit",
         "candidate", "environment", "privilege", "session", "checks", "cleanup",
-        "redaction", "identity_binding",
+        "redaction", "identity_binding", "ui_evidence", "component_evidence_sha256",
     }, {
         "schema_version", "result", "execution_id", "executed_at_utc", "source_commit",
-        "candidate", "environment", "privilege", "session", "checks", "cleanup", "redaction",
+        "candidate", "environment", "privilege", "session", "checks", "cleanup", "redaction", "ui_evidence",
+        "component_evidence_sha256",
     }, "evidence")
     require(record.get("schema_version") == 1, "unsupported evidence schema")
     _status(record.get("result"), "result")
@@ -181,6 +182,12 @@ def validate(record: dict[str, Any]) -> None:
             "evidence redaction assertion missing")
     require(record.get("redaction", {}).get("raw_pipe_payloads_recorded") is False,
             "raw pipe messages must not be published")
+    component_digests = record.get("component_evidence_sha256")
+    component_names = {"environment", "gui", "logon", "logoff", "cleanup"}
+    _keys(component_digests, component_names, component_names, "component_evidence_sha256")
+    for name, value in component_digests.items():
+        if value is not None:
+            _hash(value, f"component_evidence_sha256.{name}")
     if "identity_binding" in record:
         _keys(record["identity_binding"], {"user_sid_sha256", "process_session_id"},
               {"user_sid_sha256", "process_session_id"}, "identity_binding")
@@ -188,17 +195,31 @@ def validate(record: dict[str, Any]) -> None:
         require(isinstance(record["identity_binding"]["process_session_id"], int),
                 "identity_binding process session id is invalid")
 
+    ui = record.get("ui_evidence")
+    _keys(ui, {"mode", "state_assertions", "screenshots_status"},
+          {"mode", "state_assertions", "screenshots_status"}, "ui_evidence")
+    require(ui.get("mode") in {"native_ui_automation", "unavailable"}, "unknown UI evidence mode")
+    require(isinstance(ui.get("state_assertions"), bool), "UI state assertion classification is missing")
+    require(ui.get("screenshots_status") in {"CAPTURED", "NOT_CAPTURED", "BLOCKED_BY_ENVIRONMENT"},
+            "unknown screenshot evidence status")
+    if ui.get("screenshots_status") == "CAPTURED":
+        require(ui.get("mode") == "native_ui_automation", "screenshots cannot replace native UI state assertions")
+
     if record["result"] == "PASS":
         require(env["qualification"] == "qualified_isolated_native", "hosted/unqualified evidence cannot be PASS")
         require(env["architecture"] == "x86_64", "PASS requires x86-64 Windows")
         require(env["operator_approved"], "PASS requires explicit operator approval for an isolated environment")
         require(session["interactive_status"] == "PASS" and session["new_logon_status"] == "PASS"
                 and session["trigger_status"] == "PASS", "PASS requires interactive new-logon evidence")
+        require(ui.get("mode") == "native_ui_automation" and ui.get("state_assertions"),
+                "PASS requires actual native UI Automation state assertions")
         require(privilege["category"] == "standard_user" and not privilege["elevated"],
                 "PASS requires a non-elevated standard-user token")
         require(all(checks[name] == "PASS" for name in REQUIRED_CHECKS), "PASS has missing or failed checks")
         require(record["cleanup"]["status"] == "PASS" and record["cleanup"]["independently_verified"],
                 "PASS requires independently verified cleanup")
+        require(all(value is not None for value in component_digests.values()),
+                "PASS requires every component evidence digest")
         require("windows 11" in env["edition"].lower() and env["build"] >= 22000,
                 "PASS requires a supported Windows 11 build")
     elif record["result"] == "BLOCKED_BY_ENVIRONMENT":
