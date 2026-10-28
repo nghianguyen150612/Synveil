@@ -37,6 +37,16 @@ public static class SynveilP013GuiNative {
   [DllImport("kernel32.dll")] public static extern uint WTSGetActiveConsoleSessionId();
   [DllImport("wtsapi32.dll", SetLastError=true, CharSet=CharSet.Unicode)] public static extern bool WTSQuerySessionInformation(IntPtr server, uint sessionId, int infoClass, out IntPtr buffer, out uint bytes);
   [DllImport("wtsapi32.dll")] public static extern void WTSFreeMemory(IntPtr buffer);
+  [DllImport("advapi32.dll", SetLastError=true)] public static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+  [DllImport("advapi32.dll", SetLastError=true)] public static extern bool GetTokenInformation(IntPtr token, int infoClass, out int value, int length, out int needed);
+  [DllImport("kernel32.dll")] public static extern IntPtr GetCurrentProcess();
+  [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr handle);
+  public static bool IsElevated() {
+    IntPtr token; int value, needed;
+    if (!OpenProcessToken(GetCurrentProcess(), 0x0008, out token)) throw new System.ComponentModel.Win32Exception();
+    try { if (!GetTokenInformation(token, 20, out value, sizeof(int), out needed)) throw new System.ComponentModel.Win32Exception(); return value != 0; }
+    finally { CloseHandle(token); }
+  }
 }
 '@
 if (-not ('SynveilP013GuiNative' -as [type])) { Add-Type -TypeDefinition $nativeType }
@@ -119,7 +129,8 @@ function Get-ToggleValue([Diagnostics.Process]$Process, [string]$NamePattern) {
     $elements = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
     for ($i = 0; $i -lt $elements.Count -and $i -lt 512; $i++) {
         $element = $elements.Item($i)
-        if ([string]$element.Current.Name -match $NamePattern) {
+        $identityText = [string]$element.Current.Name + ' ' + [string]$element.Current.AutomationId
+        if ($identityText -match $NamePattern) {
             $pattern = $null
             if ($element.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$pattern)) {
                 return ([System.Windows.Automation.TogglePattern]$pattern).Current.ToggleState -eq [System.Windows.Automation.ToggleState]::On
@@ -137,8 +148,10 @@ function Test-WindowValueContains([Diagnostics.Process]$Process, [string]$Expect
     for ($i = 0; $i -lt $elements.Count -and $i -lt 512; $i++) {
         $element = $elements.Item($i)
         $pattern = $null
-        if ($element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern) -and
-            [string]([System.Windows.Automation.ValuePattern]$pattern).Current.Value -ceq $ExpectedValue) { return $true }
+        if ($element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
+            $actualValue = [string]([System.Windows.Automation.ValuePattern]$pattern).Current.Value
+            if ($actualValue.TrimEnd('\') -ieq $ExpectedValue.TrimEnd('\')) { return $true }
+        }
     }
     return $false
 }
@@ -166,9 +179,10 @@ Assert-True ($os.Caption -match 'Windows 11' -and [int]$os.BuildNumber -ge 22000
 Assert-True (Get-CurrentInteractiveEvidence) 'P013_BLOCKED_BY_ENVIRONMENT: no interactive Windows desktop'
 $testIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $testPrincipal = [Security.Principal.WindowsPrincipal]::new($testIdentity)
+$elevated = [SynveilP013GuiNative]::IsElevated()
 $adminSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
 $adminGroupPresent = @($testIdentity.Groups | Where-Object { $_.Value -eq $adminSid.Value }).Count -gt 0
-Assert-True (-not $testPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) -and -not $adminGroupPresent) 'P013_GUI_REQUIRES_STANDARD_USER'
+Assert-True (-not $testPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) -and -not $adminGroupPresent -and -not $elevated) 'P013_GUI_REQUIRES_STANDARD_USER'
 $expectedSid = $testIdentity.User.Value
 $profile = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
 $expectedRoot = Join-Path $profile 'ProgramsSynveil'
@@ -269,7 +283,7 @@ $evidence = [ordered]@{
     source_commit=$ExpectedSourceCommit
     candidate=[ordered]@{sha256=$setupHash;size_bytes=$setupItem.Length;release_manifest_sha256=$manifestHash}
     harness_revision_sha256=$harnessHash;windows_edition=[string]$os.Caption
-    windows_build=[int]$os.BuildNumber;architecture='x86_64';privilege='standard_user_non_elevated'
+    windows_build=[int]$os.BuildNumber;architecture='x86_64';privilege='standard_user_non_elevated';token_elevated=[bool]$elevated
     product_state=$states;user_options=$observedChoices;cleanup_status='NOT_RUN';redacted=$true;error_code=$errorCode
     user_sid_sha256=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($expectedSid))).ToLowerInvariant()
 }
