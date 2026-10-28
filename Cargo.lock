@@ -3078,6 +3078,7 @@ version = "0.2.0"
 dependencies = [
  "fs2",
  "nix",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",

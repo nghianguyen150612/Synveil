@@ -91,8 +91,18 @@ pub struct VerifiedArtifactEvidence {
     pub product_version: String,
     pub source_commit: String,
     pub artifact_sha256: String,
+    /// Exact byte count authenticated by the release manifest. Missing/zero
+    /// values are rejected by plan validation and last-use verification.
+    #[serde(default)]
+    pub artifact_size_bytes: u64,
     pub manifest_sha256: String,
     pub authentication_method: String,
+    /// Authenticated source/provenance reference bound to the reviewed bytes.
+    #[serde(default)]
+    pub source_provenance_reference: String,
+    /// Identity of the trust policy used to authenticate the source.
+    #[serde(default)]
+    pub trust_policy_identity: String,
     pub verified_local_path: String,
 }
 

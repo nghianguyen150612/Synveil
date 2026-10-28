@@ -15,9 +15,11 @@ mod engine;
 mod error_model;
 mod execution_gate;
 mod journal;
+mod last_use;
 mod lifecycle;
 mod linux_package;
 mod model;
+mod native_adapter;
 mod review_contract;
 
 pub use adapter::*;
@@ -28,9 +30,11 @@ pub use engine::*;
 pub use error_model::*;
 pub use execution_gate::*;
 pub use journal::*;
+pub use last_use::*;
 pub use lifecycle::*;
 pub use linux_package::*;
 pub use model::*;
+pub use native_adapter::*;
 pub use review_contract::*;
 
 pub const ENGINE_SCHEMA_VERSION: u32 = 1;

@@ -599,8 +599,11 @@ struct CanonicalVerifiedArtifact<'a> {
     product_version: &'a str,
     source_commit: &'a str,
     artifact_sha256: &'a str,
+    artifact_size_bytes: u64,
     manifest_sha256: &'a str,
     authentication_method: &'a str,
+    source_provenance_reference: &'a str,
+    trust_policy_identity: &'a str,
 }
 
 #[derive(Serialize)]
@@ -620,8 +623,11 @@ fn canonical_artifact(artifact: &ArtifactEvidence) -> CanonicalArtifact<'_> {
                     product_version: &evidence.product_version,
                     source_commit: &evidence.source_commit,
                     artifact_sha256: &evidence.artifact_sha256,
+                    artifact_size_bytes: evidence.artifact_size_bytes,
                     manifest_sha256: &evidence.manifest_sha256,
                     authentication_method: &evidence.authentication_method,
+                    source_provenance_reference: &evidence.source_provenance_reference,
+                    trust_policy_identity: &evidence.trust_policy_identity,
                 },
             }
         }
@@ -701,8 +707,11 @@ mod tests {
                 product_version: "1.0.0".into(),
                 source_commit: "abc123".into(),
                 artifact_sha256: "a".repeat(64),
+                artifact_size_bytes: 1024,
                 manifest_sha256: "b".repeat(64),
                 authentication_method: "fixture-only".into(),
+                source_provenance_reference: "release-artifact:fixture-appimage".into(),
+                trust_policy_identity: "synthetic-test-policy-only".into(),
                 verified_local_path: "/private/user/downloads/synveil.AppImage".into(),
             },
         }
@@ -908,6 +917,27 @@ mod tests {
             snapshot(&request, &plan, context()),
             Err(EngineErrorCode::InvalidPlan)
         ));
+
+        for change_trust_identity in [false, true] {
+            let (request, mut plan) = request_and_plan();
+            if let Some(ArtifactEvidence::VerifiedReleaseArtifact { evidence }) =
+                plan.artifact.as_mut()
+            {
+                if change_trust_identity {
+                    evidence.trust_policy_identity.clear();
+                } else {
+                    evidence.source_provenance_reference.clear();
+                }
+            }
+            let request = InstallationRequest {
+                verified_artifact: plan.artifact.clone(),
+                ..request
+            };
+            assert!(matches!(
+                snapshot(&request, &plan, context()),
+                Err(EngineErrorCode::InvalidPlan)
+            ));
+        }
     }
 
     #[test]
@@ -1042,6 +1072,51 @@ mod tests {
             prior_review.acknowledge(&replacement, 2, 20),
             Err(AcknowledgementError::PlanChanged)
         );
+    }
+
+    #[test]
+    fn authenticated_artifact_size_is_part_of_the_review_fingerprint() {
+        let (request, plan) = request_and_plan();
+        let original = snapshot(&request, &plan, context()).unwrap().fingerprint();
+        let mut resized_plan = plan.clone();
+        if let Some(ArtifactEvidence::VerifiedReleaseArtifact { evidence }) =
+            resized_plan.artifact.as_mut()
+        {
+            evidence.artifact_size_bytes += 1;
+        }
+        let resized_request = InstallationRequest {
+            verified_artifact: resized_plan.artifact.clone(),
+            ..request
+        };
+        let resized = snapshot(&resized_request, &resized_plan, context()).unwrap();
+        assert_ne!(original, resized.fingerprint());
+    }
+
+    #[test]
+    fn provenance_reference_and_trust_policy_identity_are_fingerprinted() {
+        let (request, plan) = request_and_plan();
+        let original = snapshot(&request, &plan, context()).unwrap().fingerprint();
+
+        for change_trust_identity in [false, true] {
+            let mut changed_plan = plan.clone();
+            if let Some(ArtifactEvidence::VerifiedReleaseArtifact { evidence }) =
+                changed_plan.artifact.as_mut()
+            {
+                if change_trust_identity {
+                    evidence.trust_policy_identity.push_str("-replacement");
+                } else {
+                    evidence
+                        .source_provenance_reference
+                        .push_str("-replacement");
+                }
+            }
+            let changed_request = InstallationRequest {
+                verified_artifact: changed_plan.artifact.clone(),
+                ..request.clone()
+            };
+            let changed = snapshot(&changed_request, &changed_plan, context()).unwrap();
+            assert_ne!(original, changed.fingerprint());
+        }
     }
 
     #[test]

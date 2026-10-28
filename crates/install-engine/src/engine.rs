@@ -22,6 +22,17 @@ impl InstallerEngine {
         if request.verified_artifact != plan.artifact {
             return Err(EngineErrorCode::InvalidPlan);
         }
+        if matches!(
+            &plan.artifact,
+            Some(ArtifactEvidence::VerifiedReleaseArtifact { evidence })
+                if evidence.artifact_size_bytes == 0
+                    || evidence.source_provenance_reference.is_empty()
+                    || evidence.source_provenance_reference.len() > 256
+                    || evidence.trust_policy_identity.is_empty()
+                    || evidence.trust_policy_identity.len() > 128
+        ) {
+            return Err(EngineErrorCode::InvalidPlan);
+        }
         if plan
             .expected_completion_verification
             .verification_id

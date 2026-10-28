@@ -456,6 +456,25 @@ Pane {
                             }
                             Label {
                                 Layout.fillWidth: true
+                                text: qsTr("Artifact verification availability: %1").arg(root.wizardView.artifactVerificationAvailability)
+                                wrapMode: Text.WordWrap
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("Byte integrity: %1; publisher trust: %2; last-use verification: %3.")
+                                      .arg(root.wizardView.byteIntegrityStatus)
+                                      .arg(root.wizardView.publisherTrustStatus)
+                                      .arg(root.wizardView.lastUseVerificationStatus)
+                                wrapMode: Text.WordWrap
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("Adapter capability category: %1. No adapter action has been performed.")
+                                      .arg(root.wizardView.adapterCapabilityCategory)
+                                wrapMode: Text.WordWrap
+                            }
+                            Label {
+                                Layout.fillWidth: true
                                 text: root.wizardView.planSummary
                                 wrapMode: Text.WordWrap
                             }
