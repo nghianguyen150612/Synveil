@@ -55,10 +55,11 @@ named-pipe acceptance.
   `scripts/test-windows-gui-journey.ps1` (implemented, not run here).
 - Source regression suite: `scripts/test_windows_native_evidence.py`.
 - `scripts/validate-windows-native-acceptance.py` now checks the evidence gate,
-  collector constraints, and source regression coverage.
+  collector constraints, UI harness claims, and source regression coverage.
 - `.github/workflows/windows-native-acceptance.yml` runs the source evidence
-  regressions. The hosted workflow's GUI/logon/IPC blocker remains enforced;
-  source tests do not emit native acceptance evidence.
+  regressions and parses both PowerShell tools without executing them. The
+  hosted workflow's GUI/logon/IPC blocker remains enforced; source checks do
+  not emit native acceptance evidence.
 
 The record status vocabulary is `PASS`, `FAIL`, `BLOCKED_BY_ENVIRONMENT`,
 `NOT_RUN`, and `INCOMPLETE`. Its `PASS` policy binds the exact source SHA,
@@ -103,7 +104,7 @@ installed-component evidence.
 | `./scripts/validate-docs.sh` | PASS |
 | `git diff --check` | PASS |
 | `cargo test -p synveil-client --test desktop_control_ipc --locked` | BLOCKED before tests at missing `dbus-1.pc` |
-| PowerShell environment collector | NOT_RUN; this workspace is Linux and has no `pwsh` |
+| PowerShell environment/UI harnesses | NOT_RUN; this workspace is Linux and has no `pwsh` |
 
 Hosted P013 jobs start with the draft PR; final exact-head checks are pending.
 The qualified Windows harness has not run here. No local Linux result is
@@ -113,9 +114,10 @@ upgraded to native Windows evidence.
 
 P014 must implement and run the actual installed desktop/client named-pipe
 driver, run the new native UI Automation harness across Setup and installed
-first-run, and build a disposable standard-user real-logon controller that correlates the current logon LUID to
-Security 4624 and Task Scheduler LogonTrigger evidence, and independent cleanup
-verification. It must run on a qualified Windows 11 x86-64 physical acceptance
+first-run, and build a disposable standard-user real-logon controller. It must
+correlate the current logon LUID to Security 4624 and Task Scheduler
+LogonTrigger evidence and verify cleanup independently. Run it on a qualified
+Windows 11 x86-64 physical acceptance
 machine or isolated VM, bind the exact candidate and source, retain the hosted
 blocked result, and not activate P012/P013 production Wizard execution. P004,
 P006, and P036 handoffs remain independent prerequisites to their respective
@@ -127,8 +129,10 @@ security/release claims.
 |---|---|
 | Branch | `feat/v03-p013-windows-native-qualification` |
 | Target | `develop/v0.3` |
-| Source implementation commit | `eda1d78d194ca670c52a19f7fdbf8be8aa0d959f` |
-| Manifest/evidence commit | Recorded in Git history after this source commit |
+| Evidence contract commit | `eda1d78d194ca670c52a19f7fdbf8be8aa0d959f` |
+| Status reconciliation commit | `943b17bb64e67d0835705b62f3ca798f36eaf9d5` |
+| GUI harness commit | `ff309b07e8ee41d7df976fc9690188c25da47245` |
+| GUI harness hardening commit | `cd65e357871392e36e181a040eba063bebadd457` |
 | Draft PR | [#173](https://github.com/nghianguyen150612/Synveil/pull/173) — open, draft |
 
 P013 is not complete. No merge or P014 implementation is authorized by this
