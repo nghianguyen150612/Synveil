@@ -90,6 +90,8 @@ def validate(record: dict[str, Any]) -> None:
     require(candidate.get("filename") == "SynveilSetup.exe", "candidate filename mismatch")
     require(isinstance(candidate.get("size_bytes"), int) and candidate["size_bytes"] > 0,
             "candidate size must be positive")
+    require(COMMIT.fullmatch(str(candidate.get("source_commit", ""))) is not None,
+            "candidate source_commit must be a full commit SHA")
     initial_checks = record.get("checks")
     candidate_identity_passed = isinstance(initial_checks, dict) and initial_checks.get("candidate_identity") == "PASS"
     if candidate_identity_passed:
@@ -112,7 +114,7 @@ def validate(record: dict[str, Any]) -> None:
     _keys(env, {"edition", "build", "architecture", "harness_revision_sha256", "qualification", "operator_approved"},
           {"edition", "build", "architecture", "harness_revision_sha256", "qualification", "operator_approved"}, "environment")
     require(env.get("edition") and isinstance(env.get("build"), int), "Windows edition/build missing")
-    require(env.get("architecture") == "x86_64", "wrong Windows architecture")
+    require(isinstance(env.get("architecture"), str) and env["architecture"], "Windows architecture missing")
     _hash(env.get("harness_revision_sha256"), "harness_revision_sha256")
     require(env.get("qualification") in {"github_hosted_service", "qualified_isolated_native", "unsupported"},
             "unknown environment qualification")
@@ -188,6 +190,7 @@ def validate(record: dict[str, Any]) -> None:
 
     if record["result"] == "PASS":
         require(env["qualification"] == "qualified_isolated_native", "hosted/unqualified evidence cannot be PASS")
+        require(env["architecture"] == "x86_64", "PASS requires x86-64 Windows")
         require(env["operator_approved"], "PASS requires explicit operator approval for an isolated environment")
         require(session["interactive_status"] == "PASS" and session["new_logon_status"] == "PASS"
                 and session["trigger_status"] == "PASS", "PASS requires interactive new-logon evidence")
@@ -202,6 +205,14 @@ def validate(record: dict[str, Any]) -> None:
         require(env["qualification"] != "qualified_isolated_native" or
                 any(checks[name] == "BLOCKED_BY_ENVIRONMENT" for name in REQUIRED_CHECKS),
                 "blocked result has no blocked required check")
+    elif record["result"] == "FAIL":
+        require(any(value == "FAIL" for value in checks.values()) or record["cleanup"]["status"] == "FAIL",
+                "FAIL has no failed scenario or cleanup result")
+    elif record["result"] == "INCOMPLETE":
+        require(any(value in {"NOT_RUN", "INCOMPLETE"} for value in checks.values()) or
+                session["new_logon_status"] in {"NOT_RUN", "INCOMPLETE"} or
+                session["trigger_status"] in {"NOT_RUN", "INCOMPLETE"},
+                "INCOMPLETE has no incomplete evidence")
 
     # Public evidence is schema-bounded: forbid common accidental disclosure keys.
     def scan(value: Any, key: str = "") -> None:

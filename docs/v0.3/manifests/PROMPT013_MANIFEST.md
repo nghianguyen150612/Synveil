@@ -93,7 +93,7 @@ not described as end-to-end installed-component evidence.
 | `cargo clippy -p synveil-install-engine --all-targets --locked -- -D warnings` | PASS |
 | `cargo test -p synveil-desktop --locked` | BLOCKED at `libdbus-sys`: system `dbus-1.pc` is absent |
 | `cargo clippy -p synveil-desktop --all-targets --locked -- -D warnings` | BLOCKED at the same missing `dbus-1.pc` |
-| `python3 scripts/test_windows_native_evidence.py` | PASS; 31 source-contract regression cases |
+| `python3 scripts/test_windows_native_evidence.py` | PASS; 33 source-contract regression cases |
 | `python3 scripts/validate-windows-native-acceptance.py` | PASS; checkpoint remains blocked |
 | `./scripts/validate-installer-engine.sh` | PASS |
 | `./scripts/validate-docs.sh` | PASS |
@@ -123,8 +123,9 @@ security/release claims.
 |---|---|
 | Branch | `feat/v03-p013-windows-native-qualification` |
 | Target | `develop/v0.3` |
-| Commit | To be recorded after local validation |
-| Draft PR | To be recorded after push |
+| Source implementation commit | `eda1d78d194ca670c52a19f7fdbf8be8aa0d959f` |
+| Manifest/evidence commit | Recorded in Git history after this source commit |
+| Draft PR | [#173](https://github.com/nghianguyen150612/Synveil/pull/173) — open, draft |
 
 P013 is not complete. No merge or P014 implementation is authorized by this
 manifest.

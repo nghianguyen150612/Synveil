@@ -82,7 +82,14 @@ class EvidenceContractTests(unittest.TestCase):
     def test_wrong_architecture_is_rejected(self) -> None:
         record = passing_record()
         record["environment"]["architecture"] = "arm64"
-        self.assertRejected(record, "architecture")
+        self.assertRejected(record, "x86-64")
+
+    def test_wrong_architecture_can_be_recorded_as_failure(self) -> None:
+        record = passing_record()
+        record["result"] = "FAIL"
+        record["environment"]["architecture"] = "arm64"
+        record["checks"]["architecture"] = "FAIL"
+        contract.validate(record)
 
     def test_wrong_windows_build_fails_closed(self) -> None:
         record = passing_record()
@@ -191,6 +198,11 @@ class EvidenceContractTests(unittest.TestCase):
         record["result"] = "FAIL"
         record["cleanup"] = {"status": "FAIL", "independently_verified": False}
         contract.validate(record)
+
+    def test_failure_summary_requires_a_failed_observation(self) -> None:
+        record = passing_record()
+        record["result"] = "FAIL"
+        self.assertRejected(record, "no failed scenario")
 
     def test_wizard_execution_must_remain_disabled(self) -> None:
         record = passing_record()
