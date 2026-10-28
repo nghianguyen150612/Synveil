@@ -89,12 +89,27 @@ rollup had 20 success and the single P028 `standard-user-native` failure:
 
 ## P012 native hosted qualification
 
-Exact-head P012 GitHub Actions status is recorded after the latest source and
-documentation commit is pushed. Required Linux and Windows compilation/UI
-checks must complete on that exact head. Queued, skipped, cancelled, or
-environment-blocked jobs do not count as passes. P028's interactive
-desktop/new-logon/named-pipe acceptance remains an independent release gate
-even if the P012 native UI jobs pass.
+Final source head `4c9d077c066485d43058bae40b8428839bc873f6` was
+verified against GitHub's completed check-run rollup: **91 total, 81 SUCCESS,
+2 FAILURE, 4 CANCELLED, and 4 SKIPPED; zero remaining in progress or queued**.
+Exact-head native Linux Qt 6 and Windows Qt 6 builds, Rust Quality
+(format/Clippy), desktop/QML source contract and installation security
+checks all have successful jobs. Cancelled/skipped parallel jobs are
+not counted as passing.
+
+Both failed checks are `standard-user-native` from P028 Windows native
+acceptance (jobs `122290248765` and `122287210185`). The disposable
+standard-user setup and cleanup passed, but the final acceptance deliberately
+reports `BLOCKED_BY_ENVIRONMENT`: the hosted Windows runner has no
+qualified interactive desktop or genuine new-logon transition, and named-pipe
+end-to-end evidence is not wired. This is **not a production acceptance pass**.
+An interactive Windows 11 x86-64 qualification environment and a real
+named-pipe acceptance scenario are required; modifying the workflow to
+silence this failure is explicitly prohibited.
+
+No independent PR review has been submitted. P004-D02/D03/D11/D14, P006
+PostgreSQL-to-ObjectStore owner-to-byte integration, and P036 approved
+publisher identity/keyring remain distinct outstanding blockers.
 
 ## Remaining policy and qualification blockers
 
@@ -119,5 +134,7 @@ Branch: `feat/v03-p012-last-use-adapter-contracts`
 Target: `develop/v0.3`
 Draft PR: [#172](https://github.com/nghianguyen150612/Synveil/pull/172)
 
-Latest commit and exact-head hosted status: recorded after the final source and
-documentation update is pushed.
+Source and provenance-binding head before this qualification-only
+manifest amendment: `4c9d077c066485d43058bae40b8428839bc873f6`.
+PR #172 remains source-complete but release/acceptance-**BLOCKED** pending
+P028 and the independent trust/security decisions; no production execution is enabled.
