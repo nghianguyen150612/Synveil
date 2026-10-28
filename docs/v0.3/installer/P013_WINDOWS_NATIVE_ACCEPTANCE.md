@@ -50,6 +50,20 @@ results.
   and a session ID. It does not provision accounts, start Setup, register or
   run a task, touch the v0.3 Wizard, or change machine state. It intentionally
   leaves GUI, named-pipe, genuine-logon, and cleanup scenarios unrun.
+- `scripts/test-windows-gui-journey.ps1` is a separate operator-driven
+  standard-user harness for the existing Setup executable. It verifies exact
+  candidate and release-manifest identity, rejects hosted/headless/elevated
+  sessions, and launches Setup without silent flags. Windows UI Automation
+  observes Welcome, license/options, install-location, confirmation,
+  installation-progress, and completion states while the operator advances
+  the visible wizard. It reads the startup, desktop-shortcut, and post-install
+  launch selections and compares them with the supplied expected choices. It
+  validates the installed runtime manifest, launches the installed desktop in
+  the same user session, checks its first-run surface and process identity,
+  then shuts it down under a finite timeout. Evidence contains stage and
+  choice assertions, without screenshots, usernames, paths, or UI text dumps.
+  Its cleanup result remains `NOT_RUN`; profile/task/machine cleanup is a
+  separate required gate.
 - `scripts/test_windows_native_evidence.py` has source-level negative tests for
   mismatched candidate identity, unsupported architecture/build, elevated
   token claims, false interactive-session claims, alternate credentials,
@@ -57,7 +71,8 @@ results.
   substitution, cleanup, redaction, timeouts, and every individually required
   acceptance surface.
 - The existing Windows acceptance workflow now runs those evidence-contract
-  tests in its static validation stage. Its hosted Windows job still reports
+  tests and parses both PowerShell acceptance tools without executing them.
+  Its hosted Windows job still reports
   unavailable GUI/logon/IPC evidence as a blocker and fails closed.
 
 ## Existing IPC protocol inspected
@@ -104,13 +119,12 @@ observed Task Scheduler LogonTrigger event for the exact product task. A
 collect or verify that event chain, so genuine-logon and startup-task results
 remain `NOT_RUN`.
 
-P013 does not yet automate or execute the Setup GUI journey. The current
-standard-user lifecycle script uses silent Setup and a QML smoke switch; those
-remain scoped installer/runtime checks and are not GUI acceptance. Actual
-Welcome/options/install/completion UI Automation, selected-option verification,
-installed launch/first-run behavior, UAC observation, and shutdown must be
-implemented and run in the isolated Windows harness before those statuses can
-pass. Screenshots alone are insufficient.
+The existing standard-user lifecycle script still uses silent Setup and a QML
+smoke switch; those remain scoped installer/runtime checks and are not GUI
+acceptance. The new UI Automation harness has not run in this Linux workspace.
+Its stage observations, option choices, UAC behavior, installed first-run
+state, and shutdown remain unverified until it runs on an isolated Windows 11
+desktop. Screenshots alone are insufficient.
 
 ## Candidate provenance and security boundaries
 
@@ -146,8 +160,8 @@ cleanup can pass.
   remain unavailable. `production-artifacts.json` was not supplied; fixture or
   schema checks are not publisher trust.
 - **P014 handoff:** first complete the installed-component named-pipe driver
-  and standard-user authorization cases; add UI Automation for the actual
-  Setup journey; implement an isolated disposable-user LogonTrigger controller
+  and standard-user authorization cases; run and qualify the new Setup UI
+  Automation harness; implement an isolated disposable-user LogonTrigger controller
   with matching native event evidence and verified cleanup; then run the
   candidate-bound harness on a qualified Windows 11 x86-64 physical machine
   or isolated VM. Preserve the failure/block status until every scenario is

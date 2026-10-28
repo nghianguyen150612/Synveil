@@ -9,6 +9,7 @@ MANIFEST = ROOT / "docs/v0.2/PROMPT028_MANIFEST.md"
 EVIDENCE_VALIDATOR = ROOT / "scripts/validate-windows-native-evidence.py"
 EVIDENCE_TESTS = ROOT / "scripts/test_windows_native_evidence.py"
 ENVIRONMENT_GATE = ROOT / "scripts/qualify-windows-native-environment.ps1"
+GUI_HARNESS = ROOT / "scripts/test-windows-gui-journey.ps1"
 
 
 def require(condition: bool, message: str) -> None:
@@ -54,6 +55,7 @@ def main() -> None:
     evidence_validator = EVIDENCE_VALIDATOR.read_text(encoding="utf-8")
     evidence_tests = EVIDENCE_TESTS.read_text(encoding="utf-8")
     environment_gate = ENVIRONMENT_GATE.read_text(encoding="utf-8")
+    gui_harness = GUI_HARNESS.read_text(encoding="utf-8")
     for token in (
         "BLOCKED_BY_ENVIRONMENT", "NOT_RUN", "INCOMPLETE", "REQUIRED_CHECKS",
         "qualified_isolated_native", "security_4624_matches_current_logon_luid",
@@ -80,6 +82,19 @@ def main() -> None:
         require(forbidden not in environment_gate, f"environment qualification must not mutate machine state: {forbidden}")
     require("test_windows_native_evidence.py" in workflow,
             "hosted source-contract job must validate the evidence contract without claiming native acceptance")
+    require("Parse PowerShell acceptance tools without running them" in workflow and
+            "P013_POWERSHELL_PARSE_FAILURE" in workflow,
+            "Windows source job must parse PowerShell tools without running native acceptance")
+    for token in (
+        "I_APPROVE_DISPOSABLE_SYNVEIL_WINDOWS_ACCEPTANCE", "UIAutomationClient", "OpenInputDesktop",
+        "ExpectedSetupSha256", "ExpectedManifestSha256", "Start-Process -FilePath $setupPath",
+        "Ready to Install", "Installing Synveil", "Completing the Synveil Setup Wizard",
+        "Start Synveil when I sign in", "Create a desktop shortcut", "Open Synveil after installation",
+        "Welcome to Synveil", "P013_GUI_USER_OPTIONS_MISMATCH", "P013_DESKTOP_SHUTDOWN_TIMEOUT",
+    ):
+        require(token in gui_harness, f"missing interactive UI journey assertion: {token}")
+    for forbidden in ("/VERYSILENT", "/SILENT", "-NonInteractive", "-Credential"):
+        require(forbidden not in gui_harness, f"GUI acceptance cannot substitute silent/alternate-user execution: {forbidden}")
     for status in ("SOURCE_PRESENT", "STATIC_VERIFIED", "CI_NATIVE_SCOPED", "NATIVE_CLEAN_MACHINE", "BLOCKED", "FAIL", "PASS"):
         require(status in docs, f"missing evidence terminology: {status}")
     print("windows native acceptance contract: PASS (checkpoint remains blocked)")

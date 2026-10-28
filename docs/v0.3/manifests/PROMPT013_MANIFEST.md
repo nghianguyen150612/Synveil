@@ -50,6 +50,9 @@ named-pipe acceptance.
 - Version 1 fail-closed record validation: `scripts/validate-windows-native-evidence.py`.
 - Candidate/environment collection with explicit operator approval and native
   desktop/WTS/console/token checks: `scripts/qualify-windows-native-environment.ps1`.
+- Operator-driven UI Automation of actual Setup, options/location/completion,
+  installed runtime, first-run launch, and shutdown:
+  `scripts/test-windows-gui-journey.ps1` (implemented, not run here).
 - Source regression suite: `scripts/test_windows_native_evidence.py`.
 - `scripts/validate-windows-native-acceptance.py` now checks the evidence gate,
   collector constraints, and source regression coverage.
@@ -65,11 +68,12 @@ Scheduler observations, every individual P028/P013 scenario, and independently
 verified cleanup. Public artifacts exclude account names, user paths,
 credentials, raw pipe messages, and raw Windows event contents.
 
-The current collector intentionally does not execute Setup, start a task,
-provision a test identity, or mutate the machine. It therefore leaves all
-product GUI, genuine-logon, installed-IPC, lifecycle, and cleanup checks
-unrun. Existing Rust tests exercise the v1 protocol with test servers and are
-not described as end-to-end installed-component evidence.
+The environment collector intentionally does not execute Setup, start a task,
+provision a test identity, or mutate the machine. The separate GUI harness is
+implemented but unrun on Windows. Genuine-logon, installed-IPC, and independent
+cleanup checks remain unimplemented or unrun. Existing Rust tests exercise the
+v1 protocol with test servers and are not described as end-to-end
+installed-component evidence.
 
 ## Independent qualification gates
 
@@ -108,8 +112,8 @@ upgraded to native Windows evidence.
 ## Handoffs
 
 P014 must implement and run the actual installed desktop/client named-pipe
-driver, native UI Automation across Setup and installed first-run, a disposable
-standard-user real-logon controller that correlates the current logon LUID to
+driver, run the new native UI Automation harness across Setup and installed
+first-run, and build a disposable standard-user real-logon controller that correlates the current logon LUID to
 Security 4624 and Task Scheduler LogonTrigger evidence, and independent cleanup
 verification. It must run on a qualified Windows 11 x86-64 physical acceptance
 machine or isolated VM, bind the exact candidate and source, retain the hosted
