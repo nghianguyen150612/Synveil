@@ -24,6 +24,7 @@ COMPONENT_FILES = {
     "gui": "windows-gui-journey-v1.json",
     "logon": "windows-new-logon-v1.json",
     "logoff": "windows-logoff-shutdown-v1.json",
+    "uninstall": "windows-uninstall-preservation-v1.json",
     "cleanup": "windows-p013-cleanup-v1.json",
 }
 HARNESS_FILES = (
@@ -31,6 +32,7 @@ HARNESS_FILES = (
     "scripts/qualify-windows-native-environment.ps1",
     "scripts/test-windows-gui-journey.ps1",
     "crates/client/examples/p013_windows_control_probe.rs",
+    "scripts/test-windows-installed-uninstall.ps1",
     "scripts/collect-windows-new-logon-evidence.ps1",
     "scripts/collect-windows-logoff-evidence.ps1",
     "scripts/provision-windows-p013-test-user.ps1",
@@ -45,6 +47,10 @@ COMPONENT_HARNESS_FILES = {
     ),
     "logon": ("scripts/collect-windows-new-logon-evidence.ps1",),
     "logoff": ("scripts/collect-windows-logoff-evidence.ps1",),
+    "uninstall": (
+        "scripts/test-windows-installed-uninstall.ps1",
+        "crates/client/examples/p013_windows_control_probe.rs",
+    ),
     "cleanup": (
         "scripts/cleanup-windows-p013-test-user.ps1",
         "scripts/provision-windows-p013-test-user.ps1",
@@ -190,12 +196,13 @@ def owner_checks(gui: dict[str, Any]) -> dict[str, Any]:
 
 
 def make_summary(components: dict[str, dict[str, Any]], component_hashes: dict[str, str | None],
-                 candidate: dict[str, Any], identity_ok: bool, source: str,
+                 candidate: dict[str, Any], identity_ok: bool, source: str, harness_source: str,
                  required_checks: set[str]) -> dict[str, Any]:
     env = components.get("environment", {})
     gui = components.get("gui", {})
     logon = components.get("logon", {})
     logoff = components.get("logoff", {})
+    uninstall = components.get("uninstall", {})
     cleanup = components.get("cleanup", {})
     env_checks = get(env, "checks", default={}) or {}
     gui_states = get(gui, "product_state", default={}) or {}
@@ -203,6 +210,7 @@ def make_summary(components: dict[str, dict[str, Any]], component_hashes: dict[s
     owner = owner_checks(gui)
     logon_checks = get(logon, "checks", default={}) or {}
     logoff_checks = get(logoff, "checks", default={}) or {}
+    uninstall_checks = get(uninstall, "checks", default={}) or {}
     cleanup_checks = get(cleanup, "checks", default={}) or {}
 
     trigger = combine(
@@ -230,13 +238,18 @@ def make_summary(components: dict[str, dict[str, Any]], component_hashes: dict[s
         (name, component.get("harness_revision_sha256"))
         for name, component in components.items()
     ]
+    harness_records_match = all(
+        get(components.get(name, {}), "harness_source_commit") == harness_source
+        for name in ("gui", "uninstall")
+    )
     harness_revision_status = (
         "NOT_RUN" if len(components) != len(COMPONENT_FILES)
-        else "PASS" if all(digest == component_harness_digest(name) for name, digest in present_harnesses)
+        else "PASS" if current_source_matches(harness_source) and harness_records_match and
+        all(digest == component_harness_digest(name) for name, digest in present_harnesses)
         else "FAIL"
     )
     checks.update({
-        "candidate_identity": "PASS" if identity_ok and current_source_matches(source) else "FAIL",
+        "candidate_identity": "PASS" if identity_ok else "FAIL",
         "architecture": status(env_checks.get("architecture")),
         "windows_build_policy": status(env_checks.get("windows_build_policy")),
         "disposable_test_user": status(env_checks.get("disposable_test_user")),
@@ -286,7 +299,7 @@ def make_summary(components: dict[str, dict[str, Any]], component_hashes: dict[s
         "logon_no_duplicate_processes": status(logon_checks.get("no_duplicate_client")),
         "logon_logout_shutdown": combine(logoff.get("logoff_shutdown"), logoff_checks.get("client_absent_after_logoff"), logoff_checks.get("independent_process_check")),
         "install_root": status(gui_states.get("install_location")),
-        "uninstall_preservation": status(gui_states.get("uninstall_preservation")),
+        "uninstall_preservation": status(uninstall_checks.get("uninstall_preservation")),
         "cleanup": combine(cleanup.get("cleanup", {}).get("status"), "PASS" if get(cleanup, "cleanup", "independently_verified") is True else "FAIL" if get(cleanup, "cleanup", "status") == "FAIL" else "NOT_RUN"),
         "timeout_cancellation": status(owner.get("pipe_timeout_cancellation")),
         "evidence_redaction": "PASS" if (
@@ -295,12 +308,14 @@ def make_summary(components: dict[str, dict[str, Any]], component_hashes: dict[s
             and gui.get("redacted") is True
             and get(logon, "redaction", "raw_event_data_recorded") is False
             and get(logoff, "redaction", "raw_event_data_recorded") is False
+            and get(uninstall, "redaction", "credentials_recorded") is False
+            and get(uninstall, "redaction", "raw_pipe_messages_recorded") is False
         ) else "NOT_RUN",
         "no_wizard_execution_activation": status(env_checks.get("no_wizard_execution_activation")),
         "harness_revision": harness_revision_status,
         "component_results": combine(
             env.get("result"), gui.get("result"), logon.get("result"),
-            logoff.get("result"), cleanup.get("result"),
+            logoff.get("result"), uninstall.get("result"), cleanup.get("result"),
         ),
     })
 
@@ -329,6 +344,7 @@ def make_summary(components: dict[str, dict[str, Any]], component_hashes: dict[s
         "execution_id": "p013-summary-" + uuid.uuid4().hex,
         "executed_at_utc": dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "source_commit": source,
+        "harness_source_commit": harness_source,
         "candidate": candidate,
         "environment": {
             "edition": str(edition), "build": int(build) if isinstance(build, (int, str)) and str(build).isdigit() else 0,
@@ -374,11 +390,15 @@ def main() -> int:
     parser.add_argument("--setup", type=Path, required=True)
     parser.add_argument("--release-manifest", type=Path, required=True)
     parser.add_argument("--source-commit", required=True)
+    parser.add_argument("--harness-commit", required=True)
     parser.add_argument("--evidence-directory", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if not COMMIT.fullmatch(args.source_commit):
         print("P013_SOURCE_COMMIT_INVALID", file=sys.stderr)
+        return 2
+    if not COMMIT.fullmatch(args.harness_commit):
+        print("P013_HARNESS_COMMIT_INVALID", file=sys.stderr)
         return 2
     try:
         identity = read_json(args.candidate_identity)
@@ -394,7 +414,7 @@ def main() -> int:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         summary = make_summary(components, component_hashes, candidate, identity_ok,
-                               args.source_commit, module.REQUIRED_CHECKS)
+                               args.source_commit, args.harness_commit, module.REQUIRED_CHECKS)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         module.validate(summary)

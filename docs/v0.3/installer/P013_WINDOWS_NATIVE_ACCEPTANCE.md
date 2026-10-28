@@ -62,7 +62,7 @@ installed-component IPC, cross-user authorization, or cleanup results.
   the same user session, checks its first-run surface and process identity,
   verifies the installed client is running as the same user, and observes the
   desktop's `Ready` state after its production controller connects to the
-  installed client over IPC. Setup, desktop, client, and uninstaller tokens
+  installed client over IPC. Setup, desktop, and client tokens
   must remain non-elevated. It invokes the bounded production protocol probe
   while the visible desktop is open. It tests v1 Ping,
   malformed and oversized frames, unsupported version, duplicate connections,
@@ -72,15 +72,24 @@ installed-component IPC, cross-user authorization, or cleanup results.
   account only for the ACL test; alternate credentials are never treated as a
   real interactive logon. The harness checks for TCP listeners, closes the
   desktop, and shuts the client down and restarts it under finite timeouts. It
-  verifies the install root as `%LOCALAPPDATA%\Programs\Synveil`, then checks
-  that the registered uninstaller removes package files and registration while
-  preserving a non-secret user-state sentinel byte-for-byte. Its evidence
+  verifies the install root as `%LOCALAPPDATA%\Programs\Synveil` and leaves
+  the verified candidate installed for the separate logon phase. Its evidence
   classifies native UI Automation state assertions explicitly and records
   `screenshots_status=NOT_CAPTURED`; screenshots do not replace those
   assertions. It does not remove the account or installed profile. Its
   `ExpectedSourceCommit` binds the Setup candidate, while the separate
   `ExpectedHarnessCommit` binds the clean P013 checkout used to build the
   probe; evidence records both identities.
+- `scripts/test-windows-installed-uninstall.ps1` runs after the genuine logon
+  and logoff observations, in a later standard-user session. It rebinds the
+  candidate and harness revisions, verifies the per-user startup task and
+  installed runtime, shuts down the task-started installed client through the
+  production named-pipe protocol, then invokes only the registered uninstaller
+  after proving it belongs to the install root. It verifies non-elevated
+  execution, package/registry/task removal, preservation of `client.conf` and
+  a non-secret state sentinel, and bounded temporary-probe cleanup. It emits a
+  separate evidence component so the candidate remains installed through the
+  real-logon and logoff checks.
 - `crates/client/examples/p013_windows_control_probe.rs` is the native IPC
   probe. It reads the current user's non-secret `client.conf` profile ID and
   resolves the endpoint with `DesktopControlEndpoint::for_profile`; it does
@@ -131,8 +140,9 @@ installed-component IPC, cross-user authorization, or cleanup results.
   substitution, cleanup, redaction, timeouts, and every individually required
   acceptance surface.
 - `scripts/summarize-windows-native-acceptance.py` binds environment, GUI,
-  logon, logoff, and cleanup component records to the exact source, Setup bytes,
-  release-manifest digest, and harness revision. Missing component records are
+  logon, logoff, uninstall, and cleanup component records to the candidate
+  source, separate harness source, Setup bytes, release-manifest digest, and
+  harness revision. Missing component records are
   `NOT_RUN`; every component digest is required before a summary can pass.
 - The existing Windows acceptance workflow now runs those evidence-contract
   tests, runs the existing Windows IPC regression suite, checks the Rust probe,
@@ -182,6 +192,12 @@ followed by task start for that task. The collector rejects a manual-run event
 in that transition window. A scheduled-task `/Run` invocation is never issued
 and cannot satisfy the logon evidence. The new-logon, post-logoff, and cleanup
 observers are implemented, but none has run on qualified Windows.
+
+The native run order keeps the candidate installed throughout logon evidence:
+run the visible GUI/IPC harness; sign out and sign back in for the LogonTrigger
+collector; sign out and run the separate logoff observer; sign in once more to
+run the uninstall-preservation harness; then sign out and independently remove
+the disposable accounts and profiles.
 
 The existing standard-user lifecycle script still uses silent Setup and a QML
 smoke switch; those remain scoped installer/runtime checks and are not GUI
@@ -237,10 +253,10 @@ profile, task, process, and temporary harness-state removal before it can pass.
   VM; pass separate candidate-source and exact P013-harness commit SHAs;
   select `StartupEnabled=true` so the installed LogonTrigger task is
   created, and provide the second disposable peer identity for cross-user
-  IPC; perform a manual sign-out/sign-in for LogonTrigger evidence, then a
-  second sign-out for the separate logoff observer; run independent cleanup
-  for both test
-  accounts; validate and retain every component record and exact-head CI.
+  IPC; perform sign-out/sign-in for LogonTrigger evidence and a second
+  sign-out for the separate logoff observer; sign in again to run the
+  uninstall-preservation harness, sign out, and run independent cleanup for
+  both test accounts. Validate and retain every component record and exact-head CI.
   Preserve the blocker until every required scenario passes.
   Reconcile the missing approved roadmap and applicable P004 maintainer
   decisions before claiming roadmap completion.

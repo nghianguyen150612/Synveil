@@ -84,7 +84,7 @@ jobs:
         if: github.event_name != 'workflow_dispatch'
         shell: pwsh
         run: |
-          $scriptPaths = @('scripts/qualify-windows-native-environment.ps1','scripts/test-windows-gui-journey.ps1','scripts/collect-windows-new-logon-evidence.ps1','scripts/collect-windows-logoff-evidence.ps1','scripts/provision-windows-p013-test-user.ps1','scripts/cleanup-windows-p013-test-user.ps1')
+          $scriptPaths = @('scripts/qualify-windows-native-environment.ps1','scripts/test-windows-gui-journey.ps1','scripts/test-windows-installed-uninstall.ps1','scripts/collect-windows-new-logon-evidence.ps1','scripts/collect-windows-logoff-evidence.ps1','scripts/provision-windows-p013-test-user.ps1','scripts/cleanup-windows-p013-test-user.ps1')
           foreach ($scriptPath in $scriptPaths) {
             $tokens = $null
             $parseErrors = $null

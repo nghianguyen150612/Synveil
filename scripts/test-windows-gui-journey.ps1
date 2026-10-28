@@ -628,32 +628,6 @@ try {
     Assert-ControlProbe $restartAbsentProbe 'absent' @('pipe_expired_endpoint')
     $controlIpcEvidence.restart_endpoint_absent = $restartAbsentProbe
 
-    $appDataRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)
-    $stateRoot = Join-Path $appDataRoot 'Synveil'
-    $stateSentinel = Join-Path $stateRoot 'p013-uninstall-preservation.txt'
-    $sentinelBytes = [Text.Encoding]::UTF8.GetBytes('SYNVEIL P013 non-secret uninstall preservation sentinel')
-    [IO.File]::WriteAllBytes($stateSentinel, $sentinelBytes)
-    $sentinelHash = (Get-FileHash -LiteralPath $stateSentinel -Algorithm SHA256).Hash.ToLowerInvariant()
-    . (Join-Path $PSScriptRoot 'windows-security.ps1')
-    $registered = Get-ItemProperty -LiteralPath $uninstallKeyPath -ErrorAction Stop
-    $uninstaller = Get-OwnedRegisteredUninstaller ([string]$registered.UninstallString) $expectedRoot
-    $uninstallerProcess = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART') -PassThru
-    Assert-True (-not [SynveilP013GuiNative]::IsProcessElevated([uint32]$uninstallerProcess.Id)) 'P013_UNINSTALLER_ELEVATED'
-    if (-not $uninstallerProcess.WaitForExit(60000)) {
-        try { $uninstallerProcess.Kill() } catch { }
-        throw 'P013_UNINSTALL_TIMEOUT'
-    }
-    Assert-True ($uninstallerProcess.ExitCode -eq 0) 'P013_UNINSTALL_FAILURE'
-    $removeDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
-    while ((Test-Path -LiteralPath $expectedRoot) -and [DateTimeOffset]::UtcNow -lt $removeDeadline) { Start-Sleep -Milliseconds 100 }
-    Assert-True (-not (Test-Path -LiteralPath $expectedRoot) -and -not (Test-Path -LiteralPath $uninstallKeyPath) -and
-        (Get-HklmRegistrationCount $uninstallSubkey) -eq 0 -and
-        @((Get-Service -Name '*Synveil*' -ErrorAction SilentlyContinue)).Count -eq 0 -and
-        @((Get-ScheduledTask -TaskPath '\Synveil\BackgroundClient\' -ErrorAction SilentlyContinue)).Count -eq 0) `
-        'P013_UNINSTALL_PACKAGE_REMAINS'
-    Assert-True ((Test-Path -LiteralPath $stateSentinel -PathType Leaf) -and
-        (Get-FileHash -LiteralPath $stateSentinel -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $sentinelHash) 'P013_UNINSTALL_STATE_NOT_PRESERVED'
-    $states.uninstall_preservation = 'PASS'
 } catch {
     $errorCode = if ($_.Exception.Message -match '^P013_[A-Z0-9_]+') { $Matches[0] } else { 'P013_GUI_ACCEPTANCE_FAILURE' }
     if ($desktopProcess -and -not $desktopProcess.HasExited) {
@@ -671,9 +645,10 @@ if ($script:ipcTempRoot) {
         $states.ipc_harness_cleanup = 'PASS'
     } catch { $states.ipc_harness_cleanup = 'FAIL'; if (-not $errorCode) { $errorCode = 'P013_IPC_HARNESS_TEMP_CLEANUP_FAILURE' } }
 }
+$guiIncomplete = @($states.GetEnumerator() | Where-Object { $_.Key -ne 'uninstall_preservation' -and $_.Value -ne 'PASS' }).Count -gt 0
 $result = if ($errorCode -eq 'P013_BLOCKED_BY_ENVIRONMENT') { 'BLOCKED_BY_ENVIRONMENT' }
     elseif ($errorCode) { 'FAIL' }
-    elseif (@($states.Values | Where-Object { $_ -ne 'PASS' }).Count -eq 0) { 'PASS' }
+    elseif (-not $guiIncomplete) { 'PASS' }
     else { 'INCOMPLETE' }
 $repoRootForEvidence = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $harnessFiles = @(

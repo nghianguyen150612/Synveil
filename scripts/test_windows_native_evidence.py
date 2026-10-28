@@ -32,6 +32,7 @@ def passing_record() -> dict:
         "execution_id": "p013-test-run-000001",
         "executed_at_utc": "2026-10-28T00:00:00Z",
         "source_commit": "a" * 40,
+        "harness_source_commit": "f" * 40,
         "candidate": {
             "filename": "SynveilSetup.exe", "sha256": "b" * 64, "size_bytes": 123,
             "source_commit": "a" * 40, "release_manifest_sha256": "c" * 64,
@@ -59,7 +60,7 @@ def passing_record() -> dict:
         "redaction": {"no_credentials_or_user_paths": True, "raw_pipe_payloads_recorded": False},
         "ui_evidence": {"mode": "native_ui_automation", "state_assertions": True,
                         "screenshots_status": "NOT_CAPTURED"},
-        "component_evidence_sha256": {name: "e" * 64 for name in ("environment", "gui", "logon", "logoff", "cleanup")},
+        "component_evidence_sha256": {name: "e" * 64 for name in ("environment", "gui", "logon", "logoff", "uninstall", "cleanup")},
     }
 
 
@@ -89,11 +90,12 @@ class EvidenceContractTests(unittest.TestCase):
             "expected_release_manifest_sha256": "c" * 64,
             "signature_status": "UNSIGNED_FIXTURE",
         }
-        digests = {name: None for name in ("environment", "gui", "logon", "logoff", "cleanup")}
+        digests = {name: None for name in ("environment", "gui", "logon", "logoff", "uninstall", "cleanup")}
         source_check = summary.current_source_matches
         summary.current_source_matches = lambda _source: True
         try:
-            record = summary.make_summary({}, digests, candidate, True, "a" * 40, contract.REQUIRED_CHECKS)
+            record = summary.make_summary({}, digests, candidate, True, "a" * 40, "f" * 40,
+                                          contract.REQUIRED_CHECKS)
         finally:
             summary.current_source_matches = source_check
         self.assertEqual(record["result"], "INCOMPLETE")
@@ -109,19 +111,43 @@ class EvidenceContractTests(unittest.TestCase):
             "expected_release_manifest_sha256": "c" * 64,
             "signature_status": "UNSIGNED_FIXTURE",
         }
-        names = ("environment", "gui", "logon", "logoff", "cleanup")
+        names = ("environment", "gui", "logon", "logoff", "uninstall", "cleanup")
         components = {name: {"result": "PASS", "harness_revision_sha256": "0" * 64} for name in names}
         digests = {name: "e" * 64 for name in names}
         source_check = summary.current_source_matches
         summary.current_source_matches = lambda _source: True
         try:
             record = summary.make_summary(components, digests, candidate, True, "a" * 40,
-                                          contract.REQUIRED_CHECKS)
+                                          "f" * 40, contract.REQUIRED_CHECKS)
         finally:
             summary.current_source_matches = source_check
         self.assertEqual(record["checks"]["harness_revision"], "FAIL")
         self.assertEqual(record["result"], "FAIL")
         contract.validate(record)
+
+    def test_summary_rejects_components_from_a_different_harness_commit(self) -> None:
+        names = tuple(summary.COMPONENT_FILES)
+        components = {
+            name: {
+                "result": "PASS",
+                "harness_revision_sha256": summary.component_harness_digest(name),
+            }
+            for name in names
+        }
+        components["gui"]["harness_source_commit"] = "e" * 40
+        components["uninstall"]["harness_source_commit"] = "e" * 40
+        digests = {name: "e" * 64 for name in names}
+        source_check = summary.current_source_matches
+        summary.current_source_matches = lambda _source: True
+        try:
+            record = summary.make_summary(
+                components, digests, passing_record()["candidate"], True,
+                "a" * 40, "f" * 40, contract.REQUIRED_CHECKS,
+            )
+        finally:
+            summary.current_source_matches = source_check
+        self.assertEqual(record["checks"]["harness_revision"], "FAIL")
+        self.assertEqual(record["result"], "FAIL")
 
     def test_summary_cli_records_missing_component_evidence_without_pass(self) -> None:
         source = "a" * 40
@@ -152,12 +178,13 @@ class EvidenceContractTests(unittest.TestCase):
                 sys.executable, str(SUMMARY_MODULE),
                 "--candidate-identity", str(identity_path), "--setup", str(setup_path),
                 "--release-manifest", str(release_path), "--source-commit", source,
+                "--harness-commit", "f" * 40,
                 "--evidence-directory", str(evidence_path), "--output", str(output_path),
             ], check=False, capture_output=True, text=True)
             self.assertEqual(run.returncode, 1, run.stderr)
             record = json.loads(output_path.read_text(encoding="utf-8"))
-            self.assertEqual(record["result"], "FAIL")
-            self.assertEqual(record["checks"]["candidate_identity"], "FAIL")
+            self.assertEqual(record["result"], "INCOMPLETE")
+            self.assertEqual(record["checks"]["candidate_identity"], "PASS")
             self.assertEqual(record["checks"]["component_results"], "NOT_RUN")
             contract.validate(record)
 
@@ -170,6 +197,13 @@ class EvidenceContractTests(unittest.TestCase):
         record = passing_record()
         record["candidate"]["source_commit"] = "e" * 40
         self.assertRejected(record, "does not match")
+
+    def test_harness_revision_commit_is_bound_separately_from_candidate_source(self) -> None:
+        record = passing_record()
+        self.assertNotEqual(record["source_commit"], record["harness_source_commit"])
+        contract.validate(record)
+        record["harness_source_commit"] = "bad"
+        self.assertRejected(record, "harness_source_commit must be a full commit SHA")
 
     def test_candidate_digest_must_match_expected_identity(self) -> None:
         record = passing_record()
@@ -364,6 +398,21 @@ class EvidenceContractTests(unittest.TestCase):
         self.assertIn("$release.source_commit -ceq $ExpectedSourceCommit", source)
         self.assertIn("Initialize-ControlIpcProbe $RepositoryRoot $ExpectedHead", source)
         self.assertIn("Invoke-ControlIpcProbe $repoRoot $ExpectedHarnessCommit 'owner'", source)
+
+    def test_uninstall_is_separate_and_keeps_candidate_through_logon(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        gui = (root / "scripts/test-windows-gui-journey.ps1").read_text(encoding="utf-8")
+        uninstall = (root / "scripts/test-windows-installed-uninstall.ps1").read_text(encoding="utf-8")
+        aggregator = SUMMARY_MODULE.read_text(encoding="utf-8")
+        self.assertNotIn("Get-OwnedRegisteredUninstaller", gui)
+        self.assertIn("uninstall_preservation = 'NOT_RUN'", gui)
+        self.assertIn("$ExpectedSourceCommit", uninstall)
+        self.assertIn("$ExpectedHarnessCommit", uninstall)
+        self.assertIn("Assert-P013 ($OperatorApproval -ceq $approvalText)", uninstall)
+        self.assertIn("ProcessIsElevated([uint32]$uninstallerProcess.Id)", uninstall)
+        self.assertIn("Invoke-PipeProbe 'shutdown'", uninstall)
+        self.assertIn('"uninstall": "windows-uninstall-preservation-v1.json"', aggregator)
+        self.assertIn('status(uninstall_checks.get("uninstall_preservation"))', aggregator)
 
 
 if __name__ == "__main__":

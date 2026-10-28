@@ -11,6 +11,7 @@ EVIDENCE_VALIDATOR = ROOT / "scripts/validate-windows-native-evidence.py"
 EVIDENCE_TESTS = ROOT / "scripts/test_windows_native_evidence.py"
 ENVIRONMENT_GATE = ROOT / "scripts/qualify-windows-native-environment.ps1"
 GUI_HARNESS = ROOT / "scripts/test-windows-gui-journey.ps1"
+UNINSTALL_HARNESS = ROOT / "scripts/test-windows-installed-uninstall.ps1"
 IPC_PROBE = ROOT / "crates/client/examples/p013_windows_control_probe.rs"
 LOGON_COLLECTOR = ROOT / "scripts/collect-windows-new-logon-evidence.ps1"
 LOGOFF_COLLECTOR = ROOT / "scripts/collect-windows-logoff-evidence.ps1"
@@ -63,6 +64,7 @@ def main() -> None:
     evidence_tests = EVIDENCE_TESTS.read_text(encoding="utf-8")
     environment_gate = ENVIRONMENT_GATE.read_text(encoding="utf-8")
     gui_harness = GUI_HARNESS.read_text(encoding="utf-8")
+    uninstall_harness = UNINSTALL_HARNESS.read_text(encoding="utf-8")
     ipc_probe = IPC_PROBE.read_text(encoding="utf-8")
     logon_collector = LOGON_COLLECTOR.read_text(encoding="utf-8")
     logoff_collector = LOGOFF_COLLECTOR.read_text(encoding="utf-8")
@@ -75,7 +77,7 @@ def main() -> None:
         "task_logon_trigger_event", "pipe_wrong_user", "pipe_unsupported_version",
         "pipe_oversized_payload", "pipe_malformed_message", "no_tcp_fallback",
         "independently verified cleanup", "release_manifest_sha256",
-        "component_evidence_sha256", "PASS requires every component evidence digest",
+        "component_evidence_sha256", "harness_source_commit", "PASS requires every component evidence digest",
     ):
         require(token in evidence_validator, f"missing fail-closed evidence contract: {token}")
     for token in (
@@ -83,6 +85,8 @@ def main() -> None:
         "test_manual_task_run_is_not_logon_trigger_evidence",
         "test_each_required_surface_is_independently_fail_closed",
         "test_raw_pipe_payloads_are_forbidden", "test_wizard_execution_must_remain_disabled",
+        "test_harness_revision_commit_is_bound_separately_from_candidate_source",
+        "test_summary_rejects_components_from_a_different_harness_commit",
     ):
         require(token in evidence_tests, f"missing native-evidence regression: {token}")
     for token in (
@@ -104,13 +108,13 @@ def main() -> None:
     for token in (
         "I_APPROVE_DISPOSABLE_SYNVEIL_WINDOWS_ACCEPTANCE", "UIAutomationClient", "OpenInputDesktop",
         "ExpectedSetupSha256", "ExpectedManifestSha256", "Start-Process -FilePath $setupPath",
+        "ExpectedHarnessCommit",
         "Ready to Install", "Installing Synveil", "Completing the Synveil Setup Wizard",
         "Start Synveil when I sign in", "Create a desktop shortcut", "Open Synveil after installation",
         "Welcome to Synveil", "P013_GUI_USER_OPTIONS_MISMATCH", "P013_DESKTOP_SHUTDOWN_TIMEOUT",
         "Invoke-ControlIpcProbe", "p013_windows_control_probe", "Get-NetTCPConnection",
         "P013_INSTALLED_CLIENT_USER_MISMATCH", "CARGO_TARGET_DIR",
-        "IsProcessElevated", "installed_desktop_ipc_ping", "P013_UNINSTALL_STATE_NOT_PRESERVED",
-        "Get-OwnedRegisteredUninstaller", "Get-HklmRegistrationCount", "Get-Service -Name '*Synveil*'",
+        "IsProcessElevated", "installed_desktop_ipc_ping",
         "debug') 'examples'",
         "pipe_server_termination", "pipe_expired_endpoint", "pipe_restart", "pipe_stale_profile",
         "Invoke-WrongUserControlProbe", "P013_DISPOSABLE_TEST_USER_REQUIRED", "I_APPROVE_DISPOSABLE_SYNVEIL_WINDOWS_ACCEPTANCE",
@@ -132,6 +136,17 @@ def main() -> None:
             "cross-user IPC must use an ephemeral alternate-user credential only for the denial probe")
     require("-Verb RunAs" not in gui_harness and "-Verb RunAs" not in environment_gate,
             "acceptance harnesses cannot request product-process elevation")
+    require("Get-OwnedRegisteredUninstaller" not in gui_harness and "P013_UNINSTALL_STATE_NOT_PRESERVED" not in gui_harness,
+            "GUI/logon evidence must keep the installed candidate present until the later uninstall phase")
+    for token in (
+        "ExpectedSourceCommit", "ExpectedHarnessCommit", "Get-OwnedRegisteredUninstaller",
+        "client_protocol_shutdown", "P013_UNINSTALL_STATE_NOT_PRESERVED", "Get-HklmRegistrationCount",
+        "P013_UNINSTALLER_ELEVATED", "uninstall_preservation", "probe_temp_cleanup",
+        "test-windows-installed-runtime.ps1",
+    ):
+        require(token in uninstall_harness, f"missing post-logoff uninstall acceptance: {token}")
+    require("/VERYSILENT" in uninstall_harness and "Start-Process -FilePath $setupPath" not in uninstall_harness,
+            "quiet uninstall can run only after visible Setup acceptance; it cannot substitute for the GUI journey")
     for token in (
         "DesktopClientConfig::existing_profile_id", "DesktopControlEndpoint::for_profile",
         "DesktopControlClient::connect", "client.ping()", "u16::MAX", "pipe_unsupported_version",
@@ -171,7 +186,8 @@ def main() -> None:
             "remainingAccount.Count -ne 0" in cleanup_user,
             "cleanup must tolerate already-removed state and verify it independently")
     for token in ("current_source_matches", "verify_candidate", "component_candidate_matches",
-                  "component_harness_digest", "component_evidence_sha256", '"NOT_RUN"',
+                  "component_harness_digest", "component_evidence_sha256", "harness_source_commit",
+                  "--harness-commit", "windows-uninstall-preservation-v1.json", '"NOT_RUN"',
                   "validate(summary)"):
         require(token in summary_script, f"missing fail-closed evidence aggregation: {token}")
     for status in ("SOURCE_PRESENT", "STATIC_VERIFIED", "CI_NATIVE_SCOPED", "NATIVE_CLEAN_MACHINE", "BLOCKED", "FAIL", "PASS"):

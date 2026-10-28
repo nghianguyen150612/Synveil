@@ -58,11 +58,11 @@ def _keys(value: Any, allowed: set[str], required: set[str], label: str) -> None
 
 def validate(record: dict[str, Any]) -> None:
     _keys(record, {
-        "schema_version", "result", "execution_id", "executed_at_utc", "source_commit",
+        "schema_version", "result", "execution_id", "executed_at_utc", "source_commit", "harness_source_commit",
         "candidate", "environment", "privilege", "session", "checks", "cleanup",
         "redaction", "identity_binding", "ui_evidence", "component_evidence_sha256",
     }, {
-        "schema_version", "result", "execution_id", "executed_at_utc", "source_commit",
+        "schema_version", "result", "execution_id", "executed_at_utc", "source_commit", "harness_source_commit",
         "candidate", "environment", "privilege", "session", "checks", "cleanup", "redaction", "ui_evidence",
         "component_evidence_sha256",
     }, "evidence")
@@ -70,6 +70,8 @@ def validate(record: dict[str, Any]) -> None:
     _status(record.get("result"), "result")
     require(COMMIT.fullmatch(str(record.get("source_commit", ""))) is not None,
             "source_commit must be a full commit SHA")
+    require(COMMIT.fullmatch(str(record.get("harness_source_commit", ""))) is not None,
+            "harness_source_commit must be a full commit SHA")
     try:
         timestamp = dt.datetime.fromisoformat(record["executed_at_utc"].replace("Z", "+00:00"))
         require(timestamp.tzinfo is not None, "execution timestamp must include a timezone")
@@ -183,7 +185,7 @@ def validate(record: dict[str, Any]) -> None:
     require(record.get("redaction", {}).get("raw_pipe_payloads_recorded") is False,
             "raw pipe messages must not be published")
     component_digests = record.get("component_evidence_sha256")
-    component_names = {"environment", "gui", "logon", "logoff", "cleanup"}
+    component_names = {"environment", "gui", "logon", "logoff", "uninstall", "cleanup"}
     _keys(component_digests, component_names, component_names, "component_evidence_sha256")
     for name, value in component_digests.items():
         if value is not None:

@@ -61,9 +61,9 @@ GUI, genuine-logon, or installed named-pipe acceptance.
   non-elevated process tokens, the installed desktop's own `Ready` state after
   its controller connects to the installed client, production named-pipe
   protocol probes, cross-user denial, shutdown/absence/restart, no TCP
-  listener, and uninstall preservation of a non-secret user-state sentinel. It
-  emits UI Automation state classification and records that screenshots were
-  not captured. It binds the Setup candidate commit and P013 harness checkout
+  listener, then leaves the candidate installed for logon evidence. It emits
+  UI Automation state classification and records that screenshots were not
+  captured. It binds the Setup candidate commit and P013 harness checkout
   commit as distinct identities.
 - Real installed-client IPC probe:
   `crates/client/examples/p013_windows_control_probe.rs`. It resolves the
@@ -72,6 +72,12 @@ GUI, genuine-logon, or installed named-pipe acceptance.
   connections, handshake timeout, cancellation, stale profile, wrong-user
   denial, server termination, endpoint absence, and restart Ping. It starts no
   mock server and discovers endpoints through production configuration.
+- Installed uninstall-preservation phase:
+  `scripts/test-windows-installed-uninstall.ps1` runs only after the real
+  logon/logoff collectors. It verifies the exact per-user uninstaller, shuts
+  down the task-started installed client through production IPC, and checks
+  package removal plus byte-preserved user state. The GUI phase leaves the
+  candidate installed until the startup-task evidence is complete.
 - Read-only new-logon observer:
   `scripts/collect-windows-new-logon-evidence.ps1`. It correlates the installed
   client's token SID and authentication LUID with Security 4624, checks the
@@ -87,8 +93,9 @@ GUI, genuine-logon, or installed named-pipe acceptance.
   verifies account/profile/task/process absence.
 - Source regression suite: `scripts/test_windows_native_evidence.py`.
 - Summary aggregator: `scripts/summarize-windows-native-acceptance.py` binds
-  environment, GUI, logon, logoff, and cleanup records to exact source,
-  candidate bytes, manifest digest, and harness revision. Missing component
+  environment, GUI, logon, logoff, uninstall, and cleanup records to the
+  candidate source commit, separate harness source commit, candidate bytes,
+  manifest digest, and harness revision. Missing component
   records remain `NOT_RUN`, and a passing summary requires all component
   digests.
 - `scripts/validate-windows-native-acceptance.py` now checks the evidence gate,
@@ -139,14 +146,14 @@ acceptance.
 | `cargo clippy -p synveil-install-engine --all-targets --locked -- -D warnings` | PASS |
 | `cargo test -p synveil-desktop --locked` | BLOCKED at `libdbus-sys`: system `dbus-1.pc` is absent |
 | `cargo clippy -p synveil-desktop --all-targets --locked -- -D warnings` | BLOCKED at the same missing `dbus-1.pc` |
-| `python3 scripts/test_windows_native_evidence.py` | PASS; 42 source-contract regression cases |
+| `python3 scripts/test_windows_native_evidence.py` | PASS; 45 source-contract regression cases |
 | `python3 scripts/validate-windows-native-acceptance.py` | PASS; checkpoint remains blocked |
 | `./scripts/validate-installer-engine.sh` | PASS |
 | `./scripts/validate-docs.sh` | PASS |
 | `git diff --check` | PASS |
 | `cargo test -p synveil-client --test desktop_control_ipc --locked` | BLOCKED before tests at missing `dbus-1.pc` |
 | Windows-hosted `cargo test -p synveil-client --test desktop_control_ipc --locked` | Added to P013 regression workflow; exact-head CI pending |
-| PowerShell parser (qualification, GUI, logon/logoff observers, provision, cleanup) | Final local rerun unavailable (`pwsh` is absent); the Windows workflow parses all six scripts on the exact PR head |
+| PowerShell parser (qualification, GUI, uninstall, logon/logoff observers, provision, cleanup) | Final local rerun unavailable (`pwsh` is absent); the Windows workflow parses all seven scripts on the exact PR head |
 | `cargo check --locked -p synveil-client --example p013_windows_control_probe` | BLOCKED at missing system `dbus-1.pc` |
 | Windows-targeted probe check | BLOCKED; local Windows GNU target lacks `x86_64-w64-mingw32-gcc` |
 | Native PowerShell harness execution | NOT_RUN; current workspace is Linux |
@@ -163,9 +170,10 @@ P014 should obtain the exact P028 candidate bytes and release manifest, run the
 environment qualifier and visible UI journey on a fresh isolated Windows 11
 x86-64 VM, pass separate candidate-source and P013-harness commit SHAs, set
 `StartupEnabled=true` to register the LogonTrigger task, and provision owner
-and peer disposable accounts. Perform manual sign-out/sign-in
-transitions for logon and logoff evidence, run independent
-cleanup for both accounts, validate all records against the evidence contract,
+and peer disposable accounts. Perform sign-out/sign-in for LogonTrigger
+evidence, sign out for the independent logoff observer, sign in again for
+uninstall preservation, and then sign out for independent account cleanup.
+Validate all records against the evidence contract,
 and confirm exact-head CI. Preserve the hosted blocker and do not activate
 production Wizard execution. P004, P006, and P036 remain independent gates.
 
