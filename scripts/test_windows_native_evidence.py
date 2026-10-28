@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 
 MODULE = Path(__file__).with_name("validate-windows-native-evidence.py")
+PROBE = Path(__file__).resolve().parents[1] / "crates/client/examples/p013_windows_control_probe.rs"
 spec = importlib.util.spec_from_file_location("windows_native_evidence", MODULE)
 assert spec and spec.loader
 contract = importlib.util.module_from_spec(spec)
@@ -349,6 +350,12 @@ class EvidenceContractTests(unittest.TestCase):
         record["checks"]["interactive_session"] = "BLOCKED_BY_ENVIRONMENT"
         record["checks"]["real_logon"] = "BLOCKED_BY_ENVIRONMENT"
         contract.validate(record)
+
+    def test_non_windows_pipe_probe_reports_environment_block(self) -> None:
+        source = PROBE.read_text(encoding="utf-8")
+        self.assertIn('"BLOCKED_BY_ENVIRONMENT"', source)
+        self.assertIn('fn unsupported_platform()', source)
+        self.assertIn('"unsupported_platform"', source)
 
 
 if __name__ == "__main__":

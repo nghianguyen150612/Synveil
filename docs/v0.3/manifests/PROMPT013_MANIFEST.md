@@ -138,7 +138,7 @@ acceptance.
 | `cargo clippy -p synveil-install-engine --all-targets --locked -- -D warnings` | PASS |
 | `cargo test -p synveil-desktop --locked` | BLOCKED at `libdbus-sys`: system `dbus-1.pc` is absent |
 | `cargo clippy -p synveil-desktop --all-targets --locked -- -D warnings` | BLOCKED at the same missing `dbus-1.pc` |
-| `python3 scripts/test_windows_native_evidence.py` | PASS; 40 source-contract regression cases |
+| `python3 scripts/test_windows_native_evidence.py` | PASS; 41 source-contract regression cases |
 | `python3 scripts/validate-windows-native-acceptance.py` | PASS; checkpoint remains blocked |
 | `./scripts/validate-installer-engine.sh` | PASS |
 | `./scripts/validate-docs.sh` | PASS |

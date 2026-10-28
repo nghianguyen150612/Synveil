@@ -41,6 +41,11 @@ fn emit(mode: &'static str, checks: BTreeMap<&'static str, &'static str>) -> i32
         "FAIL"
     } else if checks.values().all(|value| *value == "PASS") {
         "PASS"
+    } else if checks
+        .values()
+        .any(|value| *value == "BLOCKED_BY_ENVIRONMENT")
+    {
+        "BLOCKED_BY_ENVIRONMENT"
     } else {
         "INCOMPLETE"
     };
@@ -56,7 +61,11 @@ fn emit(mode: &'static str, checks: BTreeMap<&'static str, &'static str>) -> i32
             println!(r#"{{"schema_version":1,"mode":"invalid","result":"FAIL","checks":{{}}}}"#)
         }
     }
-    i32::from(result != "PASS")
+    match result {
+        "PASS" => 0,
+        "BLOCKED_BY_ENVIRONMENT" => 2,
+        _ => 1,
+    }
 }
 
 #[cfg(windows)]
@@ -299,6 +308,7 @@ fn unsupported_platform() -> i32 {
 
 #[tokio::main]
 async fn main() {
+    #[cfg(windows)]
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     #[cfg(windows)]
     {
