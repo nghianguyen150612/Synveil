@@ -63,7 +63,8 @@ GUI, genuine-logon, or installed named-pipe acceptance.
   protocol probes, cross-user denial, shutdown/absence/restart, no TCP
   listener, and uninstall preservation of a non-secret user-state sentinel. It
   emits UI Automation state classification and records that screenshots were
-  not captured.
+  not captured. It binds the Setup candidate commit and P013 harness checkout
+  commit as distinct identities.
 - Real installed-client IPC probe:
   `crates/client/examples/p013_windows_control_probe.rs`. It resolves the
   profile endpoint through Synveil's production config and endpoint resolver,
@@ -138,7 +139,7 @@ acceptance.
 | `cargo clippy -p synveil-install-engine --all-targets --locked -- -D warnings` | PASS |
 | `cargo test -p synveil-desktop --locked` | BLOCKED at `libdbus-sys`: system `dbus-1.pc` is absent |
 | `cargo clippy -p synveil-desktop --all-targets --locked -- -D warnings` | BLOCKED at the same missing `dbus-1.pc` |
-| `python3 scripts/test_windows_native_evidence.py` | PASS; 41 source-contract regression cases |
+| `python3 scripts/test_windows_native_evidence.py` | PASS; 42 source-contract regression cases |
 | `python3 scripts/validate-windows-native-acceptance.py` | PASS; checkpoint remains blocked |
 | `./scripts/validate-installer-engine.sh` | PASS |
 | `./scripts/validate-docs.sh` | PASS |
@@ -160,8 +161,9 @@ No local Linux result is upgraded to native Windows evidence.
 
 P014 should obtain the exact P028 candidate bytes and release manifest, run the
 environment qualifier and visible UI journey on a fresh isolated Windows 11
-x86-64 VM, set `StartupEnabled=true` to register the LogonTrigger task, and
-provision owner and peer disposable accounts. Perform manual sign-out/sign-in
+x86-64 VM, pass separate candidate-source and P013-harness commit SHAs, set
+`StartupEnabled=true` to register the LogonTrigger task, and provision owner
+and peer disposable accounts. Perform manual sign-out/sign-in
 transitions for logon and logoff evidence, run independent
 cleanup for both accounts, validate all records against the evidence contract,
 and confirm exact-head CI. Preserve the hosted blocker and do not activate

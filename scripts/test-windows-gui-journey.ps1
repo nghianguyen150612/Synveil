@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Setup,
     [Parameter(Mandatory=$true)][string]$ReleaseManifest,
     [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{40}$')][string]$ExpectedSourceCommit,
+    [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{40}$')][string]$ExpectedHarnessCommit,
     [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedSetupSha256,
     [Parameter(Mandatory=$true)][long]$ExpectedSetupSizeBytes,
     [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedManifestSha256,
@@ -125,6 +126,7 @@ function Write-BlockedGuiEvidence([string]$ReasonCode, $OperatingSystem, $SetupI
     $record = [ordered]@{
         schema_version=1;result='BLOCKED_BY_ENVIRONMENT';execution_id='p013-ui-' + [Guid]::NewGuid().ToString('N')
         executed_at_utc=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ');source_commit=$ExpectedSourceCommit
+        harness_source_commit=$ExpectedHarnessCommit
         candidate=[ordered]@{sha256=$script:setupHash;size_bytes=$SetupItem.Length;release_manifest_sha256=$script:manifestHash}
         harness_revision_sha256=$harnessHash;windows_edition=[string]$OperatingSystem.Caption
         windows_build=[int]$OperatingSystem.BuildNumber;architecture=$script:observedArchitecture
@@ -548,11 +550,11 @@ try {
     $states.installed_client_process = 'PASS'
     $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
     $ownerProfileId = Get-CurrentProfileId $expectedSid
-    $ownerProbe = Invoke-ControlIpcProbe $repoRoot $ExpectedSourceCommit 'owner'
+    $ownerProbe = Invoke-ControlIpcProbe $repoRoot $ExpectedHarnessCommit 'owner'
     Assert-ControlProbe $ownerProbe 'owner' @('pipe_endpoint_discovery','pipe_protocol_v1','pipe_ping',
         'pipe_unsupported_version','pipe_malformed_message','pipe_oversized_payload','pipe_duplicate_connection',
         'pipe_server_handshake_timeout','pipe_timeout_cancellation')
-    $staleProbe = Invoke-ControlIpcProbe $repoRoot $ExpectedSourceCommit 'stale'
+    $staleProbe = Invoke-ControlIpcProbe $repoRoot $ExpectedHarnessCommit 'stale'
     Assert-ControlProbe $staleProbe 'stale' @('pipe_stale_profile')
     $controlIpcEvidence = [ordered]@{owner=$ownerProbe;stale_profile=$staleProbe}
     $states.pipe_protocol = 'PASS'; $states.pipe_stale_profile = 'PASS'
@@ -561,7 +563,7 @@ try {
         $states.pipe_unauthorized_operation = 'BLOCKED_BY_ENVIRONMENT'
         throw 'P013_BLOCKED_BY_ENVIRONMENT: disposable standard-user peer account was not supplied'
     }
-    $wrongUserProbe = Invoke-WrongUserControlProbe $repoRoot $ExpectedSourceCommit $expectedSid $ownerProfileId
+    $wrongUserProbe = Invoke-WrongUserControlProbe $repoRoot $ExpectedHarnessCommit $expectedSid $ownerProfileId
     $controlIpcEvidence.cross_user = $wrongUserProbe
     $states.pipe_wrong_user = 'PASS'; $states.pipe_unauthorized_operation = 'PASS'
     $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object {
@@ -580,12 +582,12 @@ try {
     if (-not $desktopProcess.WaitForExit(15000)) { $desktopProcess.Kill(); throw 'P013_DESKTOP_SHUTDOWN_TIMEOUT' }
     $states.shutdown = 'PASS'
 
-    $shutdownProbe = Invoke-ControlIpcProbe $repoRoot $ExpectedSourceCommit 'shutdown'
+    $shutdownProbe = Invoke-ControlIpcProbe $repoRoot $ExpectedHarnessCommit 'shutdown'
     Assert-ControlProbe $shutdownProbe 'shutdown' @('pipe_server_termination')
     $controlIpcEvidence.shutdown = $shutdownProbe
     if (-not $clientProcesses[0].WaitForExit(15000)) { throw 'P013_PIPE_SERVER_SHUTDOWN_TIMEOUT' }
     $states.pipe_server_termination = 'PASS'
-    $absentProbe = Invoke-ControlIpcProbe $repoRoot $ExpectedSourceCommit 'absent'
+    $absentProbe = Invoke-ControlIpcProbe $repoRoot $ExpectedHarnessCommit 'absent'
     Assert-ControlProbe $absentProbe 'absent' @('pipe_expired_endpoint')
     $controlIpcEvidence.endpoint_absent = $absentProbe
     $states.pipe_expired_endpoint = 'PASS'
@@ -601,7 +603,7 @@ try {
             try { $_.Path -ceq $clientPath } catch { $false }
         })
         if ($runtimeClients.Count -ne 1) { Start-Sleep -Milliseconds 200; continue }
-        $candidateProbe = Invoke-ControlIpcProbe $repoRoot $ExpectedSourceCommit 'ping'
+        $candidateProbe = Invoke-ControlIpcProbe $repoRoot $ExpectedHarnessCommit 'ping'
         if ($candidateProbe.result -ceq 'PASS' -and $candidateProbe.checks.pipe_ping -ceq 'PASS') {
             $restartProbe = $candidateProbe
             break
@@ -618,11 +620,11 @@ try {
     Assert-True ($listenersAfterRestart.Count -eq 0) 'P013_UNEXPECTED_TCP_FALLBACK_AFTER_RESTART'
     $states.no_tcp_fallback = 'PASS'
 
-    $restartShutdownProbe = Invoke-ControlIpcProbe $repoRoot $ExpectedSourceCommit 'shutdown'
+    $restartShutdownProbe = Invoke-ControlIpcProbe $repoRoot $ExpectedHarnessCommit 'shutdown'
     Assert-ControlProbe $restartShutdownProbe 'shutdown' @('pipe_server_termination')
     $controlIpcEvidence.restart_shutdown = $restartShutdownProbe
     if (-not $restartedClient.WaitForExit(15000)) { throw 'P013_RESTARTED_CLIENT_SHUTDOWN_TIMEOUT' }
-    $restartAbsentProbe = Invoke-ControlIpcProbe $repoRoot $ExpectedSourceCommit 'absent'
+    $restartAbsentProbe = Invoke-ControlIpcProbe $repoRoot $ExpectedHarnessCommit 'absent'
     Assert-ControlProbe $restartAbsentProbe 'absent' @('pipe_expired_endpoint')
     $controlIpcEvidence.restart_endpoint_absent = $restartAbsentProbe
 
@@ -687,7 +689,7 @@ $uiAssertionsPassed = @($uiAssertionNames | Where-Object { $states[$_] -ne 'PASS
 $evidence = [ordered]@{
     schema_version=1; result=$result; execution_id='p013-ui-' + [Guid]::NewGuid().ToString('N')
     executed_at_utc=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-    source_commit=$ExpectedSourceCommit
+    source_commit=$ExpectedSourceCommit;harness_source_commit=$ExpectedHarnessCommit
     candidate=[ordered]@{sha256=$setupHash;size_bytes=$setupItem.Length;release_manifest_sha256=$manifestHash}
     harness_revision_sha256=$harnessHash;windows_edition=[string]$os.Caption
     windows_build=[int]$os.BuildNumber;architecture=$script:observedArchitecture;privilege='standard_user_non_elevated';token_elevated=[bool]$elevated

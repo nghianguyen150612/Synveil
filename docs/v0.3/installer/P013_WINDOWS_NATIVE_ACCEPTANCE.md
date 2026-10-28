@@ -77,13 +77,16 @@ installed-component IPC, cross-user authorization, or cleanup results.
   preserving a non-secret user-state sentinel byte-for-byte. Its evidence
   classifies native UI Automation state assertions explicitly and records
   `screenshots_status=NOT_CAPTURED`; screenshots do not replace those
-  assertions. It does not remove the account or installed profile.
+  assertions. It does not remove the account or installed profile. Its
+  `ExpectedSourceCommit` binds the Setup candidate, while the separate
+  `ExpectedHarnessCommit` binds the clean P013 checkout used to build the
+  probe; evidence records both identities.
 - `crates/client/examples/p013_windows_control_probe.rs` is the native IPC
   probe. It reads the current user's non-secret `client.conf` profile ID and
   resolves the endpoint with `DesktopControlEndpoint::for_profile`; it does
   not guess a pipe name or start a test server. The UI journey compiles this
-  probe from the exact expected source commit in a temporary Cargo home and
-  target directory, then removes those directories. The owner probe uses
+  probe from the exact expected P013 harness commit in a temporary Cargo home
+  and target directory, then removes those directories. The owner probe uses
   `DesktopControlClient` and the production v1 handshake/Ping path, then checks
   unsupported protocol version, malformed JSON, a 64 KiB + 1 frame length,
   concurrent duplicate connections, server handshake timeout, and client
@@ -231,7 +234,8 @@ profile, task, process, and temporary harness-state removal before it can pass.
   schema checks are not publisher trust.
 - **P014 handoff:** obtain the exact P028 candidate bytes and manifest; run the
   environment qualifier and visible UI journey in a fresh Windows 11 x86-64
-  VM; select `StartupEnabled=true` so the installed LogonTrigger task is
+  VM; pass separate candidate-source and exact P013-harness commit SHAs;
+  select `StartupEnabled=true` so the installed LogonTrigger task is
   created, and provide the second disposable peer identity for cross-user
   IPC; perform a manual sign-out/sign-in for LogonTrigger evidence, then a
   second sign-out for the separate logoff observer; run independent cleanup

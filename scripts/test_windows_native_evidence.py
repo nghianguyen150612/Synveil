@@ -357,6 +357,14 @@ class EvidenceContractTests(unittest.TestCase):
         self.assertIn('fn unsupported_platform()', source)
         self.assertIn('"unsupported_platform"', source)
 
+    def test_gui_harness_binds_candidate_and_harness_commits_separately(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "scripts/test-windows-gui-journey.ps1").read_text(encoding="utf-8")
+        self.assertIn("[string]$ExpectedSourceCommit", source)
+        self.assertIn("[string]$ExpectedHarnessCommit", source)
+        self.assertIn("$release.source_commit -ceq $ExpectedSourceCommit", source)
+        self.assertIn("Initialize-ControlIpcProbe $RepositoryRoot $ExpectedHead", source)
+        self.assertIn("Invoke-ControlIpcProbe $repoRoot $ExpectedHarnessCommit 'owner'", source)
+
 
 if __name__ == "__main__":
     unittest.main()
