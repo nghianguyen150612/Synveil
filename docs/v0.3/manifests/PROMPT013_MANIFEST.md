@@ -152,16 +152,20 @@ acceptance.
 | `./scripts/validate-docs.sh` | PASS |
 | `git diff --check` | PASS |
 | `cargo test -p synveil-client --test desktop_control_ipc --locked` | BLOCKED before tests at missing `dbus-1.pc` |
-| Windows-hosted `cargo test -p synveil-client --test desktop_control_ipc --locked` | Added to P013 regression workflow; exact-head CI pending |
+| P013-head Windows native acceptance run `40627031703` (`01636d3491dddb89c057b155aeba5a53f1146dfb`) | QUEUED at 2026-10-28 03:33 UTC; candidate build job had not started, so Windows IPC regression and PowerShell parsing have not run |
+| P013-head Rust CI run `40627031631` | QUEUED at 2026-10-28 03:33 UTC; includes Linux Qt 6 and Windows Qt 6 jobs |
+| P013-head Windows installer run `40627031717` | QUEUED at 2026-10-28 03:33 UTC |
 | PowerShell parser (qualification, GUI, uninstall, logon/logoff observers, provision, cleanup) | Final local rerun unavailable (`pwsh` is absent); the Windows workflow parses all seven scripts on the exact PR head |
 | `cargo check --locked -p synveil-client --example p013_windows_control_probe` | BLOCKED at missing system `dbus-1.pc` |
 | Windows-targeted probe check | BLOCKED; local Windows GNU target lacks `x86_64-w64-mingw32-gcc` |
 | Native PowerShell harness execution | NOT_RUN; current workspace is Linux |
 
-The previously pushed P013 head's hosted checks showed the two intentional
-`standard-user-native` blocker failures while Linux and Windows Qt jobs were
-still running. The updated exact-head CI will be reconciled after the final
-P013 push. The qualified Windows harness has not run here.
+At the final P013 source head above, GitHub had queued the Windows native
+acceptance, Rust/Qt, and Windows installer workflows but had not started their
+jobs. Their exact-head conclusions are therefore pending, and no new native CI
+result is claimed here. The post-merge P028 run above still has its explicit
+hosted `standard-user-native` blocker failure. The qualified Windows harness
+has not run in this workspace.
 No local Linux result is upgraded to native Windows evidence.
 
 ## Handoffs
@@ -187,6 +191,8 @@ production Wizard execution. P004, P006, and P036 remain independent gates.
 | Status reconciliation commit | `943b17bb64e67d0835705b62f3ca798f36eaf9d5` |
 | GUI harness commit | `ff309b07e8ee41d7df976fc9690188c25da47245` |
 | GUI harness hardening commit | `cd65e357871392e36e181a040eba063bebadd457` |
+| Separate uninstall evidence phase | `a52ce36a41fc5bbb9e90119257512ac7693ffea2` |
+| Same-user provenance binding | `01636d3491dddb89c057b155aeba5a53f1146dfb` |
 | Draft PR | [#173](https://github.com/nghianguyen150612/Synveil/pull/173) — open, draft |
 
 P013 is not complete. No merge or P014 implementation is authorized by this
