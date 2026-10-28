@@ -32,6 +32,7 @@ struct ProbeEvidence {
     checks: BTreeMap<&'static str, &'static str>,
 }
 
+#[cfg(windows)]
 fn status(result: Result<(), &'static str>) -> &'static str {
     if result.is_ok() { "PASS" } else { "FAIL" }
 }
