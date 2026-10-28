@@ -7,7 +7,10 @@
 //! In `wrong-user` mode the caller supplies the profile ID discovered by the
 //! owner-mode run; the probe expects the OS to deny opening that user's pipe.
 
-use std::{collections::BTreeMap, time::Duration};
+use std::collections::BTreeMap;
+
+#[cfg(windows)]
+use std::time::Duration;
 
 use serde::Serialize;
 #[cfg(windows)]
@@ -18,6 +21,7 @@ use synveil_client::{
 };
 #[cfg(windows)]
 use tokio::io::AsyncReadExt;
+#[cfg(windows)]
 use tokio::time;
 
 #[derive(Serialize)]
@@ -286,9 +290,9 @@ async fn wrong_user(profile_id: ServerProfileId) -> BTreeMap<&'static str, &'sta
 }
 
 #[cfg(not(windows))]
-fn unsupported_platform(mode: &'static str) -> i32 {
+fn unsupported_platform() -> i32 {
     emit(
-        mode,
+        "unsupported_platform",
         BTreeMap::from([("windows_named_pipe", "BLOCKED_BY_ENVIRONMENT")]),
     )
 }
@@ -359,8 +363,7 @@ async fn main() {
     }
     #[cfg(not(windows))]
     {
-        let mode = args.first().map_or("owner", String::as_str);
-        std::process::exit(unsupported_platform(mode));
+        std::process::exit(unsupported_platform());
     }
 }
 

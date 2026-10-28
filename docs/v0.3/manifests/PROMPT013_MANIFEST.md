@@ -1,9 +1,9 @@
 # PROMPT013 — Windows native acceptance manifest
 
-**Status: `SYNVEIL_V03_P013_BLOCKED`** — source harnesses are implemented, but
-no qualified Windows 11 interactive run or candidate artifact is available in
-this workspace. Native GUI, IPC, logon/logoff, and cleanup results remain
-unverified.
+**Status: `SYNVEIL_V03_P013_BLOCKED`** — source harnesses are implemented and
+the post-merge P028 candidate identity has been verified, but the candidate
+has not been run on a qualified Windows 11 environment. Native GUI, IPC,
+logon/logoff, and cleanup results remain unverified.
 
 ## Repository preflight
 
@@ -39,9 +39,11 @@ GUI, genuine-logon, or installed named-pipe acceptance.
 | Post-merge base commit | `f79b302aebebd038211635e00fb39eaca7d67b23` |
 | P028 hosted candidate build | `PASS` (candidate build only) |
 | P028 hosted standard-user native job | `FAIL`; hosted run does not qualify GUI/logon/installed IPC; exact failing check is retained |
-| Candidate SHA-256 / size / release-manifest digest | Unavailable; GitHub artifact download returned HTTP 403. No artifact bytes are claimed. |
+| Post-merge P028 candidate | Retrieved from run [40614102098](https://github.com/nghianguyen150612/Synveil/actions/runs/40614102098); artifact ZIP: 32,391,302 bytes, SHA-256 `ebef2c9433942e98964eccbc2ecff2377dcb6b52c75ec8a0c69d9652c2a4fabf` |
+| Setup candidate identity | Source `f79b302aebebd038211635e00fb39eaca7d67b23`; 32,932,573 bytes; SHA-256 `b960a1790f6fad522e12f41c1048e25dd079e3a2edcc44aa1c2b894cd96c4416`; unsigned |
+| Release-manifest SHA-256 | `ed5a9d393e85d025b98444a166c0fd27e8e0b2556c8dc456041d52ade9b32d8c`; matches embedded candidate identity |
 | Qualified Windows environment | `BLOCKED_BY_ENVIRONMENT` |
-| Installed-component named-pipe E2E | `NOT_RUN` |
+| Installed-component named-pipe E2E | `NOT_RUN`; candidate identity is available but no qualified Windows desktop was available |
 | Native Setup GUI journey | `NOT_RUN` |
 | Genuine new logon / LogonTrigger | `NOT_RUN` |
 | Cleanup independently verified | `NOT_RUN` |

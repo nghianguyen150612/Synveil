@@ -190,13 +190,21 @@ insufficient.
 
 ## Candidate provenance and security boundaries
 
-The P012 candidate producer job passed, but the candidate artifact could not
-be downloaded in this workspace (GitHub artifact storage returned HTTP 403),
-so its Setup SHA-256, size, and release-manifest digest are not recorded here.
-P013 has not produced a candidate. A P013 evidence record must compare the
-actual candidate bytes and manifest to the expected identity and source commit;
-a checksum match is byte identity only and is not publisher authentication.
-P036's production publisher trust remains separate.
+The post-merge P028 candidate from run
+[40614102098](https://github.com/nghianguyen150612/Synveil/actions/runs/40614102098)
+was retrieved and inspected through the connected GitHub artifact interface.
+Its artifact ZIP is 32,391,302 bytes with SHA-256
+`ebef2c9433942e98964eccbc2ecff2377dcb6b52c75ec8a0c69d9652c2a4fabf`.
+The embedded `p028-candidate.json`, Setup bytes, and release manifest agree:
+source commit `f79b302aebebd038211635e00fb39eaca7d67b23`, Setup size 32,932,573
+bytes, Setup SHA-256
+`b960a1790f6fad522e12f41c1048e25dd079e3a2edcc44aa1c2b894cd96c4416`, and
+release-manifest SHA-256
+`ed5a9d393e85d025b98444a166c0fd27e8e0b2556c8dc456041d52ade9b32d8c`.
+The candidate is unsigned. P013 did not produce new candidate bytes and did
+not install or run this candidate on Windows. This verifies artifact byte
+identity and manifest binding only; it is not publisher authentication or
+native acceptance. P036's production publisher trust remains separate.
 
 The environment collector does not enable the v0.3 Wizard execution path or
 create an execution capability, trust root, effect catalog, service, or shell
