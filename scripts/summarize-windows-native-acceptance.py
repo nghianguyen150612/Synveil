@@ -248,6 +248,28 @@ def make_summary(components: dict[str, dict[str, Any]], component_hashes: dict[s
         all(digest == component_harness_digest(name) for name, digest in present_harnesses)
         else "FAIL"
     )
+    identity_hashes = [
+        get(env, "identity_binding", "user_sid_sha256"),
+        gui.get("user_sid_sha256"),
+        get(logon, "session", "user_sid_sha256"),
+        get(logoff, "session", "user_sid_sha256"),
+        get(uninstall, "session", "user_sid_sha256"),
+    ]
+    present_identity_hashes = [value for value in identity_hashes if value is not None]
+    if any(not isinstance(value, str) or not HEX64.fullmatch(value) for value in present_identity_hashes):
+        identity_binding_status = "FAIL"
+    elif len(set(present_identity_hashes)) > 1:
+        identity_binding_status = "FAIL"
+    elif len(present_identity_hashes) != len(identity_hashes):
+        identity_binding_status = "NOT_RUN"
+    else:
+        identity_binding_status = "PASS"
+    runtime_identity = combine(
+        identity_binding_status,
+        gui_states.get("installed_client_process"),
+        logon_checks.get("client_expected_sid"),
+        uninstall_checks.get("interactive_standard_user"),
+    )
     checks.update({
         "candidate_identity": "PASS" if identity_ok else "FAIL",
         "architecture": status(env_checks.get("architecture")),
@@ -287,11 +309,7 @@ def make_summary(components: dict[str, dict[str, Any]], component_hashes: dict[s
         "first_run_presentation": status(gui_states.get("first_run")),
         "no_unexpected_uac": combine(gui_states.get("unexpected_uac"), gui_states.get("setup_non_elevated"),
                                       gui_states.get("installed_desktop_non_elevated"), gui_states.get("installed_client_non_elevated")),
-        "consistent_runtime_identity": "PASS" if (
-            get(env, "identity_binding", "user_sid_sha256")
-            and get(env, "identity_binding", "user_sid_sha256") == gui.get("user_sid_sha256")
-            and gui_states.get("installed_client_process") == "PASS"
-        ) else "NOT_RUN",
+        "consistent_runtime_identity": runtime_identity,
         "application_shutdown": combine(gui_states.get("shutdown"), gui_states.get("pipe_server_termination")),
         "logon_expected_sid": status(logon_checks.get("client_expected_sid")),
         "logon_no_elevated_token": status(logon_checks.get("client_non_elevated")),

@@ -142,8 +142,10 @@ installed-component IPC, cross-user authorization, or cleanup results.
 - `scripts/summarize-windows-native-acceptance.py` binds environment, GUI,
   logon, logoff, uninstall, and cleanup component records to the candidate
   source, separate harness source, Setup bytes, release-manifest digest, and
-  harness revision. Missing component records are
-  `NOT_RUN`; every component digest is required before a summary can pass.
+  harness revision. The environment, GUI, logon, logoff, and uninstall records
+  must also carry the same one-way test-user SID commitment. Missing component
+  records are `NOT_RUN`; every component digest is required before a summary
+  can pass.
 - The existing Windows acceptance workflow now runs those evidence-contract
   tests, runs the existing Windows IPC regression suite, checks the Rust probe,
   and parses all P013 PowerShell tools without executing the interactive

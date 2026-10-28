@@ -87,6 +87,7 @@ def main() -> None:
         "test_raw_pipe_payloads_are_forbidden", "test_wizard_execution_must_remain_disabled",
         "test_harness_revision_commit_is_bound_separately_from_candidate_source",
         "test_summary_rejects_components_from_a_different_harness_commit",
+        "test_summary_rejects_runtime_evidence_from_a_different_user",
     ):
         require(token in evidence_tests, f"missing native-evidence regression: {token}")
     for token in (

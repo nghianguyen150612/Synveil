@@ -149,6 +149,45 @@ class EvidenceContractTests(unittest.TestCase):
         self.assertEqual(record["checks"]["harness_revision"], "FAIL")
         self.assertEqual(record["result"], "FAIL")
 
+    def test_summary_rejects_runtime_evidence_from_a_different_user(self) -> None:
+        names = tuple(summary.COMPONENT_FILES)
+        user_hash = "a" * 64
+        components = {
+            name: {
+                "result": "PASS",
+                "harness_revision_sha256": summary.component_harness_digest(name),
+            }
+            for name in names
+        }
+        components["gui"].update({
+            "user_sid_sha256": user_hash,
+            "product_state": {"installed_client_process": "PASS"},
+            "harness_source_commit": "f" * 40,
+        })
+        components["environment"]["identity_binding"] = {"user_sid_sha256": user_hash}
+        components["logon"].update({
+            "session": {"user_sid_sha256": "b" * 64},
+            "checks": {"client_expected_sid": "PASS"},
+        })
+        components["logoff"]["session"] = {"user_sid_sha256": user_hash}
+        components["uninstall"].update({
+            "session": {"user_sid_sha256": user_hash},
+            "checks": {"interactive_standard_user": "PASS"},
+            "harness_source_commit": "f" * 40,
+        })
+        digests = {name: "e" * 64 for name in names}
+        source_check = summary.current_source_matches
+        summary.current_source_matches = lambda _source: True
+        try:
+            record = summary.make_summary(
+                components, digests, passing_record()["candidate"], True,
+                "a" * 40, "f" * 40, contract.REQUIRED_CHECKS,
+            )
+        finally:
+            summary.current_source_matches = source_check
+        self.assertEqual(record["checks"]["consistent_runtime_identity"], "FAIL")
+        self.assertEqual(record["result"], "FAIL")
+
     def test_summary_cli_records_missing_component_evidence_without_pass(self) -> None:
         source = "a" * 40
         setup_bytes = b"P013 candidate identity fixture"
