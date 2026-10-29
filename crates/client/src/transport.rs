@@ -14,6 +14,7 @@ pub mod native;
 pub const MAX_ENDPOINTS: usize = 8;
 pub const INSPECTION_TIMEOUT: Duration = Duration::from_secs(2);
 pub const SELECTION_TIMEOUT: Duration = Duration::from_secs(15);
+pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SelectionPolicy {
@@ -331,7 +332,10 @@ async fn select_inner(
             }
             let mut verified = false;
             for _ in 0..2 {
-                match verifier.verify(e).await {
+                let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, verifier.verify(e))
+                    .await
+                    .unwrap_or(Err(R::Unreachable));
+                match handshake {
                     Ok(()) => {
                         verified = true;
                         break;

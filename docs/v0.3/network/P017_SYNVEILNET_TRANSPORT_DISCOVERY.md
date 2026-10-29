@@ -75,7 +75,9 @@ install software, access installer journals or exchange enrollment grants.
 
 Limits: eight endpoints, 64 interfaces, 128 addresses, 256 peer records, eight
 addresses per peer, 128 KiB per command, two seconds per command/local selection
-inspection, fifteen seconds for the complete selection. Native inspection alone
+inspection, two seconds per authenticated handshake and fifteen seconds for the
+complete selection. A stalled handshake is an unreachable read-only probe and
+may retry/fall back only under the explicit policy, within the total budget. Native inspection alone
 is bounded by its finite query count; callers should use the selection wrapper or
 a two-second outer timeout for preflight. A dropped/expired future kills and reaps
 the owned CLI child. There are at most two read-only handshakes per eligible

@@ -345,8 +345,27 @@ async fn cancellation_and_deadlines_bound_stalled_adapters() {
     let d = FakeDiscovery::new(vec![snapshot()]);
     assert_eq!(
         select(&d, &Stalled, &endpoints(), SelectionPolicy::PreferLan).await,
+        Selection::Unavailable(R::Unreachable)
+    );
+    let many: Vec<_> = (3..11)
+        .map(|n| endpoint(Transport::Lan, &format!("192.168.1.{n}")))
+        .collect();
+    let mut s = snapshot();
+    s.routes = many
+        .iter()
+        .map(|e| RouteEvidence {
+            destination: e.address,
+            source: "192.168.1.2".parse().unwrap(),
+            interface_id: "eth0".into(),
+        })
+        .collect();
+    let d = FakeDiscovery::new(vec![s]);
+    let start = tokio::time::Instant::now();
+    assert_eq!(
+        select(&d, &Stalled, &many, SelectionPolicy::LanOnly).await,
         Selection::Unavailable(R::TimedOut)
     );
+    assert_eq!(start.elapsed(), SELECTION_TIMEOUT);
     let (tx, rx) = watch::channel(true);
     assert_eq!(
         discover_and_select(&Stalled, &v, &endpoints(), SelectionPolicy::PreferLan, rx).await,
@@ -533,4 +552,28 @@ async fn same_transport_ties_use_canonical_origin_and_overlay_only_never_downgra
         select(&d, &v, &[a], SelectionPolicy::TailscaleOnly).await,
         Selection::Unavailable(R::NotConfigured)
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn stalled_lan_handshakes_leave_time_for_explicit_overlay_fallback() {
+    struct StalledLan;
+    #[async_trait]
+    impl EndpointVerifier for StalledLan {
+        async fn verify(&self, endpoint: &Endpoint) -> Result<(), R> {
+            if endpoint.transport == Transport::Lan {
+                std::future::pending().await
+            } else {
+                Ok(())
+            }
+        }
+    }
+    let d = FakeDiscovery::new(vec![snapshot()]);
+    let start = tokio::time::Instant::now();
+    assert_eq!(
+        select(&d, &StalledLan, &endpoints(), SelectionPolicy::PreferLan)
+            .await
+            .transport(),
+        Transport::Tailscale
+    );
+    assert_eq!(start.elapsed(), HANDSHAKE_TIMEOUT * 2);
 }

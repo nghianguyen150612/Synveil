@@ -50,7 +50,7 @@ Local validation on 2026-10-29, Linux x86_64 / Debian 13, Rust and Cargo 1.99.1:
 | --- | --- |
 | `cargo fmt --all -- --check` | PASS |
 | `cargo clippy -p synveil-client -p synveil-server-network -p synveil-server-host --all-targets --locked -- -D warnings` | PASS |
-| `cargo test -p synveil-server-config -p synveil-server-network -p synveil-client -p synveil-server-host --lib --tests --locked` | PASS: 170 tests, zero failed/ignored; includes 120 client unit tests, 11 controller/IPC integration tests, 29 configuration tests, 2 Host tests, 8 network tests |
+| `cargo test -p synveil-server-config -p synveil-server-network -p synveil-client -p synveil-server-host --lib --tests --locked` | PASS: 171 tests, zero failed/ignored; includes 121 client unit tests, 11 controller/IPC integration tests, 29 configuration tests, 2 Host tests, 8 network tests |
 | `cargo test -p synveil-client-sync --lib http_remote::tests:: --locked` | PASS: 32 tests, zero failed/ignored, including the new P017 loopback TLS identity handshake |
 | `bash scripts/validate-docs.sh` | PASS: 24 documentation validation groups |
 | `git diff --check` | PASS |
@@ -77,9 +77,11 @@ Rust namespace filters contain YAML colon-space syntax. Both commands now use
 block scalars; the corrected workflow parses locally. Initial failed run:
 [40883699341](https://github.com/nghianguyen150612/Synveil/actions/runs/40883699341)
 on `98733c5450ede716846d9091d362d2603aeef65c`. This was not a test failure.
+A two-second handshake deadline also prevents stalled LAN probes from consuming
+the complete selection budget before an explicitly allowed overlay fallback.
 Final endpoint binding also fences profile identity and rejects differing
 server/owner/device/library scopes in the production verifier; the complete
-170-test regression and strict Clippy commands were rerun successfully.
+171-test regression and strict Clippy commands were rerun successfully.
 
 Hosted workflow: `.github/workflows/v03-p017-transport-discovery.yml`. At commit
 time hosted results are pending, not claimed as passing. Exact PR source/merge
