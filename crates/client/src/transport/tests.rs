@@ -10,6 +10,7 @@ use synveil_server_network::{InterfaceKind, NetworkCandidate};
 fn endpoint(t: Transport, ip: &str) -> Endpoint {
     let address: IpAddr = ip.parse().unwrap();
     Endpoint {
+        profile_id: synveil_client_sync::ServerProfileId::new(),
         transport: t,
         origin: if address.is_ipv6() {
             format!("https://[{ip}]/")
@@ -438,6 +439,19 @@ fn only_explicit_profile_trust_can_create_numeric_transport_endpoints() {
             Endpoint::from_profile(&profile, transport, peer).map(|_| ()),
             expected
         );
+        let other_profile = ServerProfile::new(profile.base_url().clone(), "another profile")
+            .unwrap()
+            .with_managed_host_trust(profile.managed_host_trust().unwrap().clone())
+            .unwrap();
+        if let (Ok(a), Ok(b)) = (
+            Endpoint::from_profile(&profile, transport, None),
+            Endpoint::from_profile(&other_profile, transport, None),
+        ) {
+            assert_ne!(
+                a, b,
+                "same origin and trust must not alias another credential profile"
+            );
+        }
         let changed = profile
             .reconfigured(
                 CanonicalBaseUrl::parse("https://192.168.1.99/").unwrap(),

@@ -42,7 +42,9 @@ No capability result is persisted or treated as a reusable authorization cache.
 An `Endpoint` is derived from a profile with explicitly approved `HostTrust`, using
 its exact canonical HTTPS origin and server installation identity. Callers must
 obtain profiles and credentials through the existing review/store lifecycle. The
-production `SynveilVerifier` owns immutable profile/credential/scope bindings. It
+production `SynveilVerifier` owns immutable profile/credential/scope bindings.
+Endpoint equality includes profile identity and the approved network/trust generation;
+a verifier rejects bindings for different server installations or owner/device/library scopes. It
 uses the existing anonymous readiness GET, validated TLS and server/network identity
 headers, followed by the authenticated owner/device checkpoint GET. Readiness must
 succeed before sending the profile-bound bearer. A readiness identity mismatch,

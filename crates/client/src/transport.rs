@@ -28,6 +28,7 @@ pub enum SelectionPolicy {
 /// No discovery advertisement can construct this value by itself.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Endpoint {
+    profile_id: synveil_client_sync::ServerProfileId,
     transport: Transport,
     origin: String,
     server_id: String,
@@ -75,6 +76,7 @@ impl Endpoint {
             return Err(UnavailableReason::UntrustedEndpoint);
         }
         Ok(Self {
+            profile_id: profile.profile_id(),
             transport,
             origin: trust.origin().to_owned(),
             server_id: trust.server_id().to_owned(),
@@ -139,6 +141,13 @@ impl SynveilVerifier {
             return Err(UnavailableReason::LimitExceeded);
         }
         let endpoint = Endpoint::from_profile(&profile, transport, peer_id)?;
+        if self
+            .endpoints
+            .iter()
+            .any(|b| b.scope != scope || b.endpoint.server_id != endpoint.server_id)
+        {
+            return Err(UnavailableReason::IdentityConflict);
+        }
         if credential.owner_user_id() != scope.owner_user_id()
             || credential.device_id() != scope.device_id()
         {

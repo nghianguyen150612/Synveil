@@ -54,6 +54,7 @@ Local validation on 2026-10-29, Linux x86_64 / Debian 13, Rust and Cargo 1.99.1:
 | `cargo test -p synveil-client-sync --lib http_remote::tests:: --locked` | PASS: 32 tests, zero failed/ignored, including the new P017 loopback TLS identity handshake |
 | `bash scripts/validate-docs.sh` | PASS: 24 documentation validation groups |
 | `git diff --check` | PASS |
+| Python `yaml.safe_load` of the focused workflow | PASS |
 
 Local Rust commands used the existing host D-Bus runtime `libdbus-1.so.3`
 (version 1.16.2) through a temporary pkg-config descriptor and linker symlink:
@@ -70,6 +71,15 @@ strict Clippy run identified P016A's existing field-reassignment fixture lint;
 only that test initializer was cleaned up. The TLS fixture additionally required
 enabling rcgen's test-only PEM feature. Final commands above passed after these
 corrections; no test was disabled or warning suppressed.
+
+The initial hosted workflow was rejected before job execution because unquoted
+Rust namespace filters contain YAML colon-space syntax. Both commands now use
+block scalars; the corrected workflow parses locally. Initial failed run:
+[40883699341](https://github.com/nghianguyen150612/Synveil/actions/runs/40883699341)
+on `98733c5450ede716846d9091d362d2603aeef65c`. This was not a test failure.
+Final endpoint binding also fences profile identity and rejects differing
+server/owner/device/library scopes in the production verifier; the complete
+170-test regression and strict Clippy commands were rerun successfully.
 
 Hosted workflow: `.github/workflows/v03-p017-transport-discovery.yml`. At commit
 time hosted results are pending, not claimed as passing. Exact PR source/merge
