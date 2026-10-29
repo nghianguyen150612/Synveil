@@ -47,8 +47,10 @@ This reproduces the reported expected-2/observed-3 mismatch through one failed
 reconnect attempt, without a duplicate successful connection. The controller
 manager executes attempts sequentially. The deterministic trace asserts attempt
 generations `[1, 2, 3]`, published generations `[1, 3]`, and exactly two
-successful relationships. The existing stale-generation unit test also passes
-and verifies that an old response and event cannot overwrite current state.
+successful relationships. The stale-generation unit test seeds a fresh
+generation-2 snapshot, submits an old generation-1 response, and verifies that
+the complete fresh snapshot remains unchanged. The event reader independently
+checks its generation fence before applying event hints.
 
 The original hosted run recorded only the final assertion (`expected 2`,
 `observed 3`), not an attempt trace. The deterministic test establishes a
@@ -65,8 +67,8 @@ or fail-closed behavior changed. The test continues to check stale snapshot
 retention, freshness, restart usability, runtime identity, and library
 ownership. Existing credential-redaction assertions remain active.
 
-The existing deterministic generation-fence unit test remains in place. P005,
-P006, and P015 security regressions were run unchanged.
+The deterministic generation-fence unit test remains in place. P005, P006, and
+P015 security regressions were run unchanged.
 
 ## Remaining limits and blockers
 

@@ -28,7 +28,10 @@ the controller relationship and publishes the fresh snapshot. The test
 strictly asserts the observed attempt and publication sequences, one successful
 relationship for each available process, one handshake per status/command/
 events channel, no generation-2 success, and one runtime owner for the restarted
-process. The existing stale-generation response/event fence test remains enabled.
+process. The stale-generation fence test seeds a fresh generation-2 snapshot
+and asserts that an old generation-1 response leaves the complete snapshot
+unchanged. The event reader continues to gate event hints on its active
+generation.
 
 The trace is behind `synveil-client/test-support`, retains at most 64
 credential-free events, and records only generations, logical channel names,

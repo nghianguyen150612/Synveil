@@ -3561,7 +3561,16 @@ mod tests {
 
     #[test]
     fn generation_fence_rejects_old_response_and_event() {
-        let (snapshot, _) = watch::channel(DesktopControllerSnapshot::default());
+        let mut current_snapshot = DesktopControllerSnapshot::default();
+        current_snapshot.connection_state = DesktopControllerConnectionState::Connected;
+        current_snapshot.process = Some(DesktopControllerProcessStatus {
+            state: DesktopProcessStatus::Stopped,
+            control_ready: false,
+        });
+        current_snapshot.revision = 7;
+        current_snapshot.freshness = DesktopControllerFreshness::Fresh;
+        current_snapshot.connection_generation = 2;
+        let (snapshot, _) = watch::channel(current_snapshot.clone());
         let inner = DesktopControllerInner {
             config: DesktopControllerConfig::for_endpoint(DesktopControlEndpoint::NamedPipe {
                 name: "test-controller".to_owned(),
@@ -3602,7 +3611,11 @@ mod tests {
                 sync_control_state: DesktopControllerSyncControlState::Running,
             }
         ));
-        assert_eq!(inner.snapshot().revision, 0);
+        assert_eq!(
+            inner.snapshot(),
+            current_snapshot,
+            "an old response must not overwrite a newer fresh snapshot"
+        );
     }
 
     #[test]
