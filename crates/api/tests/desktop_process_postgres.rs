@@ -22,7 +22,8 @@ mod live_fixture {
             DesktopControlClient, DesktopControlServer, DesktopController,
             DesktopControllerCommandResult, DesktopControllerConfig,
             DesktopControllerConnectionState, DesktopControllerFreshness,
-            DesktopControllerRootState, DesktopProcessError, DesktopProcessStatus,
+            DesktopControllerRootState, DesktopControllerTestTraceEvent, DesktopControllerTiming,
+            DesktopProcessError, DesktopProcessStatus,
         };
         use synveil_client_sync::{
             ClientSyncError, DesktopRootRecoveryGate, DesktopSyncHostConfig,
@@ -258,24 +259,27 @@ mod live_fixture {
             receiver: &mut tokio::sync::watch::Receiver<synveil_client::DesktopControllerSnapshot>,
             generation: u64,
         ) -> synveil_client::DesktopControllerSnapshot {
-            for _ in 0..100 {
-                let snapshot = controller.snapshot();
-                if snapshot.connection_state == DesktopControllerConnectionState::Connected
-                    && snapshot.freshness == DesktopControllerFreshness::Fresh
-                    && snapshot.connection_generation >= generation
-                {
-                    assert_eq!(
-                        snapshot.connection_generation, generation,
-                        "production controller generation must advance exactly once"
-                    );
-                    return snapshot;
+            tokio::time::timeout(Duration::from_secs(30), async {
+                loop {
+                    let snapshot = controller.snapshot();
+                    if snapshot.connection_state == DesktopControllerConnectionState::Connected
+                        && snapshot.freshness == DesktopControllerFreshness::Fresh
+                        && snapshot.connection_generation >= generation
+                    {
+                        assert_eq!(
+                            snapshot.connection_generation, generation,
+                            "production controller generation must advance exactly once"
+                        );
+                        return snapshot;
+                    }
+                    receiver
+                        .changed()
+                        .await
+                        .expect("production controller watch remains open");
                 }
-                tokio::time::timeout(Duration::from_secs(1), receiver.changed())
-                    .await
-                    .expect("production controller generation update timeout")
-                    .expect("production controller watch remains open");
-            }
-            panic!("production controller did not reconnect at generation {generation}");
+            })
+            .await
+            .unwrap_or_else(|_| panic!("production controller did not reconnect at generation {generation}; snapshot={:?}", controller.snapshot()))
         }
 
         async fn wait_for_controller_stopped(
@@ -293,6 +297,29 @@ mod live_fixture {
                     .expect("production controller watch remains open");
             }
             panic!("production controller did not stop after process shutdown");
+        }
+
+        async fn wait_for_controller_trace<F>(
+            receiver: &mut tokio::sync::watch::Receiver<Vec<DesktopControllerTestTraceEvent>>,
+            matches: F,
+        ) -> Vec<DesktopControllerTestTraceEvent>
+        where
+            F: Fn(&[DesktopControllerTestTraceEvent]) -> bool,
+        {
+            tokio::time::timeout(Duration::from_secs(15), async {
+                loop {
+                    let events = receiver.borrow_and_update().clone();
+                    if matches(&events) {
+                        return events;
+                    }
+                    receiver
+                        .changed()
+                        .await
+                        .expect("test-only controller trace watch remains open");
+                }
+            })
+            .await
+            .expect("expected controller lifecycle trace event")
         }
 
         async fn wait_for_local_node(
@@ -721,10 +748,20 @@ mod live_fixture {
             // controller scenarios. This proves that controller exit is not
             // process shutdown and that a new controller creates a fresh
             // connection relationship afterward.
-            let controller = DesktopController::new(DesktopControllerConfig::for_endpoint(
-                control_endpoint.clone(),
-            ));
+            let controller = DesktopController::new(
+                DesktopControllerConfig::for_endpoint(control_endpoint.clone()).with_timing(
+                    DesktopControllerTiming::new(
+                        Duration::from_secs(5),
+                        Duration::from_secs(30),
+                        Duration::from_secs(60),
+                        Duration::from_secs(5),
+                        Duration::from_secs(5),
+                    )
+                    .expect("bounded production-controller investigation timing"),
+                ),
+            );
             let mut controller_state = controller.subscribe();
+            let mut controller_trace = controller.subscribe_test_connection_trace();
             // `watch` retains only the latest value: this subscriber is
             // intentionally never drained while the active one continues.
             let _slow_controller_state = controller.subscribe();
@@ -735,6 +772,41 @@ mod live_fixture {
             let controller_snapshot =
                 wait_for_controller_fresh(&controller, &mut controller_state).await;
             assert_eq!(controller_snapshot.connection_generation, 1);
+            let initial_trace = wait_for_controller_trace(&mut controller_trace, |events| {
+                events.iter().any(|event| {
+                    matches!(
+                        event,
+                        DesktopControllerTestTraceEvent::FreshSnapshotPublished {
+                            generation: 1,
+                            revision: 1,
+                        }
+                    )
+                })
+            })
+            .await;
+            assert_eq!(
+                initial_trace,
+                [
+                    DesktopControllerTestTraceEvent::ConnectionAttemptStarted { generation: 1 },
+                    DesktopControllerTestTraceEvent::IpcHandshakeSucceeded {
+                        generation: 1,
+                        channel: synveil_client::DesktopControllerTestChannel::Status,
+                    },
+                    DesktopControllerTestTraceEvent::IpcHandshakeSucceeded {
+                        generation: 1,
+                        channel: synveil_client::DesktopControllerTestChannel::Command,
+                    },
+                    DesktopControllerTestTraceEvent::IpcHandshakeSucceeded {
+                        generation: 1,
+                        channel: synveil_client::DesktopControllerTestChannel::Events,
+                    },
+                    DesktopControllerTestTraceEvent::ConnectionEstablished { generation: 1 },
+                    DesktopControllerTestTraceEvent::FreshSnapshotPublished {
+                        generation: 1,
+                        revision: 1,
+                    },
+                ]
+            );
 
             // LIVE-CTRL3/5: mutate the real PostgreSQL-backed server, issue
             // SyncNow through the controller, and require both the real
@@ -1091,6 +1163,43 @@ mod live_fixture {
             drop(stale_listener);
             assert!(fs::symlink_metadata(&socket_path).is_ok());
 
+            // Keep the endpoint unavailable until the controller has recorded
+            // a failed generation-2 attempt. The long bounded reconnect delay
+            // above prevents a second attempt racing process bootstrap.
+            let failed_attempt_trace = wait_for_controller_trace(&mut controller_trace, |events| {
+                events.iter().any(|event| {
+                    matches!(
+                        event,
+                        DesktopControllerTestTraceEvent::ConnectionAttemptFailed {
+                            generation: 2,
+                            error: synveil_client::DesktopControllerErrorKind::EndpointUnavailable,
+                        }
+                    )
+                })
+            })
+            .await;
+            assert!(failed_attempt_trace.iter().any(|event| matches!(
+                event,
+                DesktopControllerTestTraceEvent::ConnectionEnded { generation: 1 }
+            )));
+            assert!(failed_attempt_trace.iter().any(|event| matches!(
+                event,
+                DesktopControllerTestTraceEvent::ConnectionAttemptStarted { generation: 2 }
+            )));
+            assert!(!failed_attempt_trace.iter().any(|event| matches!(
+                event,
+                DesktopControllerTestTraceEvent::ConnectionEstablished { generation: 2 }
+            )));
+            assert!(failed_attempt_trace.iter().any(|event| matches!(
+                event,
+                DesktopControllerTestTraceEvent::IpcHandshakeFailed {
+                    generation: 2,
+                    channel: synveil_client::DesktopControllerTestChannel::Status,
+                    error: synveil_client::DesktopControllerErrorKind::EndpointUnavailable,
+                }
+            )));
+            println!("P016 deterministic pre-restart controller trace: {failed_attempt_trace:?}");
+
             drop(process);
             let restart_config = DesktopClientConfig::from_platform(platform.as_ref())
                 .expect("restart config must load")
@@ -1123,7 +1232,89 @@ mod live_fixture {
             );
 
             let replacement_snapshot =
-                wait_for_controller_generation(&controller, &mut controller_state, 2).await;
+                wait_for_controller_generation(&controller, &mut controller_state, 3).await;
+            let recovered_trace = wait_for_controller_trace(&mut controller_trace, |events| {
+                events.iter().any(|event| {
+                    matches!(
+                        event,
+                        DesktopControllerTestTraceEvent::FreshSnapshotPublished {
+                            generation: 3,
+                            ..
+                        }
+                    )
+                })
+            })
+            .await;
+            assert_eq!(
+                recovered_trace
+                    .iter()
+                    .filter(|event| matches!(
+                        event,
+                        DesktopControllerTestTraceEvent::ConnectionEstablished { .. }
+                    ))
+                    .count(),
+                2,
+                "initial and replacement processes each establish one controller relationship"
+            );
+            assert_eq!(
+                recovered_trace
+                    .iter()
+                    .filter(|event| matches!(
+                        event,
+                        DesktopControllerTestTraceEvent::FreshSnapshotPublished { .. }
+                    ))
+                    .count(),
+                2,
+                "one fresh controller snapshot is published per successful relationship"
+            );
+            let attempted_generations = recovered_trace
+                .iter()
+                .filter_map(|event| match event {
+                    DesktopControllerTestTraceEvent::ConnectionAttemptStarted { generation } => {
+                        Some(*generation)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(attempted_generations, [1, 2, 3]);
+            let published_generations = recovered_trace
+                .iter()
+                .filter_map(|event| match event {
+                    DesktopControllerTestTraceEvent::FreshSnapshotPublished {
+                        generation, ..
+                    } => Some(*generation),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(published_generations, [1, 3]);
+            for generation in [1, 3] {
+                for channel in [
+                    synveil_client::DesktopControllerTestChannel::Status,
+                    synveil_client::DesktopControllerTestChannel::Command,
+                    synveil_client::DesktopControllerTestChannel::Events,
+                ] {
+                    assert_eq!(
+                        recovered_trace
+                            .iter()
+                            .filter(|event| matches!(
+                                event,
+                                DesktopControllerTestTraceEvent::IpcHandshakeSucceeded {
+                                    generation: observed_generation,
+                                    channel: observed_channel,
+                                } if *observed_generation == generation && *observed_channel == channel
+                            ))
+                            .count(),
+                        1,
+                        "each successful relationship opens one {channel:?} channel"
+                    );
+                }
+            }
+            assert!(!recovered_trace.iter().any(|event| matches!(
+                event,
+                DesktopControllerTestTraceEvent::ConnectionEstablished { generation: 2 }
+                    | DesktopControllerTestTraceEvent::FreshSnapshotPublished { generation: 2, .. }
+            )));
+            println!("P016 deterministic controller recovery trace: {recovered_trace:?}");
             assert_eq!(
                 replacement_snapshot
                     .process
@@ -1132,6 +1323,16 @@ mod live_fixture {
                 DesktopProcessStatus::Running
             );
             assert_eq!(replacement_snapshot.libraries.len(), 1);
+            assert_eq!(
+                restarted.host().runtime_identity(),
+                restarted.host().handle().runtime_identity(),
+                "the restarted process must retain a single runtime owner"
+            );
+            assert_eq!(
+                restarted.host().registered_libraries(),
+                vec![seed.library_id],
+                "the restarted process must not register a duplicate library owner"
+            );
             // LIVE-CTRL7: the replacement controller is usable after the
             // previous controller/process relationship was torn down.
             assert!(matches!(

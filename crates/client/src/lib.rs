@@ -52,6 +52,8 @@ pub use controller::{
     DesktopControllerSnapshot, DesktopControllerSyncControlState, DesktopControllerSyncOutcome,
     DesktopControllerTiming, MAX_DESKTOP_CONTROLLER_RECOVERY_ITEMS,
 };
+#[cfg(feature = "test-support")]
+pub use controller::{DesktopControllerTestChannel, DesktopControllerTestTraceEvent};
 pub use launch::{
     AutostartState, BackgroundClientAvailability, BackgroundClientManager, BackgroundLaunchBackend,
     BackgroundLaunchError, BackgroundLaunchResult, BackgroundLaunchTiming, BackgroundRestartResult,
