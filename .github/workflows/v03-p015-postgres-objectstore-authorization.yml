@@ -1,0 +1,98 @@
+name: v0.3 P015 PostgreSQL ObjectStore authorization
+
+on:
+  pull_request:
+    branches: [develop/v0.3]
+    paths:
+      - "crates/**"
+      - "migrations/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "scripts/validate-docs.sh"
+      - "docs/v0.3/**"
+      - ".github/workflows/v03-p015-postgres-objectstore-authorization.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  p015-owner-to-byte:
+    name: P015 joined owner-to-byte qualification
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
+    env:
+      SYNVEIL_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - name: Check out exact PR merge candidate
+        uses: actions/checkout@v4
+      - name: Install API and storage build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libdbus-1-dev postgresql-client ripgrep
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run P006 owner, version, ETag and Range HTTP tests
+        run: cargo test -p synveil-api --lib --locked p006_ -- --nocapture
+      - name: Run P006 local filesystem ObjectStore HTTP test
+        run: cargo test -p synveil-api --lib --locked api_downloads_use_the_content_service_and_local_object_store -- --nocapture
+      - name: Run storage content and immutable-version tests
+        run: cargo test -p synveil-storage --test downloads --locked
+      - name: Check API Clippy
+        run: cargo clippy -p synveil-api --all-targets --locked -- -D warnings
+      - name: Confirm PostgreSQL 17
+        run: |
+          set -euo pipefail
+          pg_isready -h 127.0.0.1 -p 5432 -U postgres
+          ver=$(psql "$SYNVEIL_TEST_DATABASE_URL" -t -A -c 'SHOW server_version;' | tr -d ' ')
+          [[ "$ver" == 17.* ]] || { echo "Expected PostgreSQL 17"; exit 1; }
+      - name: Run real PostgreSQL 17 owner-scoped immutable version history
+        run: |
+          set -euo pipefail
+          cargo test -p synveil-metadata --test postgres --locked postgres_version_history_is_owner_scoped_keyset_paged_and_pointer_based -- --ignored --test-threads=1 --nocapture
+      - name: Retain exact P005 cross-device mutation regression
+        run: |
+          set -euo pipefail
+          cargo test -p synveil-api --test authorization_postgres --locked -- --ignored --test-threads=1 --nocapture
+      - name: Run exact P015 ignored integration and require completion marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${SYNVEIL_TEST_DATABASE_URL:?disposable PostgreSQL URL required}"
+          echo "Tested checkout SHA: $(git rev-parse HEAD)"
+          echo "Actions run: $GITHUB_RUN_ID attempt $GITHUB_RUN_ATTEMPT"
+          cargo test -p synveil-api --test p015_postgres_objectstore_authorization --locked p015_postgres_objectstore_owner_to_byte -- --exact --ignored --test-threads=1 --nocapture 2>&1 | tee p015-output.txt
+          grep -q 'P015_MATRIX_COMPLETE:' p015-output.txt
+          grep -q 'test result: ok. 1 passed; 0 failed; 0 ignored;' p015-output.txt
+      - name: Validate documentation and diff
+        run: |
+          bash scripts/validate-docs.sh
+          git diff --check
+      - name: Preserve exact checkout and integration output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p015-evidence-${{ github.run_id }}
+          path: p015-output.txt
+          if-no-files-found: warn
