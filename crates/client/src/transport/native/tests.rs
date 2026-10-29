@@ -1,6 +1,11 @@
 use super::*;
 use serde_json::json;
 
+#[cfg(target_os = "linux")]
+async fn test_child_result(child: tokio::process::Child) -> Result<Vec<u8>, UnavailableReason> {
+    read_child(child, Query::Tailscale).await
+}
+
 fn status() -> serde_json::Value {
     json!({"BackendState":"Running", "TUN":true,
         "Self":{"ID":"self", "TailscaleIPs":["100.64.0.2"],"Online":true,"Expired":false},
@@ -50,6 +55,26 @@ fn omitted_false_expiry_matches_upstream_and_conflicts_are_rejected() {
 }
 #[test]
 fn route_evidence_is_exact_numeric_and_never_via_a_gateway() {
+    let route = Query::Route("192.168.1.3".parse().unwrap());
+    assert_eq!(
+        command_failure(route, b"RTNETLINK answers: Network is unreachable\n"),
+        UnavailableReason::Unreachable
+    );
+    assert_eq!(
+        command_failure(route, b"RTNETLINK answers: Operation not permitted\n"),
+        UnavailableReason::PermissionDenied
+    );
+    assert_eq!(
+        command_failure(
+            Query::Tailscale,
+            b"RTNETLINK answers: Network is unreachable\n"
+        ),
+        UnavailableReason::PermissionDenied
+    );
+    assert_eq!(
+        command_failure(route, b"unknown failure"),
+        UnavailableReason::PermissionDenied
+    );
     let ip = "192.168.1.3".parse().unwrap();
     assert!(
         parse_route(
@@ -134,16 +159,20 @@ async fn child_output_deadline_and_cancellation_are_bounded() {
             .args(["-c", script])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
             .unwrap()
     }
-    assert_eq!(read_child(child("while :; do printf '0123456789012345678901234567890123456789012345678901234567890123456789'; done")).await, Err(UnavailableReason::LimitExceeded));
+    assert_eq!(test_child_result(child("while :; do printf '0123456789012345678901234567890123456789012345678901234567890123456789'; done")).await, Err(UnavailableReason::LimitExceeded));
+    assert_eq!(test_child_result(child("while :; do printf '0123456789012345678901234567890123456789012345678901234567890123456789' >&2; done")).await, Err(UnavailableReason::LimitExceeded));
     // Shell builtins only: no descendant can hold stdout after child death.
     let process = child("while :; do :; done");
     let pid = process.id().unwrap();
-    assert_eq!(read_child(process).await, Err(UnavailableReason::TimedOut));
+    assert_eq!(
+        test_child_result(process).await,
+        Err(UnavailableReason::TimedOut)
+    );
     for _ in 0..100 {
         if !std::path::Path::new(&format!("/proc/{pid}")).exists() {
             return;
@@ -163,7 +192,7 @@ async fn dropping_inspection_kills_the_child_and_reaps_it() {
         .spawn()
         .unwrap();
     let pid = process.id().unwrap();
-    let future = read_child(process);
+    let future = test_child_result(process);
     let mut future = Box::pin(future);
     tokio::select! { biased; _ = &mut future => panic!("child should stall"), _ = tokio::task::yield_now() => {} }
     drop(future);

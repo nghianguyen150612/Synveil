@@ -67,18 +67,20 @@ program/flags:
 - `/usr/bin/tailscale status --json --peers=true`
 
 Executable paths and their ancestors must be root-owned, not group/world writable
-and not symlinks. Commands run as the current user with cleared environment, null
-stdin/stderr, bounded stdout, and kill-on-drop. The adapter reads sysfs interface
+and not symlinks or set-ID paths. Commands run as the current user with cleared
+environment, null stdin, bounded stdout/stderr, and kill-on-drop. Stderr is never returned or logged;
+only exact C-locale kernel no-route/link-down diagnostics can indicate an outage.
+Other nonzero exits require explicit action. The adapter reads sysfs interface
 classification evidence. It does not bind a listener, scan peers, send ping, join a
 tailnet, call `tailscale up`, alter routes/firewall/services, request elevation,
 install software, access installer journals or exchange enrollment grants.
 
 Limits: eight endpoints, 64 interfaces, 128 addresses, 256 peer records, eight
-addresses per peer, 128 KiB per command, two seconds per command/local selection
-inspection, two seconds per authenticated handshake and fifteen seconds for the
+addresses per peer, 128 KiB per output stream, one second for Tailscale status and
+two seconds for other commands/local selection inspection, two seconds per authenticated handshake and fifteen seconds for the
 complete selection. A stalled handshake is an unreachable read-only probe and
-may retry/fall back only under the explicit policy, within the total budget. Native inspection alone
-is bounded by its finite query count; callers should use the selection wrapper or
+may retry/fall back only under the explicit policy, within the total budget.
+Native inspection alone is bounded by its finite query count; callers should use the selection wrapper or
 a two-second outer timeout for preflight. A dropped/expired future kills and reaps
 the owned CLI child. There are at most two read-only handshakes per eligible
 endpoint (at most two GETs each); only `Unreachable` is retried. There is no
@@ -114,7 +116,8 @@ Tailscale CGNAT and `fd7a:115c:a1e0::/48` addresses cannot become LAN candidates
 Canonical origins break same-transport ties lexically, independent of input order.
 All supplied bindings must name the same approved server installation. Duplicate
 origins are rejected. Missing CLI, not configured, disconnected and unreachable are
-availability failures; identity/auth/expiry/permission/unsupported/inconsistent
+availability failures (including a known down physical LAN adapter);
+identity/auth/expiry/permission/unsupported/inconsistent
 failures stop selection. No policy changes an origin's approved transport,
 credential scope or TLS requirements. An overlay-only outage never selects LAN.
 

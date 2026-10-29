@@ -94,38 +94,78 @@ async fn run(query: Query) -> Result<Vec<u8>, UnavailableReason> {
         .env_clear()
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .map_err(io_reason)?;
-    read_child(child).await
+    read_child(child, query).await
 }
 
-async fn read_child(mut child: tokio::process::Child) -> Result<Vec<u8>, UnavailableReason> {
+async fn read_child(
+    mut child: tokio::process::Child,
+    query: Query,
+) -> Result<Vec<u8>, UnavailableReason> {
     let operation = async {
-        let mut bytes = Vec::new();
-        child
-            .stdout
-            .take()
-            .ok_or(UnavailableReason::Unsupported)?
-            .take((OUTPUT_LIMIT + 1) as u64)
-            .read_to_end(&mut bytes)
-            .await
-            .map_err(io_reason)?;
-        if bytes.len() > OUTPUT_LIMIT {
+        let stdout = child.stdout.take().ok_or(UnavailableReason::Unsupported)?;
+        let stderr = child.stderr.take();
+        let (bytes, errors) = tokio::try_join!(read_output(stdout), async {
+            match stderr {
+                Some(stream) => read_output(stream).await,
+                None => Ok(Vec::new()),
+            }
+        })?;
+        if bytes.len() > OUTPUT_LIMIT || errors.len() > OUTPUT_LIMIT {
             return Err(UnavailableReason::LimitExceeded);
         }
         let status = child.wait().await.map_err(io_reason)?;
         if !status.success() {
-            // CLI stderr is intentionally discarded. Exit status cannot safely
-            // distinguish daemon permissions from unsupported/broken state.
-            return Err(UnavailableReason::PermissionDenied);
+            return Err(command_failure(query, &errors));
         }
+
         Ok(bytes)
     };
-    tokio::time::timeout(INSPECTION_TIMEOUT, operation)
+    tokio::time::timeout(
+        if matches!(query, Query::Tailscale) {
+            Duration::from_secs(1)
+        } else {
+            INSPECTION_TIMEOUT
+        },
+        operation,
+    )
+    .await
+    .map_err(|_| UnavailableReason::TimedOut)?
+}
+
+async fn read_output(
+    stream: impl tokio::io::AsyncRead + Unpin,
+) -> Result<Vec<u8>, UnavailableReason> {
+    let mut output = Vec::new();
+    stream
+        .take((OUTPUT_LIMIT + 1) as u64)
+        .read_to_end(&mut output)
         .await
-        .map_err(|_| UnavailableReason::TimedOut)?
+        .map_err(io_reason)?;
+    if output.len() > OUTPUT_LIMIT {
+        return Err(UnavailableReason::LimitExceeded);
+    }
+    Ok(output)
+}
+fn command_failure(query: Query, stderr: &[u8]) -> UnavailableReason {
+    // Only exact C-locale kernel outage messages can become an availability
+    // failure. Permission, malformed and unknown diagnostics require action.
+    if matches!(query, Query::Route(_))
+        && [
+            "RTNETLINK answers: Network is unreachable",
+            "RTNETLINK answers: No route to host",
+            "RTNETLINK answers: Network is down",
+        ]
+        .iter()
+        .any(|known| stderr.trim_ascii() == known.as_bytes())
+    {
+        UnavailableReason::Unreachable
+    } else {
+        UnavailableReason::PermissionDenied
+    }
 }
 
 fn io_reason(error: std::io::Error) -> UnavailableReason {
@@ -145,7 +185,7 @@ fn trusted_program(program: &str) -> Result<(), UnavailableReason> {
             let metadata = std::fs::symlink_metadata(&path).map_err(io_reason)?;
             if metadata.file_type().is_symlink()
                 || metadata.uid() != 0
-                || metadata.mode() & 0o022 != 0
+                || metadata.mode() & 0o6022 != 0
             {
                 return Err(UnavailableReason::PermissionDenied);
             }

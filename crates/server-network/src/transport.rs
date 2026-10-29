@@ -137,18 +137,20 @@ impl LocalCapabilities {
                     return Err(UnavailableReason::UntrustedEndpoint);
                 }
                 let candidates = self.lan.as_ref().map_err(|e| *e)?;
-                if candidates
+                let matching: Vec<_> = candidates
                     .iter()
-                    .filter(|c| {
-                        c.address == route.source
-                            && c.interface_id == route.interface_id
-                            && lan_candidate(c)
-                            && same_subnet(c, address)
-                    })
-                    .count()
-                    != 1
-                {
+                    .filter(|c| c.address == route.source && c.interface_id == route.interface_id)
+                    .collect();
+                let [candidate] = matching.as_slice() else {
                     return Err(UnavailableReason::InconsistentEvidence);
+                };
+                let mut configured = (**candidate).clone();
+                configured.operational = true;
+                if !lan_candidate(&configured) || !same_subnet(&configured, address) {
+                    return Err(UnavailableReason::InconsistentEvidence);
+                }
+                if !candidate.operational {
+                    return Err(UnavailableReason::Unreachable);
                 }
             }
             Transport::Tailscale => {

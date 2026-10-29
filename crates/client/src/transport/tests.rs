@@ -171,20 +171,24 @@ async fn partial_installation_disconnected_tailnet_and_lan_only_need_no_dependen
 }
 #[tokio::test]
 async fn unavailable_lan_can_fall_back_only_under_explicit_policy() {
-    let mut s = snapshot();
-    s.routes.remove(0);
-    let d = FakeDiscovery::new(vec![s]);
-    let v = FakeVerifier::new(vec![Ok(())]);
-    assert_eq!(
-        select(&d, &v, &endpoints(), SelectionPolicy::PreferLan)
-            .await
-            .transport(),
-        Transport::Tailscale
-    );
-    assert_eq!(
-        select(&d, &v, &endpoints(), SelectionPolicy::LanOnly).await,
-        Selection::Unavailable(R::Unreachable)
-    );
+    let mut missing_route = snapshot();
+    missing_route.routes.remove(0);
+    let mut link_down = snapshot();
+    link_down.lan.as_mut().unwrap()[0].operational = false;
+    for s in [missing_route, link_down] {
+        let d = FakeDiscovery::new(vec![s]);
+        let v = FakeVerifier::new(vec![Ok(())]);
+        assert_eq!(
+            select(&d, &v, &endpoints(), SelectionPolicy::PreferLan)
+                .await
+                .transport(),
+            Transport::Tailscale
+        );
+        assert_eq!(
+            select(&d, &v, &endpoints(), SelectionPolicy::LanOnly).await,
+            Selection::Unavailable(R::Unreachable)
+        );
+    }
 }
 #[tokio::test]
 async fn security_failures_never_retry_or_downgrade() {

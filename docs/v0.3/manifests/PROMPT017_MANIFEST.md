@@ -22,6 +22,9 @@ reconciled before further implementation.
   with fixed read-only commands and no elevation or enrollment.
 - `crates/storage/src/local.rs`: syntax-only removal of a redundant Windows
   return in directory flush, preserving flags, errors and behavior for strict Clippy.
+- `crates/client/src/control.rs`: syntax-only Windows IPC lint cleanup (two
+  redundant returns and an identical-type pointer cast); named-pipe ownership,
+  ACL and rejection behavior are unchanged.
 - `crates/client/src/controller.rs`: initializer-only cleanup in the existing
   P016A generation-fence test for strict current-toolchain Clippy.
 - `crates/client/src/lib.rs`, `crates/client/Cargo.toml`, `Cargo.lock`: additive
@@ -90,7 +93,17 @@ on source `af4e425ce58804f37734289ed4ba1f7ef50f055f`: Linux job PASS;
 Windows network, transport and HTTPS tests PASS, then strict Clippy failed on the
 pre-existing redundant return at `crates/storage/src/local.rs:1637`. The redundant
 return is now a tail expression with identical operations and error behavior.
-No warning is suppressed. The final head requires its own focused run evidence.
+No warning is suppressed. Further availability cases distinguish a known down
+physical LAN adapter and exact kernel no-route diagnostics from permission or
+contradictory evidence. Both output streams are bounded; Tailscale status has a
+one-second budget within local inspection so a stalled optional CLI can be
+reported independently. The same deterministic and process-bound tests cover
+these cases. Run [40886797079](https://github.com/nghianguyen150612/Synveil/actions/runs/40886797079)
+on `e7a1352e88bf9be290a61e264066c3c1e7e19bbd` again passed Linux and Windows
+contract/HTTPS tests. Windows Clippy then exposed three existing IPC lints (two
+redundant returns and a same-type pointer cast), now cleaned up without changing
+security attributes or control behavior. The final head requires its own focused
+run evidence.
 
 The separate P036 `artifact-identity` job failed at approved publisher-keyring
 materialization (exit 2):
