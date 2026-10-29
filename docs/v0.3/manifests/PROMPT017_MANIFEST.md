@@ -20,6 +20,8 @@ reconciled before further implementation.
   endpoints, existing Synveil HTTPS/auth verifier, bounded deterministic selection.
 - `crates/client/src/transport/native.rs`: bounded Linux local metadata inspector
   with fixed read-only commands and no elevation or enrollment.
+- `crates/storage/src/local.rs`: syntax-only removal of a redundant Windows
+  return in directory flush, preserving flags, errors and behavior for strict Clippy.
 - `crates/client/src/controller.rs`: initializer-only cleanup in the existing
   P016A generation-fence test for strict current-toolchain Clippy.
 - `crates/client/src/lib.rs`, `crates/client/Cargo.toml`, `Cargo.lock`: additive
@@ -82,6 +84,19 @@ the complete selection budget before an explicitly allowed overlay fallback.
 Final endpoint binding also fences profile identity and rejects differing
 server/owner/device/library scopes in the production verifier; the complete
 171-test regression and strict Clippy commands were rerun successfully.
+
+Hosted run [40885079987](https://github.com/nghianguyen150612/Synveil/actions/runs/40885079987)
+on source `af4e425ce58804f37734289ed4ba1f7ef50f055f`: Linux job PASS;
+Windows network, transport and HTTPS tests PASS, then strict Clippy failed on the
+pre-existing redundant return at `crates/storage/src/local.rs:1637`. The redundant
+return is now a tail expression with identical operations and error behavior.
+No warning is suppressed. The final head requires its own focused run evidence.
+
+The separate P036 `artifact-identity` job failed at approved publisher-keyring
+materialization (exit 2):
+[123486494671](https://github.com/nghianguyen150612/Synveil/actions/runs/40885080143/job/123486494671).
+Its exact external-input/environment cause is unverified; raw per-job log and
+repository-variable access were denied. This gate remains blocked, not bypassed.
 
 Hosted workflow: `.github/workflows/v03-p017-transport-discovery.yml`. At commit
 time hosted results are pending, not claimed as passing. Exact PR source/merge

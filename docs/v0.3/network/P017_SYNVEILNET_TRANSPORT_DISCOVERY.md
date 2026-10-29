@@ -147,9 +147,9 @@ qualified tailnet was available, so real-world Tailscale reachability is unverif
 
 The v0.2 wire API, Android/iOS code, sessions, profile storage, sync/storage
 operations, approval workflows, host permissions and Wizard production paths are
-unchanged. Tailscale is optional; LAN-only selection works without it. The only
-shared production refactor is interface classification with existing behavior
-preserved. No dependency on Tailscale software or a Tailscale SDK is added.
+unchanged. Tailscale is optional; LAN-only selection works without it. Shared interface classification preserves existing Host behavior. A redundant
+Windows return in the storage directory-flush function becomes a tail expression
+solely to satisfy strict Clippy; its flags, operations and error behavior are unchanged. No dependency on Tailscale software or a Tailscale SDK is added.
 
 P004-D02/D03/D11/D14 remain unresolved. P028 Windows native acceptance, P036
 publisher/signing and independent security review remain open obligations. This
