@@ -10,8 +10,10 @@ and observed generation 3.
 - Repository: `nghianguyen150612/Synveil`
 - Branch: `fix/v03-p016-pg17-desktop-controller-lifecycle`
 - Starting baseline: `7d1d402b40845054b8c819f283ffc88e0dcc9170`
+- Qualified implementation candidate: `e3a7f9cbbec693f46ac9ceb5deb54dd78cf3fa54`
 - Original failure run: [Actions run 40808168068](https://github.com/nghianguyen150612/Synveil/actions/runs/40808168068)
 - Original failing job: `123232324575`, PostgreSQL 17 live suites
+- Pull request: [#176](https://github.com/nghianguyen150612/Synveil/pull/176), open against `develop/v0.3`
 
 ## Root cause and correction
 
@@ -46,25 +48,27 @@ The later deterministic trace provided the relevant transition evidence.
 
 | Check | Result |
 | --- | --- |
-| Deterministic `live_pg17_process_authentication_and_graceful_shutdown` | 4 passes: 11.93s, 12.70s, 16.60s, 16.67s; every trace shows attempt 1 success, attempt 2 status handshake failure, attempt 3 success |
-| `generation_fence_rejects_old_response_and_event` | 1 passed |
+| Deterministic `live_pg17_process_authentication_and_graceful_shutdown` | 5 passes: 11.93s, 12.70s, 16.60s, 16.67s, 16.70s; every trace shows attempt 1 success, attempt 2 status handshake failure, attempt 3 success |
+| `generation_fence_rejects_old_response_and_event` | 1 passed; fresh generation-2 snapshot remained unchanged after a generation-1 response |
 | P005 `authorization_postgres` | 1 passed |
 | P006 API security tests | 2 passed |
 | P006 content-service download test | 1 passed |
 | P015 PostgreSQL ObjectStore authorization | 1 passed |
-| Rust formatting, Clippy, docs validation, diff check | Pending final candidate run |
-| PostgreSQL 17 scheduled-maintenance GitHub Actions workflow | Pending exact candidate |
+| Rust formatting, API all-target Clippy with `-D warnings`, docs validation, `git diff --check` | Passed |
+| PostgreSQL 17 scheduled-maintenance workflow, push | [Run 40867335602](https://github.com/nghianguyen150612/Synveil/actions/runs/40867335602), PASS on candidate `e3a7f9c`; 101-step job concluded success |
+| PostgreSQL 17 scheduled-maintenance workflow, pull request | [Run 40867342621](https://github.com/nghianguyen150612/Synveil/actions/runs/40867342621), PASS on candidate `e3a7f9c`; targeted desktop lifecycle step 22 concluded success |
 
 Local run logs from the investigation are `/tmp/p016a-live-2.log`,
 `/tmp/p016a-repeat-1.log`, `/tmp/p016a-repeat-2.log`,
 `/tmp/p016a-repeat-3.log`, `/tmp/p016a-generation-fence.log`,
 `/tmp/p016a-p005.log`, `/tmp/p016a-p006.log`,
-`/tmp/p016a-p006-download.log`, and `/tmp/p016a-p015.log`.
+`/tmp/p016a-p006-download.log`, `/tmp/p016a-p015.log`,
+`/tmp/p016a-final-live.log`, and `/tmp/p016a-generation-fence-final.log`.
 
 An early instrumented draft timed out because the pre-existing generation wait
 helper imposed a one-second timeout on each watch update, shorter than the
 test's five-second reconnect delay. The helper now waits for a generation
-change under one bounded 30-second scenario timeout. The final four runs above
+change under one bounded 30-second scenario timeout. The final five runs above
 used that corrected synchronization. The earlier failed helper run is retained
 at `/tmp/p016a-live-1.log` and is not counted as a product or controller
 failure.
@@ -77,6 +81,7 @@ review exception, or overall production release readiness.
 
 ## Delivery
 
-Final candidate SHA, workflow run IDs and conclusions, and pull request details
-will be recorded after the exact candidate has completed CI. Do not merge
+Candidate `e3a7f9cbbec693f46ac9ceb5deb54dd78cf3fa54` is committed on the existing
+P016 branch and PR #176 is open against `develop/v0.3`. Both exact-head
+PostgreSQL 17 workflow runs recorded above concluded PASS. Do not merge
 automatically or start P017.

@@ -32,7 +32,7 @@ it never records endpoint paths or credentials and is compiled only with the
 ## Reproduction evidence
 
 PostgreSQL 17.11 was used in a disposable local container. The targeted test
-was run repeatedly with one test thread. Each passing deterministic trace had
+was run five times with one test thread. Each passing deterministic trace had
 this transition sequence:
 
 ```text
