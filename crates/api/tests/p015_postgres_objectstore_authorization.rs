@@ -631,7 +631,7 @@ async fn assert_downloads(
     owner: &Browser,
     file: &FileFixture,
 ) -> Vec<String> {
-    let paths = vec![
+    let paths = [
         format!("/api/v1/nodes/{}/content", file.node),
         format!("/api/v1/versions/{}/content", file.versions[0]),
         format!("/api/v1/versions/{}/content", file.versions[1]),
