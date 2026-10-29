@@ -18,6 +18,9 @@ serde_json.workspace = true
 quick-xml.workspace = true
 synveil-client-sync.workspace = true
 synveil-core.workspace = true
+synveil-server-network.workspace = true
+url.workspace = true
+time.workspace = true
 synveil-platform.workspace = true
 tokio = { workspace = true, features = ["process"] }
 tracing.workspace = true

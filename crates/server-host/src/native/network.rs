@@ -53,43 +53,14 @@ pub fn candidates() -> Result<Vec<NetworkCandidate>> {
             continue;
         }
         let link_kind = entry["linkinfo"]["info_kind"].as_str().unwrap_or("");
-        let kind = if ["bridge", "veth", "macvlan", "ipvlan"].contains(&link_kind)
-            || Path::new("/sys/class/net")
-                .join(name)
-                .join("bridge")
-                .is_dir()
-        {
-            InterfaceKind::ContainerBridge
-        } else if ["tun", "wireguard", "vxlan", "gre", "gretap", "sit", "ipip"].contains(&link_kind)
-        {
-            InterfaceKind::Tunnel
-        } else if Path::new("/sys/class/net")
-            .join(name)
-            .join("wireless")
-            .is_dir()
-        {
-            InterfaceKind::Wifi
-        } else if name.starts_with("docker")
-            || name.starts_with("br-")
-            || name.starts_with("veth")
-            || name.starts_with("virbr")
-        {
-            InterfaceKind::ContainerBridge
-        } else if name.starts_with("tun")
-            || name.starts_with("tap")
-            || name.starts_with("wg")
-            || name.starts_with("tailscale")
-        {
-            InterfaceKind::Tunnel
-        } else if Path::new("/sys/class/net")
-            .join(name)
-            .join("device")
-            .exists()
-        {
-            InterfaceKind::Ethernet
-        } else {
-            InterfaceKind::Other
-        };
+        let base = Path::new("/sys/class/net").join(name);
+        let kind = synveil_server_network::classify_interface(
+            name,
+            link_kind,
+            base.join("bridge").is_dir(),
+            base.join("wireless").is_dir(),
+            base.join("device").exists(),
+        );
         if let Some(addresses) = entry["addr_info"].as_array() {
             for address in addresses {
                 if let (Some(address), Some(prefix)) = (

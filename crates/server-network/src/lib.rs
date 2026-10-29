@@ -3,6 +3,8 @@
 //! UI-neutral, side-effect-free planning for managed server reachability.
 //! Platform adapters consume a confirmed plan only after re-inspection.
 
+pub mod transport;
+
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr};
 use synveil_server_config::{FirewallManager, NetworkIntegrationId, ReachabilityMode};
@@ -18,6 +20,39 @@ pub enum InterfaceKind {
     ContainerBridge,
     Tunnel,
     Other,
+}
+
+/// Shared Linux adapter classification. Names alone never make a virtual
+/// adapter a physical LAN interface; callers supply observed sysfs evidence.
+#[must_use]
+pub fn classify_interface(
+    name: &str,
+    link_kind: &str,
+    bridge: bool,
+    wireless: bool,
+    physical: bool,
+) -> InterfaceKind {
+    if ["bridge", "veth", "macvlan", "ipvlan"].contains(&link_kind) || bridge {
+        InterfaceKind::ContainerBridge
+    } else if ["tun", "wireguard", "vxlan", "gre", "gretap", "sit", "ipip"].contains(&link_kind) {
+        InterfaceKind::Tunnel
+    } else if wireless {
+        InterfaceKind::Wifi
+    } else if ["docker", "br-", "veth", "virbr"]
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+    {
+        InterfaceKind::ContainerBridge
+    } else if ["tun", "tap", "wg", "tailscale"]
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+    {
+        InterfaceKind::Tunnel
+    } else if physical {
+        InterfaceKind::Ethernet
+    } else {
+        InterfaceKind::Other
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

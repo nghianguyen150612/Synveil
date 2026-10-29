@@ -1,0 +1,67 @@
+name: v0.3 P017 transport discovery
+
+on:
+  pull_request:
+    branches: [develop/v0.3]
+    paths:
+      - 'crates/client/**'
+      - 'crates/client-sync/**'
+      - 'crates/server-network/**'
+      - 'crates/server-host/**'
+      - 'crates/server-config/**'
+      - 'crates/core/src/host_trust.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'docs/v0.3/network/**'
+      - 'docs/v0.3/manifests/PROMPT017_MANIFEST.md'
+      - '.github/workflows/v03-p017-transport-discovery.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: P017 contracts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux build dependencies (no Tailscale installation)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config ripgrep iproute2
+      - name: Exact source evidence
+        run: git rev-parse HEAD
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      - name: Typed network contracts and existing managed-network regression
+        run: cargo test -p synveil-server-network -p synveil-server-config --locked
+      - name: Transport contracts and native supported/unsupported boundary
+        env:
+          SYNVEIL_P017_REQUIRE_IP: ${{ runner.os == 'Linux' && '1' || '' }}
+        run: cargo test -p synveil-client --lib transport:: --locked
+      - name: Existing HTTPS and authenticated-handshake regressions
+        run: cargo test -p synveil-client-sync --lib http_remote::tests:: --locked
+      - name: Clippy
+        run: cargo clippy -p synveil-client -p synveil-server-network -p synveil-server-host --all-targets --locked -- -D warnings
+      - name: Existing client and Host regressions
+        if: runner.os == 'Linux'
+        run: cargo test -p synveil-client -p synveil-server-host --lib --locked
+      - name: Documentation validation
+        if: runner.os == 'Linux'
+        run: bash scripts/validate-docs.sh
+      - name: Diff whitespace
+        run: git diff --check

@@ -3561,15 +3561,17 @@ mod tests {
 
     #[test]
     fn generation_fence_rejects_old_response_and_event() {
-        let mut current_snapshot = DesktopControllerSnapshot::default();
-        current_snapshot.connection_state = DesktopControllerConnectionState::Connected;
-        current_snapshot.process = Some(DesktopControllerProcessStatus {
-            state: DesktopProcessStatus::Stopped,
-            control_ready: false,
-        });
-        current_snapshot.revision = 7;
-        current_snapshot.freshness = DesktopControllerFreshness::Fresh;
-        current_snapshot.connection_generation = 2;
+        let current_snapshot = DesktopControllerSnapshot {
+            connection_state: DesktopControllerConnectionState::Connected,
+            process: Some(DesktopControllerProcessStatus {
+                state: DesktopProcessStatus::Stopped,
+                control_ready: false,
+            }),
+            revision: 7,
+            freshness: DesktopControllerFreshness::Fresh,
+            connection_generation: 2,
+            ..DesktopControllerSnapshot::default()
+        };
         let (snapshot, _) = watch::channel(current_snapshot.clone());
         let inner = DesktopControllerInner {
             config: DesktopControllerConfig::for_endpoint(DesktopControlEndpoint::NamedPipe {
