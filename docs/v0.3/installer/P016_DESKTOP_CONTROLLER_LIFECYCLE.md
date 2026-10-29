@@ -31,6 +31,20 @@ it never records endpoint paths or credentials and is compiled only with the
 
 ## Reproduction evidence
 
+The actual ignored test is
+`live_pg17_process_authentication_and_graceful_shutdown` in
+`crates/api/tests/desktop_process_postgres.rs`. It is Linux-only and requires
+`SYNVEIL_TEST_DATABASE_URL` to point to a fresh, disposable PostgreSQL 17
+database. The bounded reproduction command was:
+
+```bash
+cargo test -p synveil-api \
+  --test desktop_process_postgres \
+  --locked \
+  live_pg17_process_authentication_and_graceful_shutdown \
+  -- --ignored --test-threads=1 --nocapture
+```
+
 PostgreSQL 17.11 was used in a disposable local container. The targeted test
 was run five times with one test thread. Each passing deterministic trace had
 this transition sequence:

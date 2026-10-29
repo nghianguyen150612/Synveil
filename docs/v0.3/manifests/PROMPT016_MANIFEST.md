@@ -55,8 +55,8 @@ The later deterministic trace provided the relevant transition evidence.
 | P006 content-service download test | 1 passed |
 | P015 PostgreSQL ObjectStore authorization | 1 passed |
 | Rust formatting, API all-target Clippy with `-D warnings`, docs validation, `git diff --check` | Passed |
-| PostgreSQL 17 scheduled-maintenance workflow, push | [Run 40867335602](https://github.com/nghianguyen150612/Synveil/actions/runs/40867335602), PASS on candidate `e3a7f9c`; 101-step job concluded success |
-| PostgreSQL 17 scheduled-maintenance workflow, pull request | [Run 40867342621](https://github.com/nghianguyen150612/Synveil/actions/runs/40867342621), PASS on candidate `e3a7f9c`; targeted desktop lifecycle step 22 concluded success |
+| PostgreSQL 17 scheduled-maintenance workflow, push | [Run 40867335602](https://github.com/nghianguyen150612/Synveil/actions/runs/40867335602), PASS on candidate `e3a7f9c`; 53 job steps, 52 succeeded and only post-failure diagnostics was skipped after success |
+| PostgreSQL 17 scheduled-maintenance workflow, pull request | [Run 40867342621](https://github.com/nghianguyen150612/Synveil/actions/runs/40867342621), PASS on candidate `e3a7f9c`; 53 job steps, 52 succeeded and only post-failure diagnostics was skipped after success; targeted desktop lifecycle step 22 succeeded |
 
 Local run logs from the investigation are `/tmp/p016a-live-2.log`,
 `/tmp/p016a-repeat-1.log`, `/tmp/p016a-repeat-2.log`,
