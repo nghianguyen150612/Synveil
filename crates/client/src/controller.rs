@@ -996,6 +996,56 @@ pub struct DesktopController {
     inner: Arc<DesktopControllerInner>,
 }
 
+/// Bounded, credential-free lifecycle observations exposed only to integration
+/// tests built with `test-support`.
+#[cfg(feature = "test-support")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DesktopControllerTestTraceEvent {
+    ConnectionAttemptStarted {
+        generation: u64,
+    },
+    ConnectionAttemptFailed {
+        generation: u64,
+        error: DesktopControllerErrorKind,
+    },
+    ConnectionAttemptCancelled {
+        generation: u64,
+    },
+    ConnectionEstablished {
+        generation: u64,
+    },
+    IpcHandshakeSucceeded {
+        generation: u64,
+        channel: DesktopControllerTestChannel,
+    },
+    IpcHandshakeFailed {
+        generation: u64,
+        channel: DesktopControllerTestChannel,
+        error: DesktopControllerErrorKind,
+    },
+    FreshSnapshotPublished {
+        generation: u64,
+        revision: u64,
+    },
+    StalePublicationRejected {
+        generation: u64,
+    },
+    ConnectionEnded {
+        generation: u64,
+    },
+}
+
+/// Logical IPC channel within the single controller relationship.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DesktopControllerTestChannel {
+    Status,
+    Command,
+    Events,
+}
+
+#[cfg(feature = "test-support")]
+const DESKTOP_CONTROLLER_TEST_TRACE_CAPACITY: usize = 64;
+
 impl fmt::Debug for DesktopController {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -1016,6 +1066,8 @@ struct DesktopControllerInner {
     attention_in_flight: Arc<AtomicBool>,
     refresh_requested: AtomicBool,
     refresh_notify: Notify,
+    #[cfg(feature = "test-support")]
+    test_trace: watch::Sender<Vec<DesktopControllerTestTraceEvent>>,
 }
 
 struct ControllerLifecycle {
@@ -1031,6 +1083,8 @@ impl DesktopController {
     #[must_use]
     pub fn new(config: DesktopControllerConfig) -> Self {
         let (snapshot, _) = watch::channel(DesktopControllerSnapshot::default());
+        #[cfg(feature = "test-support")]
+        let (test_trace, _) = watch::channel(Vec::new());
         Self {
             inner: Arc::new(DesktopControllerInner {
                 config,
@@ -1048,6 +1102,8 @@ impl DesktopController {
                 attention_in_flight: Arc::new(AtomicBool::new(false)),
                 refresh_requested: AtomicBool::new(false),
                 refresh_notify: Notify::new(),
+                #[cfg(feature = "test-support")]
+                test_trace,
             }),
         }
     }
@@ -1143,6 +1199,17 @@ impl DesktopController {
     #[must_use]
     pub fn subscribe_state(&self) -> watch::Receiver<DesktopControllerSnapshot> {
         self.subscribe()
+    }
+
+    /// Subscribe to bounded lifecycle events for deterministic integration
+    /// tests. Events contain only generation numbers and typed outcomes.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn subscribe_test_connection_trace(
+        &self,
+    ) -> watch::Receiver<Vec<DesktopControllerTestTraceEvent>> {
+        self.inner.test_trace.subscribe()
     }
 
     /// Ask the running process to schedule a library sync through Prompt 96.
@@ -1433,6 +1500,16 @@ impl Drop for DesktopController {
 }
 
 impl DesktopControllerInner {
+    #[cfg(feature = "test-support")]
+    fn record_test_trace(&self, event: DesktopControllerTestTraceEvent) {
+        let mut events = self.test_trace.borrow().clone();
+        if events.len() == DESKTOP_CONTROLLER_TEST_TRACE_CAPACITY {
+            events.remove(0);
+        }
+        events.push(event);
+        self.test_trace.send_replace(events);
+    }
+
     fn snapshot(&self) -> DesktopControllerSnapshot {
         self.snapshot.borrow().clone()
     }
@@ -1847,6 +1924,10 @@ async fn run_controller(
 
         connection_generation = connection_generation.saturating_add(1);
         let generation = connection_generation;
+        #[cfg(feature = "test-support")]
+        inner.record_test_trace(DesktopControllerTestTraceEvent::ConnectionAttemptStarted {
+            generation,
+        });
         inner.activate_generation(generation);
         let connection = tokio::select! {
             result = connect_and_initialize(
@@ -1856,6 +1937,10 @@ async fn run_controller(
                 generation,
             ) => result,
             _ = &mut stop_rx => {
+                #[cfg(feature = "test-support")]
+                inner.record_test_trace(DesktopControllerTestTraceEvent::ConnectionAttemptCancelled {
+                    generation,
+                });
                 drain_commands(&mut command_rx, DesktopControllerCommandResult::Stopped);
                 inner.mark_stopped();
                 return;
@@ -1865,7 +1950,15 @@ async fn run_controller(
         match connection {
             Ok((mut active, data)) => {
                 backoff.reset();
+                #[cfg(feature = "test-support")]
+                inner.record_test_trace(DesktopControllerTestTraceEvent::ConnectionEstablished {
+                    generation,
+                });
                 if !inner.publish_fresh(generation, data) {
+                    #[cfg(feature = "test-support")]
+                    inner.record_test_trace(
+                        DesktopControllerTestTraceEvent::StalePublicationRejected { generation },
+                    );
                     active.close_event_task().await;
                     drain_commands(
                         &mut command_rx,
@@ -1874,14 +1967,27 @@ async fn run_controller(
                     first_attempt = false;
                     continue;
                 }
+                #[cfg(feature = "test-support")]
+                inner.record_test_trace(DesktopControllerTestTraceEvent::FreshSnapshotPublished {
+                    generation,
+                    revision: inner.snapshot().revision,
+                });
 
                 match run_active(&inner, &mut active, timing, &mut stop_rx, &mut command_rx).await {
                     ActiveExit::StopRequested => {
+                        #[cfg(feature = "test-support")]
+                        inner.record_test_trace(DesktopControllerTestTraceEvent::ConnectionEnded {
+                            generation,
+                        });
                         drain_commands(&mut command_rx, DesktopControllerCommandResult::Stopped);
                         inner.mark_stopped();
                         return;
                     }
                     ActiveExit::ProcessStopped => {
+                        #[cfg(feature = "test-support")]
+                        inner.record_test_trace(DesktopControllerTestTraceEvent::ConnectionEnded {
+                            generation,
+                        });
                         drain_commands(
                             &mut command_rx,
                             DesktopControllerCommandResult::AlreadyUnavailable,
@@ -1890,6 +1996,10 @@ async fn run_controller(
                         return;
                     }
                     ActiveExit::GenerationSuperseded => {
+                        #[cfg(feature = "test-support")]
+                        inner.record_test_trace(DesktopControllerTestTraceEvent::ConnectionEnded {
+                            generation,
+                        });
                         drain_commands(
                             &mut command_rx,
                             DesktopControllerCommandResult::Disconnected,
@@ -1897,6 +2007,10 @@ async fn run_controller(
                         first_attempt = false;
                     }
                     ActiveExit::Reconnect(error) => {
+                        #[cfg(feature = "test-support")]
+                        inner.record_test_trace(DesktopControllerTestTraceEvent::ConnectionEnded {
+                            generation,
+                        });
                         drain_commands(
                             &mut command_rx,
                             DesktopControllerCommandResult::Disconnected,
@@ -1910,6 +2024,10 @@ async fn run_controller(
                         }
                     }
                     ActiveExit::Terminal(state, error) => {
+                        #[cfg(feature = "test-support")]
+                        inner.record_test_trace(DesktopControllerTestTraceEvent::ConnectionEnded {
+                            generation,
+                        });
                         drain_commands(
                             &mut command_rx,
                             DesktopControllerCommandResult::Unavailable,
@@ -1923,6 +2041,13 @@ async fn run_controller(
                 let failure = classify_connection_failure(error);
                 match failure {
                     ConnectionFailure::Retry(error) => {
+                        #[cfg(feature = "test-support")]
+                        inner.record_test_trace(
+                            DesktopControllerTestTraceEvent::ConnectionAttemptFailed {
+                                generation,
+                                error,
+                            },
+                        );
                         drain_commands(
                             &mut command_rx,
                             DesktopControllerCommandResult::Disconnected,
@@ -1936,6 +2061,13 @@ async fn run_controller(
                         }
                     }
                     ConnectionFailure::Terminal(state, error) => {
+                        #[cfg(feature = "test-support")]
+                        inner.record_test_trace(
+                            DesktopControllerTestTraceEvent::ConnectionAttemptFailed {
+                                generation,
+                                error,
+                            },
+                        );
                         drain_commands(
                             &mut command_rx,
                             DesktopControllerCommandResult::Unavailable,
@@ -1964,9 +2096,30 @@ async fn connect_and_initialize(
     // logical controller relationship.  Each Prompt 96 connection performs
     // its own v1 handshake; no wire session is persisted or reused across
     // process restarts.
-    let mut status = connect_client(endpoint.clone(), timing.operation_timeout()).await?;
-    let command = connect_client(endpoint.clone(), timing.operation_timeout()).await?;
-    let event_client = connect_client(endpoint, timing.operation_timeout()).await?;
+    let mut status = connect_client(
+        inner,
+        generation,
+        DesktopControllerTestChannel::Status,
+        endpoint.clone(),
+        timing.operation_timeout(),
+    )
+    .await?;
+    let command = connect_client(
+        inner,
+        generation,
+        DesktopControllerTestChannel::Command,
+        endpoint.clone(),
+        timing.operation_timeout(),
+    )
+    .await?;
+    let event_client = connect_client(
+        inner,
+        generation,
+        DesktopControllerTestChannel::Events,
+        endpoint,
+        timing.operation_timeout(),
+    )
+    .await?;
     let events = subscribe_events(event_client, timing.operation_timeout()).await?;
 
     let data = fetch_snapshot(&mut status, timing.operation_timeout()).await?;
@@ -1979,12 +2132,32 @@ async fn connect_and_initialize(
 }
 
 async fn connect_client(
+    inner: &Arc<DesktopControllerInner>,
+    generation: u64,
+    channel: DesktopControllerTestChannel,
     endpoint: DesktopControlEndpoint,
     timeout: Duration,
 ) -> Result<DesktopControlClient, ControllerIoError> {
-    bounded(timeout, DesktopControlClient::connect(endpoint))
+    let result = bounded(timeout, DesktopControlClient::connect(endpoint))
         .await
-        .map_err(ControllerIoError::Client)
+        .map_err(ControllerIoError::Client);
+    #[cfg(feature = "test-support")]
+    match &result {
+        Ok(_) => inner.record_test_trace(DesktopControllerTestTraceEvent::IpcHandshakeSucceeded {
+            generation,
+            channel,
+        }),
+        Err(ControllerIoError::Client(error)) => {
+            inner.record_test_trace(DesktopControllerTestTraceEvent::IpcHandshakeFailed {
+                generation,
+                channel,
+                error: classify_connect_error(*error),
+            });
+        }
+        Err(ControllerIoError::Malformed) => {}
+    }
+    let _ = (inner, generation, channel);
+    result
 }
 
 async fn subscribe_events(
@@ -3388,7 +3561,16 @@ mod tests {
 
     #[test]
     fn generation_fence_rejects_old_response_and_event() {
-        let (snapshot, _) = watch::channel(DesktopControllerSnapshot::default());
+        let mut current_snapshot = DesktopControllerSnapshot::default();
+        current_snapshot.connection_state = DesktopControllerConnectionState::Connected;
+        current_snapshot.process = Some(DesktopControllerProcessStatus {
+            state: DesktopProcessStatus::Stopped,
+            control_ready: false,
+        });
+        current_snapshot.revision = 7;
+        current_snapshot.freshness = DesktopControllerFreshness::Fresh;
+        current_snapshot.connection_generation = 2;
+        let (snapshot, _) = watch::channel(current_snapshot.clone());
         let inner = DesktopControllerInner {
             config: DesktopControllerConfig::for_endpoint(DesktopControlEndpoint::NamedPipe {
                 name: "test-controller".to_owned(),
@@ -3407,6 +3589,8 @@ mod tests {
             attention_in_flight: Arc::new(AtomicBool::new(false)),
             refresh_requested: AtomicBool::new(false),
             refresh_notify: Notify::new(),
+            #[cfg(feature = "test-support")]
+            test_trace: watch::channel(Vec::new()).0,
         };
         assert!(!inner.is_current_generation(1));
         assert!(inner.is_current_generation(2));
@@ -3427,7 +3611,11 @@ mod tests {
                 sync_control_state: DesktopControllerSyncControlState::Running,
             }
         ));
-        assert_eq!(inner.snapshot().revision, 0);
+        assert_eq!(
+            inner.snapshot(),
+            current_snapshot,
+            "an old response must not overwrite a newer fresh snapshot"
+        );
     }
 
     #[test]
@@ -3737,6 +3925,8 @@ mod tests {
             attention_in_flight: Arc::new(AtomicBool::new(false)),
             refresh_requested: AtomicBool::new(false),
             refresh_notify: Notify::new(),
+            #[cfg(feature = "test-support")]
+            test_trace: watch::channel(Vec::new()).0,
         };
         let signal = EventSignal::new();
         for _ in 0..10_000 {
@@ -4002,6 +4192,8 @@ mod tests {
             attention_in_flight: Arc::new(AtomicBool::new(false)),
             refresh_requested: AtomicBool::new(false),
             refresh_notify: Notify::new(),
+            #[cfg(feature = "test-support")]
+            test_trace: watch::channel(Vec::new()).0,
         };
         assert!(inner.publish_fresh(
             1,
