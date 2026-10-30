@@ -11,7 +11,7 @@ Status: **PROVISIONAL / ROADMAP RECONCILIATION BLOCKED**. Source contracts and f
 | Base state | P019 PR #179 merged; both remote branch refs resolved to the base SHA at task start |
 | P020 implementation source SHA | `6981e466cd57fdd13d68100ac6fc9d427c44be30` |
 | Authoritative P001–P060 roadmap | `Synveil-v0.3-Context-Roadmap-P001-P060.md` not present in repository/workspace; recorded in P002/P003/P019; reconciliation remains a blocker |
-| Draft PR | To be recorded after publication; never auto-merge |
+| Draft PR | [#180 — P020 pairing trust contracts](https://github.com/nghianguyen150612/Synveil/pull/180), draft against `develop/v0.3`; never auto-merge |
 
 ## Audit and changed scope
 
@@ -45,4 +45,4 @@ Local environment: Ubuntu Linux; Rust/Cargo `1.99.1`; exact tested source is the
 | `bash scripts/validate-docs.sh` | PASS: all 24 documentation validation groups |
 | Workflow YAML parse and `git diff --check` | PASS |
 
-The local container lacked system DBus development metadata. These Linux checks were completed with an unprivileged temporary sysroot for the same `libdbus-1-dev` dependency installed by the Ubuntu CI job. No production database integration test, physical Android/iOS ceremony, real TLS interception, Windows-native acceptance, Windows Clippy qualification, configured real-tailnet qualification, or independent security review was performed. Hosted Linux/Windows P020 workflow results must be recorded after PR creation; queued checks are not a pass. Preserve all named P004/P028/P036 and roadmap blockers regardless of green CI.
+The local container lacked system DBus development metadata. These Linux checks were completed with an unprivileged temporary sysroot for the same `libdbus-1-dev` dependency installed by the Ubuntu CI job. No production database integration test, physical Android/iOS ceremony, real TLS interception, Windows-native acceptance, Windows Clippy qualification, configured real-tailnet qualification, or independent security review was performed. The authoritative hosted Linux/Windows P020 status is visible on [draft PR #180](https://github.com/nghianguyen150612/Synveil/pull/180) and will be reported from its final head. Preserve all named P004/P028/P036 and roadmap blockers regardless of green CI.
