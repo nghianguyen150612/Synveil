@@ -2,6 +2,7 @@
 use super::{tests::*, *};
 use UnavailableReason as R;
 use serde_json::json;
+use sqlx::{Connection, sqlite::SqliteConnectOptions};
 use std::sync::{
     Mutex,
     atomic::{AtomicUsize, Ordering},
@@ -271,11 +272,26 @@ impl HttpsFixture {
     }
 }
 
-fn persisted_files(dir: &std::path::Path) -> BTreeMap<std::path::PathBuf, Vec<u8>> {
+// SQLite owns its live database, WAL, SHM, and writer lock. Reading those
+// bytes directly races platform locks on Windows and is not a valid logical
+// database snapshot. The persistent SQLite invariant is checked separately
+// through a stable read-only connection's PRAGMA data_version.
+fn persisted_non_sqlite_files(dir: &std::path::Path) -> BTreeMap<std::path::PathBuf, Vec<u8>> {
     std::fs::read_dir(dir)
         .unwrap()
         .map(|entry| entry.unwrap().path())
-        .filter(|path| !path.to_string_lossy().ends_with("-shm"))
+        .filter(|path| {
+            !matches!(
+                path.file_name().and_then(|name| name.to_str()),
+                Some(
+                    "state.db"
+                        | "state.db-wal"
+                        | "state.db-shm"
+                        | "state.db-journal"
+                        | "state.sqlite3.writer.lock"
+                )
+            )
+        })
         .map(|path| {
             let bytes = std::fs::read(&path).unwrap();
             (path, bytes)
@@ -336,7 +352,22 @@ async fn p018_https_identity_auth_and_no_cached_authorization() {
         .await
         .unwrap();
     let saved = secrets.0.lock().unwrap().clone();
-    let persisted = persisted_files(dir.path());
+    let persisted = persisted_non_sqlite_files(dir.path());
+    // A separate, long-lived read-only SQLite connection observes commits from
+    // LocalStateStore's single writer connection without opening locked files.
+    // SQLite data_version changes on other-connection commits; selection must
+    // perform no durable SQLite writes.
+    let mut db_observer = sqlx::SqliteConnection::connect_with(
+        &SqliteConnectOptions::new()
+            .filename(state.database_path())
+            .read_only(true),
+    )
+    .await
+    .unwrap();
+    let data_version_before: i64 = sqlx::query_scalar("PRAGMA data_version")
+        .fetch_one(&mut db_observer)
+        .await
+        .unwrap();
     let routes = std::fs::read("/proc/net/route").ok();
     for (status, reason) in [(401, R::AuthenticationRequired), (403, R::AccessRevoked)] {
         a.status.store(status, Ordering::SeqCst);
@@ -372,9 +403,17 @@ async fn p018_https_identity_auth_and_no_cached_authorization() {
             .transport(),
         Transport::Lan
     );
+    assert_eq!(
+        data_version_before,
+        sqlx::query_scalar::<_, i64>("PRAGMA data_version")
+            .fetch_one(&mut db_observer)
+            .await
+            .unwrap(),
+        "selection committed an unexpected SQLite state change"
+    );
     assert!(
-        persisted == persisted_files(dir.path()),
-        "persisted state changed during selection"
+        persisted == persisted_non_sqlite_files(dir.path()),
+        "non-SQLite persisted files changed during selection"
     );
     assert_eq!(routes, std::fs::read("/proc/net/route").ok());
     assert_eq!(
