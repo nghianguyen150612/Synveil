@@ -13,6 +13,7 @@ mod launch;
 mod lifecycle;
 mod network;
 mod process;
+pub mod transport;
 
 pub use config::{
     DEFAULT_DESKTOP_CLIENT_CONFIG_FILE, DEFAULT_DESKTOP_CLIENT_SYNC_STATE_FILE,

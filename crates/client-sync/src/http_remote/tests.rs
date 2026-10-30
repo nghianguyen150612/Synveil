@@ -1597,3 +1597,121 @@ async fn production_tls_rejects_ephemeral_self_signed_certificate_before_http_au
             .unwrap()
     );
 }
+
+#[tokio::test]
+async fn p017_authenticated_handshake_requires_approved_server_and_network_identity() {
+    use synveil_core::host_trust::{HostTrust, ManagedHostTrust};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    for mismatch in [None, Some("server"), Some("network")] {
+        let ca_key = rcgen::KeyPair::generate().unwrap();
+        let mut ca_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        ca_params.key_usages = vec![
+            rcgen::KeyUsagePurpose::KeyCertSign,
+            rcgen::KeyUsagePurpose::CrlSign,
+        ];
+        let ca = ca_params.self_signed(&ca_key).unwrap();
+        let key = rcgen::KeyPair::generate().unwrap();
+        let cert = rcgen::CertificateParams::new(vec!["127.0.0.1".into()])
+            .unwrap()
+            .signed_by(&key, &ca, &ca_key)
+            .unwrap();
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![cert.der().clone()],
+                rustls::pki_types::PrivatePkcs8KeyDer::from(key.serialize_der()).into(),
+            )
+            .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let origin = format!("https://{address}/");
+        let server_id = uuid::Uuid::now_v7().to_string();
+        let network_id = uuid::Uuid::now_v7().to_string();
+        let trust = ManagedHostTrust::from_ca(
+            server_id.clone(),
+            network_id.clone(),
+            origin.clone(),
+            ca.pem(),
+            1,
+        )
+        .unwrap();
+        let profile = ServerProfile::new(
+            CanonicalBaseUrl::parse(&origin).unwrap(),
+            "P017 approved Host",
+        )
+        .unwrap()
+        .with_managed_host_trust(HostTrust::Managed(trust))
+        .unwrap();
+        let task = tokio::spawn(async move {
+            let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+            let mut requests = Vec::new();
+            for step in 0..if mismatch.is_none() { 2 } else { 1 } {
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut socket = acceptor.accept(socket).await.unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    assert!(request.len() < 16 * 1024);
+                    request.push(socket.read_u8().await.unwrap());
+                }
+                requests.push(String::from_utf8(request).unwrap());
+                let body = if step == 0 {
+                    json!({"status":"ready"})
+                } else {
+                    checkpoint(0)
+                }
+                .to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nx-synveil-server-installation: {}\r\nx-synveil-network-integration: {}\r\n\r\n{body}",
+                    body.len(),
+                    if mismatch == Some("server") {
+                        "spoofed-server"
+                    } else {
+                        &server_id
+                    },
+                    if mismatch == Some("network") {
+                        "spoofed-network"
+                    } else {
+                        &network_id
+                    }
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+                socket.shutdown().await.unwrap();
+            }
+            requests
+        });
+        let remote = HttpSyncRemote::new(
+            profile.clone(),
+            DEVICE.parse().unwrap(),
+            loaded(&profile),
+            HttpClientConfig::default(),
+        )
+        .unwrap();
+        let health = remote.probe_health(scope()).await;
+        assert_eq!(
+            health,
+            if mismatch.is_none() {
+                ConnectionHealth::Online
+            } else {
+                ConnectionHealth::ProtocolError
+            }
+        );
+        let requests = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(requests[0].starts_with("GET /health/ready "));
+        assert!(!requests[0].to_ascii_lowercase().contains("authorization:"));
+        if mismatch.is_none() {
+            assert_eq!(requests.len(), 2);
+            assert!(requests[1].starts_with(&format!("GET {} ", scoped("checkpoint"))));
+            assert!(requests[1].contains(credential().expose_secret()));
+        } else {
+            assert_eq!(
+                requests.len(),
+                1,
+                "identity mismatch must stop before credential transmission"
+            );
+        }
+    }
+}

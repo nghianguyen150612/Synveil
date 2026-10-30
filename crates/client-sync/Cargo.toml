@@ -36,4 +36,4 @@ libc.workspace = true
 [dev-dependencies]
 axum.workspace = true
 tokio-rustls.workspace = true
-rcgen.workspace = true
+rcgen = { workspace = true, features = ["pem"] }

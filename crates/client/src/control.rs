@@ -2204,7 +2204,7 @@ impl BoundControlTransport {
             DesktopControlEndpoint::NamedPipe { name } => {
                 #[cfg(windows)]
                 {
-                    return bind_windows_transport(name);
+                    bind_windows_transport(name)
                 }
                 #[cfg(not(windows))]
                 {
@@ -3178,7 +3178,7 @@ async fn open_control_connection(
                     .write(true)
                     .open(name)
                     .map_err(|_| DesktopControlClientError::Connection)?;
-                return Ok((Box::new(client), None));
+                Ok((Box::new(client), None))
             }
             #[cfg(not(windows))]
             {
@@ -3568,7 +3568,7 @@ fn create_windows_pipe(
     let descriptor = WindowsCurrentUserSecurityDescriptor::new()?;
     let mut attributes = SECURITY_ATTRIBUTES {
         nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-        lpSecurityDescriptor: descriptor.raw as *mut c_void,
+        lpSecurityDescriptor: descriptor.raw,
         bInheritHandle: 0,
     };
     let mut options = ServerOptions::new();

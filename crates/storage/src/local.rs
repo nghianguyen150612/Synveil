@@ -1634,12 +1634,12 @@ fn sync_directory_sync(path: &Path) -> std::io::Result<()> {
         const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
         const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 
-        return fs::OpenOptions::new()
+        fs::OpenOptions::new()
             .read(true)
             .write(true)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
             .open(path)?
-            .sync_all();
+            .sync_all()
     }
 
     #[cfg(not(windows))]
