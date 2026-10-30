@@ -9,6 +9,7 @@ Status: **PROVISIONAL / ROADMAP RECONCILIATION BLOCKED**. Source contracts and f
 | Feature branch | `feat/v03-p020-pairing-trust-contracts` |
 | Exact base SHA | `fea3c9307f30318e7ce275fbd406c733cfa145d8` |
 | Base state | P019 PR #179 merged; both remote branch refs resolved to the base SHA at task start |
+| P020 implementation source SHA | `6981e466cd57fdd13d68100ac6fc9d427c44be30` |
 | Authoritative P001–P060 roadmap | `Synveil-v0.3-Context-Roadmap-P001-P060.md` not present in repository/workspace; recorded in P002/P003/P019; reconciliation remains a blocker |
 | Draft PR | To be recorded after publication; never auto-merge |
 
