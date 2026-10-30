@@ -3140,6 +3140,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "synveil-pairing-contracts"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "url",
+]
+
+[[package]]
 name = "synveil-platform"
 version = "0.2.0"
 dependencies = [
