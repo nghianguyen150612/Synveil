@@ -148,8 +148,10 @@ Focused P018 CI runs formatting, strict Clippy, P017 transport/network contracts
 P018 HTTPS integration tests, client-sync/auth/client/Host lifecycle regressions,
 native runner compilation, documentation checks and whitespace checks. Existing
 P015 CI is triggered by these crate/docs/lockfile changes and explicitly retains
-P005 PostgreSQL, P006 content and P015 joined owner-to-byte regressions. Existing
-P016A Host tests remain in the full Host suite. Simulated CI cannot satisfy native
+P005 PostgreSQL, P006 content and P015 joined owner-to-byte regressions. The existing
+PostgreSQL scheduled-maintenance workflow retains the P016A live
+desktop-process/controller lifecycle target; the local full client suite retains
+the stale-generation fence. Simulated CI cannot satisfy native
 acceptance.
 
 P004-D02/D03/D11/D14, P028 native acceptance, P036 publisher/signing, authoritative
