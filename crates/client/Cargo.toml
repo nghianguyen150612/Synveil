@@ -34,3 +34,9 @@ nix.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = ["Win32_System_SystemInformation", "Win32_System_Com", "Win32_UI_Shell"] }
 tempfile = "3"
+
+[dev-dependencies]
+rcgen = { workspace = true, features = ["pem"] }
+rustls.workspace = true
+tokio-rustls.workspace = true
+tempfile = "3"

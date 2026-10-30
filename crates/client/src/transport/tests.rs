@@ -7,7 +7,7 @@ use std::sync::{
 use synveil_server_network::transport::{RouteEvidence, TailscaleCapability, TailscalePeer};
 use synveil_server_network::{InterfaceKind, NetworkCandidate};
 
-fn endpoint(t: Transport, ip: &str) -> Endpoint {
+pub(super) fn endpoint(t: Transport, ip: &str) -> Endpoint {
     let address: IpAddr = ip.parse().unwrap();
     Endpoint {
         profile_id: synveil_client_sync::ServerProfileId::new(),
@@ -25,7 +25,7 @@ fn endpoint(t: Transport, ip: &str) -> Endpoint {
         peer_id: (t == Transport::Tailscale).then(|| "approved-peer".into()),
     }
 }
-fn snapshot() -> LocalCapabilities {
+pub(super) fn snapshot() -> LocalCapabilities {
     LocalCapabilities {
         lan: Ok(vec![NetworkCandidate {
             interface_id: "eth0".into(),
@@ -58,12 +58,12 @@ fn snapshot() -> LocalCapabilities {
         ],
     }
 }
-struct FakeDiscovery {
+pub(super) struct FakeDiscovery {
     states: Mutex<Vec<LocalCapabilities>>,
     calls: AtomicUsize,
 }
 impl FakeDiscovery {
-    fn new(states: Vec<LocalCapabilities>) -> Self {
+    pub(super) fn new(states: Vec<LocalCapabilities>) -> Self {
         Self {
             states: Mutex::new(states),
             calls: AtomicUsize::new(0),
@@ -102,7 +102,7 @@ impl EndpointVerifier for FakeVerifier {
         if r.len() > 1 { r.remove(0) } else { r[0] }
     }
 }
-async fn select(
+pub(super) async fn select(
     d: &dyn LocalDiscovery,
     v: &dyn EndpointVerifier,
     endpoints: &[Endpoint],
