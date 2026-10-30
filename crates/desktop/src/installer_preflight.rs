@@ -169,15 +169,20 @@ pub struct PreflightBinding {
     /// presentation evidence only; any later action must inspect again.
     pub platform: PlatformEvidence,
     pub channels: Vec<InstallationChannelEvidence>,
-    pub private_lan_candidate_count: Option<u8>,
+    observed_at: Instant,
     pub target_scope: Option<TargetScope>,
     /// None until a trusted artifact acquisition path supplies an identity.
     pub artifact_identity: Option<String>,
 }
 
 impl PreflightBinding {
+    pub fn is_current(&self) -> bool {
+        self.observed_at.elapsed() < synveil_client::transport::preflight::EVIDENCE_LIFETIME
+    }
+
     pub fn matches_request(&self, request: PreflightRequest) -> bool {
-        if self.selection != request
+        if !self.is_current()
+            || self.selection != request
             || self.platform.platform != PlatformCode::current()
             || self.artifact_identity.is_some()
             || self
@@ -250,10 +255,7 @@ pub enum CapabilityFindingCode {
     #[allow(dead_code)]
     StaleInspection,
     InsufficientCapabilityEvidence,
-    PrivateLanUnavailable,
-    PrivateLanChoiceRequired,
     RemoteEndpointIdentityUnverified,
-    TailscaleUnavailable,
 }
 
 impl CapabilityFindingCode {
@@ -309,19 +311,9 @@ impl CapabilityFindingCode {
             Self::InsufficientCapabilityEvidence => {
                 "There is not enough verified capability evidence to continue.".to_owned()
             }
-            Self::PrivateLanUnavailable => {
-                "No suitable Private LAN candidate was observed.".to_owned()
-            }
-            Self::PrivateLanChoiceRequired => {
-                "Several Private LAN candidates were observed; this preview cannot choose one."
-                    .to_owned()
-            }
             Self::RemoteEndpointIdentityUnverified => {
                 "Network reachability does not verify a remote endpoint or authorize sign-in."
                     .to_owned()
-            }
-            Self::TailscaleUnavailable => {
-                "Tailscale is unavailable until an approved integration exists.".to_owned()
             }
         }
     }
@@ -417,6 +409,7 @@ pub enum PlanPreviewAvailability {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreflightOutcome {
     pub binding: PreflightBinding,
+    pub network: synveil_client::transport::preflight::NetworkPreflight,
     pub findings: Vec<CapabilityFinding>,
     pub selected_channel_supported: bool,
     pub plan_preview: PlanPreviewAvailability,
@@ -521,27 +514,19 @@ impl PreflightOutcome {
     }
 
     pub fn connection_summary(&self) -> String {
-        match self.binding.selection.connection_mode {
+        let choice = match self.binding.selection.connection_mode {
             ConnectionMode::LocalOnly => {
-                "Local-only selected; no listener or endpoint was changed.".into()
+                "Local-only selected; no listener or endpoint was changed."
             }
-            ConnectionMode::PrivateLan => match self.binding.private_lan_candidate_count {
-                Some(0) => "No suitable Private LAN candidate was observed.".into(),
-                Some(1) => {
-                    "One suitable Private LAN candidate was observed; endpoint identity remains unverified.".into()
-                }
-                Some(_) => {
-                    "Multiple suitable Private LAN candidates were observed; the preview does not choose one.".into()
-                }
-                None => {
-                    "Private LAN capability was not observed for this role; remote identity remains unverified.".into()
-                }
-            },
-            ConnectionMode::Manual => {
-                "Advanced/manual mode uses the existing endpoint entry flow; no address was entered or saved.".into()
+            ConnectionMode::PrivateLan => {
+                "LAN-only selected; Tailscale is optional and will not be used as fallback."
             }
-            ConnectionMode::Tailscale => "Tailscale is unavailable.".into(),
-        }
+            ConnectionMode::Tailscale => {
+                "Tailscale-only selected; LAN will not be used as fallback."
+            }
+            ConnectionMode::Manual => "Manual selected; use the existing endpoint entry flow.",
+        };
+        format!("{choice}\n{}", self.network.summary())
     }
 }
 
@@ -564,10 +549,10 @@ fn format_platform_summary(platform: &PlatformEvidence) -> String {
 }
 
 pub fn inspect(request: PreflightRequest) -> PreflightOutcome {
+    let observed_at = Instant::now();
     let platform = detect_platform_evidence();
     let mut findings = Vec::new();
     let channels = inspect_channels(&platform, &mut findings);
-    let mut private_lan_candidate_count = None;
 
     if !platform.operating_system_evidence_complete {
         findings.push(CapabilityFinding::new(
@@ -578,31 +563,6 @@ pub fn inspect(request: PreflightRequest) -> PreflightOutcome {
         findings.push(CapabilityFinding::new(
             CapabilityFindingCode::UnsupportedPlatform,
         ));
-    }
-
-    if request.connection_mode == ConnectionMode::PrivateLan && request.role == DeviceRole::Host {
-        match synveil_server_host::inspect_private_lan_capability() {
-            synveil_server_host::PrivateLanCapability::Available { candidate_count } => {
-                private_lan_candidate_count = Some(candidate_count);
-                if candidate_count > 1 {
-                    findings.push(CapabilityFinding::new(
-                        CapabilityFindingCode::PrivateLanChoiceRequired,
-                    ));
-                }
-            }
-            synveil_server_host::PrivateLanCapability::NoCandidate => {
-                private_lan_candidate_count = Some(0);
-                findings.push(CapabilityFinding::new(
-                    CapabilityFindingCode::PrivateLanUnavailable,
-                ));
-            }
-            synveil_server_host::PrivateLanCapability::InspectionUnavailable
-            | synveil_server_host::PrivateLanCapability::Unsupported => {
-                findings.push(CapabilityFinding::new(
-                    CapabilityFindingCode::InsufficientCapabilityEvidence,
-                ));
-            }
-        }
     }
 
     match request.role {
@@ -638,16 +598,11 @@ pub fn inspect(request: PreflightRequest) -> PreflightOutcome {
             }
             if matches!(
                 request.connection_mode,
-                ConnectionMode::PrivateLan | ConnectionMode::Manual
+                ConnectionMode::PrivateLan | ConnectionMode::Tailscale | ConnectionMode::Manual
             ) {
                 findings.push(CapabilityFinding::new(
                     CapabilityFindingCode::RemoteEndpointIdentityUnverified,
                 ));
-                if request.connection_mode == ConnectionMode::PrivateLan {
-                    findings.push(CapabilityFinding::new(
-                        CapabilityFindingCode::InsufficientCapabilityEvidence,
-                    ));
-                }
             }
         }
         DeviceRole::Existing => {
@@ -659,12 +614,6 @@ pub fn inspect(request: PreflightRequest) -> PreflightOutcome {
                 ));
             }
         }
-    }
-
-    if request.connection_mode == ConnectionMode::Tailscale {
-        findings.push(CapabilityFinding::new(
-            CapabilityFindingCode::TailscaleUnavailable,
-        ));
     }
 
     let active_channel_count = channels
@@ -754,12 +703,13 @@ pub fn inspect(request: PreflightRequest) -> PreflightOutcome {
         selection: request,
         platform,
         channels,
-        private_lan_candidate_count,
+        observed_at,
         target_scope,
         artifact_identity: None,
     };
 
     PreflightOutcome {
+        network: Default::default(),
         binding,
         findings,
         selected_channel_supported,
@@ -1405,6 +1355,13 @@ fn inspect_windows_version() -> Option<String> {
 }
 
 #[cfg(test)]
+impl PreflightBinding {
+    pub fn expire_for_test(&mut self) {
+        self.observed_at = Instant::now() - synveil_client::transport::preflight::EVIDENCE_LIFETIME;
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1441,6 +1398,37 @@ mod tests {
         assert!(!bridge_preflight.contains("InstallerEngine::execute"));
         assert!(!bridge_preflight.contains("InstallationJournal"));
         assert!(bridge_preflight.contains("installer_preflight::inspect(request)"));
+        assert!(bridge_preflight.contains("transport::preflight::inspect("));
+        for forbidden in [
+            "SynveilVerifier",
+            "discover_and_select",
+            "configure_profile",
+            "enroll",
+            "TcpListener",
+            "InstallationAdapter",
+            "execute(",
+        ] {
+            assert!(
+                !bridge_preflight.contains(forbidden),
+                "unexpected effect: {forbidden}"
+            );
+        }
+        let network = include_str!("../../client/src/transport/preflight.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        for forbidden in [
+            "Command::",
+            "SecretStore",
+            "Verifier",
+            "TcpListener",
+            "InstallerEngine",
+        ] {
+            assert!(
+                !network.contains(forbidden),
+                "unexpected capability: {forbidden}"
+            );
+        }
         assert!(source.contains("Stdio::null()"));
         assert!(source.contains("COMMAND_TIMEOUT"));
     }
@@ -1533,13 +1521,16 @@ mod tests {
     }
 
     #[test]
-    fn tailscale_is_typed_unavailable_and_no_enrollment_is_called() {
+    fn tailscale_requires_identity_and_no_enrollment_is_called() {
         let mut request = request(DeviceRole::Client, ConnectionMode::Tailscale);
         let outcome = inspect(request);
-        assert!(outcome
-            .findings
-            .iter()
-            .any(|finding| finding.code == CapabilityFindingCode::TailscaleUnavailable));
+        assert!(
+            outcome
+                .findings
+                .iter()
+                .any(|finding| finding.code
+                    == CapabilityFindingCode::RemoteEndpointIdentityUnverified)
+        );
         request.generation = request.generation.wrapping_add(1);
         assert_ne!(outcome.binding.selection.generation, request.generation);
     }

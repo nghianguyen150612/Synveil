@@ -158,7 +158,6 @@ enum WizardStep {
 enum UnavailableCode {
     UnsupportedPlatform,
     MissingCapability,
-    TailscalePlanned,
 }
 
 impl UnavailableCode {
@@ -166,7 +165,6 @@ impl UnavailableCode {
         match self {
             Self::UnsupportedPlatform => "unsupported_platform",
             Self::MissingCapability => "missing_capability",
-            Self::TailscalePlanned => "tailscale_planned",
         }
     }
 }
@@ -239,6 +237,7 @@ pub struct WizardView {
     pub existing_supported: bool,
     pub local_only_supported: bool,
     pub private_lan_supported: bool,
+    pub tailscale_inspection_supported: bool,
     pub manual_supported: bool,
     pub report_ready: bool,
     pub evidence_complete: bool,
@@ -377,15 +376,6 @@ impl InstallerWizard {
     pub fn select_connection_mode(&mut self, mode: ConnectionMode) {
         if self.state != ProcessState::ConnectionChoice {
             self.fail(WizardErrorCode::InvalidTransition);
-            return;
-        }
-        if mode == ConnectionMode::Tailscale {
-            self.generation = self.generation.wrapping_add(1);
-            self.outcome = None;
-            self.state = ProcessState::Unavailable {
-                code: UnavailableCode::TailscalePlanned,
-                return_to: WizardStep::Connection,
-            };
             return;
         }
         let supported = self
@@ -552,7 +542,8 @@ impl InstallerWizard {
 
     pub fn retry_safe_preflight(&mut self) -> Option<PreflightToken> {
         match self.state {
-            ProcessState::Error {
+            ProcessState::Review
+            | ProcessState::Error {
                 code: WizardErrorCode::SafePreflightFailed,
                 ..
             } => {
@@ -644,13 +635,14 @@ impl InstallerWizard {
                 | ProcessState::Unavailable { .. }
                 | ProcessState::Error { .. }
         );
-        let can_retry = matches!(
-            self.state,
-            ProcessState::Error {
-                code: WizardErrorCode::SafePreflightFailed,
-                ..
-            }
-        );
+        let can_retry = self.state == ProcessState::Review
+            || matches!(
+                self.state,
+                ProcessState::Error {
+                    code: WizardErrorCode::SafePreflightFailed,
+                    ..
+                }
+            );
         let details_open = self.details_open;
         let error_code = match self.state {
             ProcessState::Error { code, .. } => code.code(),
@@ -660,7 +652,10 @@ impl InstallerWizard {
             ProcessState::Unavailable { code, .. } => code.code(),
             _ => "",
         };
-        let outcome = self.outcome.as_ref();
+        let outcome = self
+            .outcome
+            .as_ref()
+            .filter(|value| value.binding.is_current());
         let role = self.device_role;
         let channel_options = InstallationChannel::choices_for(self.capabilities.platform)
             .into_iter()
@@ -695,7 +690,7 @@ impl InstallerWizard {
         );
         let connection_summary = outcome.map_or_else(
             || {
-                "This is a preference only. The read-only check will not alter network settings."
+                "Evidence is missing or stale. Run fresh preflight; this preference cannot approve network or installation changes."
                     .to_owned()
             },
             PreflightOutcome::connection_summary,
@@ -783,6 +778,8 @@ impl InstallerWizard {
                 .is_some_and(|role| self.connection_supported(role, ConnectionMode::LocalOnly)),
             private_lan_supported: role
                 .is_some_and(|role| self.connection_supported(role, ConnectionMode::PrivateLan)),
+            tailscale_inspection_supported: role
+                .is_some_and(|role| self.connection_supported(role, ConnectionMode::Tailscale)),
             manual_supported: role
                 .is_some_and(|role| self.connection_supported(role, ConnectionMode::Manual)),
             report_ready: outcome.is_some(),
@@ -868,14 +865,14 @@ impl InstallerWizard {
             return false;
         }
         match mode {
-            ConnectionMode::Tailscale => false,
-            ConnectionMode::LocalOnly | ConnectionMode::PrivateLan | ConnectionMode::Manual => {
-                match role {
-                    DeviceRole::Host => self.capabilities.host_setup_supported,
-                    DeviceRole::Client => self.capabilities.client_connect_supported,
-                    DeviceRole::Existing => self.capabilities.existing_installation_configurable,
-                }
-            }
+            ConnectionMode::LocalOnly
+            | ConnectionMode::PrivateLan
+            | ConnectionMode::Tailscale
+            | ConnectionMode::Manual => match role {
+                DeviceRole::Host => self.capabilities.host_setup_supported,
+                DeviceRole::Client => self.capabilities.client_connect_supported,
+                DeviceRole::Existing => self.capabilities.existing_installation_configurable,
+            },
         }
     }
 
@@ -1151,12 +1148,36 @@ mod tests {
     }
 
     #[test]
-    fn tailscale_is_unavailable_and_does_not_change_the_connection_selection() {
+    fn tailscale_is_an_explicit_inspection_choice_without_install_authority() {
         let mut wizard = open_at_connection();
         wizard.select_connection_mode(ConnectionMode::Tailscale);
-        assert_eq!(wizard.view().state, "unavailable");
-        assert_eq!(wizard.view().unavailable_code, "tailscale_planned");
-        assert_eq!(wizard.view().connection_mode, "manual");
+        assert_eq!(wizard.view().state, "connection_choice");
+        assert_eq!(wizard.view().connection_mode, "tailscale");
+        assert!(wizard.continue_forward().is_some());
+        assert!(!wizard.view().acknowledgement_available);
+    }
+
+    #[test]
+    fn stale_completion_is_rejected_and_review_expiry_requires_fresh_preflight() {
+        let mut wizard = open_at_connection();
+        let token = wizard.continue_forward().unwrap();
+        let mut outcome = crate::installer_preflight::inspect(wizard.request_for(token).unwrap());
+        outcome.binding.expire_for_test();
+        assert!(wizard.complete_preflight(token, Ok(outcome)));
+        assert_eq!(wizard.view().state, "error");
+        assert!(!wizard.view().report_ready);
+        let token = wizard.retry_safe_preflight().unwrap();
+        let outcome = crate::installer_preflight::inspect(wizard.request_for(token).unwrap());
+        wizard.complete_preflight(token, Ok(outcome));
+        wizard.outcome.as_mut().unwrap().binding.expire_for_test();
+        let view = wizard.view();
+        assert!(!view.report_ready);
+        assert!(!view.acknowledgement_available);
+        assert!(!view.plan_preview_available);
+        assert!(view.connection_summary.contains("stale"));
+        assert!(view.can_retry);
+        assert!(wizard.retry_safe_preflight().is_some());
+        assert!(wizard.outcome.is_none());
     }
 
     #[test]

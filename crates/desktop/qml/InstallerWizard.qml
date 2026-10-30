@@ -6,6 +6,13 @@ pragma ComponentBehavior: Bound
 
 Pane {
     id: root
+    Timer {
+        interval: 1000
+        repeat: true
+        running: root.wizardView.state === "review" && root.wizardView.reportReady
+        onTriggered: root.bridge.refreshInstallerWizardEvidence()
+    }
+
     required property var bridge
     readonly property var wizardView: bridge.installer_wizard_view
     objectName: "installerWizard"
@@ -59,9 +66,6 @@ Pane {
     }
 
     function unavailableMessage(code) {
-        if (code === "tailscale_planned") {
-            return qsTr("Tailscale support is planned. This build has no Tailscale adapter and cannot enroll or connect a device.")
-        }
         if (code === "unsupported_platform") {
             return qsTr("No supported setup path is available for this platform.")
         }
@@ -333,15 +337,17 @@ Pane {
                         }
                         RadioButton {
                             Layout.fillWidth: true
-                            text: qsTr("Tailscale — planned, not connected")
+                            text: qsTr("Tailscale (optional; inspect only)")
                             checked: root.wizardView.connectionMode === "tailscale"
-                            enabled: false
+                            enabled: root.wizardView.tailscaleInspectionSupported
+                                     && root.wizardView.state === "connection_choice"
                             Accessible.name: text
-                            Accessible.description: qsTr("Unavailable. Synveil has no Tailscale adapter or enrollment integration.")
+                            Accessible.description: qsTr("Inspect local installation and configuration only. Tailnet setup requires separate approval; server identity and authentication remain unverified.")
+                            onClicked: root.bridge.selectInstallerWizardConnection("tailscale")
                         }
                         Label {
                             Layout.fillWidth: true
-                            text: qsTr("Network reachability is not login authorization. Authentication and device enrollment stay in the current client flow.")
+                            text: qsTr("Preflight checks LAN and optional Tailscale without connecting or changing settings. LAN-only operation does not require Tailscale. Approve the exact HTTPS endpoint and verify identity in the existing connection flow. Observations expire after 30 seconds; run fresh preflight before review.")
                             wrapMode: Text.WordWrap
                         }
 
@@ -419,6 +425,11 @@ Pane {
                             Label {
                                 Layout.fillWidth: true
                                 text: qsTr("Connection preference: %1").arg(root.connectionModeName(root.wizardView.connectionMode))
+                                wrapMode: Text.WordWrap
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: qsTr("Connection capability: %1").arg(root.wizardView.connectionSummary)
                                 wrapMode: Text.WordWrap
                             }
                             Label {
@@ -577,11 +588,6 @@ Pane {
                             }
                             Label {
                                 Layout.fillWidth: true
-                                text: qsTr("Connection capability: %1").arg(root.wizardView.connectionSummary)
-                                wrapMode: Text.WordWrap
-                            }
-                            Label {
-                                Layout.fillWidth: true
                                 text: root.wizardView.findingSummary
                                 wrapMode: Text.WordWrap
                             }
@@ -625,7 +631,7 @@ Pane {
                         Item { Layout.fillWidth: true }
                         Button {
                             visible: root.wizardView.canRetry
-                            text: qsTr("Retry safe check")
+                            text: qsTr("Run fresh preflight")
                             Accessible.name: text
                             onClicked: root.bridge.retryInstallerWizardPreflight()
                         }
