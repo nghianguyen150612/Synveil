@@ -606,14 +606,10 @@ impl LocalStateStore {
                 return Ok(());
             }
             std::fs::rename(&active, &pending).map_err(|_| ClientSyncError::InvalidState)?;
-            std::fs::File::open(pending.parent().ok_or(ClientSyncError::InvalidState)?)
-                .and_then(|file| file.sync_all())
-                .map_err(|_| ClientSyncError::InvalidState)?;
+            sync_host_trust_directory(pending.parent().ok_or(ClientSyncError::InvalidState)?)?;
         } else if active_bytes.is_some() {
             std::fs::remove_file(&active).map_err(|_| ClientSyncError::InvalidState)?;
-            std::fs::File::open(active.parent().ok_or(ClientSyncError::InvalidState)?)
-                .and_then(|file| file.sync_all())
-                .map_err(|_| ClientSyncError::InvalidState)?;
+            sync_host_trust_directory(active.parent().ok_or(ClientSyncError::InvalidState)?)?;
         }
         Ok(())
     }
@@ -699,9 +695,7 @@ impl LocalStateStore {
         let pending = self.host_trust_pending_path(profile.profile_id());
         if read_profile_trust(&pending)?.is_some() {
             std::fs::remove_file(&pending).map_err(|_| ClientSyncError::InvalidState)?;
-            std::fs::File::open(pending.parent().ok_or(ClientSyncError::InvalidState)?)
-                .and_then(|file| file.sync_all())
-                .map_err(|_| ClientSyncError::InvalidState)?;
+            sync_host_trust_directory(pending.parent().ok_or(ClientSyncError::InvalidState)?)?;
         }
         Ok(())
     }
@@ -1382,6 +1376,35 @@ fn read_profile_trust(path: &std::path::Path) -> Result<Option<Vec<u8>>, ClientS
     }
     Ok(Some(bytes))
 }
+// Preserve the namespace durability barrier for every host-trust publish,
+// pending-trust transition and removal. Windows cannot open a directory using
+// File::open; it needs a writable directory handle with backup semantics.
+// Refuse reparse-point traversal rather than silently omitting the flush.
+fn sync_host_trust_directory(path: &std::path::Path) -> Result<(), ClientSyncError> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| ClientSyncError::InvalidState)
+    }
+
+    #[cfg(not(windows))]
+    {
+        std::fs::File::open(path)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| ClientSyncError::InvalidState)
+    }
+}
+
 fn write_profile_trust(path: &std::path::Path, bytes: &[u8]) -> Result<(), ClientSyncError> {
     use std::io::Write;
     let _ = read_profile_trust(path)?;
@@ -1408,9 +1431,7 @@ fn write_profile_trust(path: &std::path::Path, bytes: &[u8]) -> Result<(), Clien
         .and_then(|()| file.sync_all())
         .map_err(|_| ClientSyncError::InvalidState)?;
     std::fs::rename(&temporary, path).map_err(|_| ClientSyncError::InvalidState)?;
-    std::fs::File::open(parent)
-        .and_then(|file| file.sync_all())
-        .map_err(|_| ClientSyncError::InvalidState)
+    sync_host_trust_directory(parent)
 }
 
 fn decode_enrollment(
@@ -1437,3 +1458,34 @@ fn decode_enrollment(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod profile_trust_directory_regression {
+    use super::{read_profile_trust, sync_host_trust_directory, write_profile_trust};
+
+    #[test]
+    fn persist_replace_and_delete_trust_with_directory_durability_barriers() {
+        let directory = std::env::temp_dir().join(format!(
+            "synveil-profile-trust-regression-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir(&directory).expect("private fixture directory");
+        let path = directory.join("host-trust.json");
+
+        write_profile_trust(&path, b"public-trust-v1").expect("publish initial trust");
+        assert_eq!(
+            read_profile_trust(&path).expect("read initial trust"),
+            Some(b"public-trust-v1".to_vec())
+        );
+        write_profile_trust(&path, b"public-trust-v2").expect("replace trust");
+        assert_eq!(
+            read_profile_trust(&path).expect("read replacement trust"),
+            Some(b"public-trust-v2".to_vec())
+        );
+
+        std::fs::remove_file(&path).expect("remove fixture trust");
+        sync_host_trust_directory(&directory).expect("durable trust removal barrier");
+        assert_eq!(read_profile_trust(&path).expect("read removed trust"), None);
+        std::fs::remove_dir(&directory).expect("clean fixture directory");
+    }
+}
