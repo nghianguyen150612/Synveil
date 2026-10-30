@@ -429,6 +429,11 @@ Pane {
                             }
                             Label {
                                 Layout.fillWidth: true
+                                text: qsTr("Connection capability: %1").arg(root.wizardView.connectionSummary)
+                                wrapMode: Text.WordWrap
+                            }
+                            Label {
+                                Layout.fillWidth: true
                                 text: qsTr("Detected platform: %1").arg(root.wizardView.platformSummary)
                                 wrapMode: Text.WordWrap
                             }
@@ -579,11 +584,6 @@ Pane {
                                 Layout.fillWidth: true
                                 visible: root.wizardView.blockingFinding
                                 text: qsTr("This inspection has blocking findings. Review the safe findings below.")
-                                wrapMode: Text.WordWrap
-                            }
-                            Label {
-                                Layout.fillWidth: true
-                                text: qsTr("Connection capability: %1").arg(root.wizardView.connectionSummary)
                                 wrapMode: Text.WordWrap
                             }
                             Label {
