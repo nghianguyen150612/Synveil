@@ -1,0 +1,88 @@
+name: v0.3 P019 installer network preflight
+
+on:
+  pull_request:
+    branches: [develop/v0.3]
+    paths:
+      - 'crates/client/**'
+      - 'crates/client-sync/**'
+      - 'crates/desktop/**'
+      - 'crates/install-engine/**'
+      - 'crates/server-network/**'
+      - 'Cargo.*'
+      - 'rust-toolchain.toml'
+      - 'docs/v0.3/**'
+      - '.github/workflows/v03-p019-installer-network-preflight.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    name: P019 preflight contracts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux native dependencies (no Tailscale installation)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config ripgrep iproute2 qt6-base-dev qt6-declarative-dev qt6-tools-dev-tools
+      - name: Windows compiler environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Windows linker selection
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/select-msvc-linker.ps1
+      - name: Windows Qt (UI contracts, not P028 native acceptance)
+        if: runner.os == 'Windows'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.8.3
+          arch: win64_msvc2022_64
+          cache: true
+      - name: Exact checkout SHA
+        shell: bash
+        run: git rev-parse HEAD | tee p019-source-sha.txt
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      - name: P017/P018/P019 and actual native supported or unsupported boundary
+        env:
+          SYNVEIL_P017_REQUIRE_IP: ${{ runner.os == 'Linux' && '1' || '' }}
+        run: |
+          cargo test -p synveil-client --lib transport:: --locked
+      - name: Existing wizard and installer contracts
+        run: cargo test -p synveil-desktop -p synveil-install-engine --locked
+      - name: Existing identity, credentials and authentication regressions
+        run: cargo test -p synveil-client-sync -p synveil-auth --lib --locked
+      - name: Network contracts
+        run: cargo test -p synveil-server-network --locked
+      - name: Strict Clippy
+        run: cargo clippy -p synveil-desktop -p synveil-client -p synveil-install-engine -p synveil-client-sync -p synveil-server-network --all-targets --locked -- -D warnings
+      - name: Documentation validation
+        if: runner.os == 'Linux'
+        run: bash scripts/validate-docs.sh
+      - name: Diff whitespace
+        run: git diff --check
+      - name: Retain source evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p019-preflight-${{ matrix.os }}-${{ github.run_id }}
+          path: p019-source-sha.txt
+          if-no-files-found: error

@@ -424,6 +424,10 @@ pub mod ffi {
         #[cxx_name = "retryInstallerWizardPreflight"]
         #[qinvokable]
         fn retry_installer_wizard_preflight(self: Pin<&mut Self>);
+
+        #[cxx_name = "refreshInstallerWizardEvidence"]
+        #[qinvokable]
+        fn refresh_installer_wizard_evidence(self: Pin<&mut Self>);
         #[cxx_name = "cancelInstallerWizard"]
         #[qinvokable]
         fn cancel_installer_wizard(self: Pin<&mut Self>);
@@ -695,6 +699,7 @@ pub struct DesktopUiBridgeRust {
     host_session: Arc<std::sync::Mutex<HostSession>>,
     host_generation: u64,
     installer_wizard: InstallerWizard,
+    installer_preflight_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Default for DesktopUiBridgeRust {
@@ -892,6 +897,7 @@ impl Default for DesktopUiBridgeRust {
             host_session: Arc::new(std::sync::Mutex::new(HostSession::default())),
             host_generation: 0,
             installer_wizard,
+            installer_preflight_task: None,
         }
     }
 }
@@ -926,9 +932,21 @@ fn run_installer_wizard_preflight(
         return;
     };
     let qt_thread = object.as_ref().get_ref().qt_thread();
-    runtime.spawn(async move {
-        let result = tokio::task::spawn_blocking(move || installer_preflight::inspect(request))
-            .await
+    cancel_installer_preflight(object.as_mut());
+    let task = runtime.spawn(async move {
+        let (_cancel, cancel) = tokio::sync::watch::channel(false);
+        let (host, network) = tokio::join!(
+            tokio::task::spawn_blocking(move || installer_preflight::inspect(request)),
+            synveil_client::transport::preflight::inspect(
+                &synveil_client::transport::native::NativeDiscovery,
+                cancel
+            ),
+        );
+        let result = host
+            .map(|mut outcome| {
+                outcome.network = network;
+                outcome
+            })
             .map_err(|_| ());
         let _ = qt_thread.queue(move |mut object| {
             if object
@@ -942,6 +960,13 @@ fn run_installer_wizard_preflight(
             }
         });
     });
+    object.as_mut().rust_mut().installer_preflight_task = Some(task);
+}
+
+fn cancel_installer_preflight(mut object: Pin<&mut ffi::DesktopUiBridge>) {
+    if let Some(task) = object.as_mut().rust_mut().installer_preflight_task.take() {
+        task.abort();
+    }
 }
 
 impl cxx_qt::Initialize for ffi::DesktopUiBridge {
@@ -1244,11 +1269,13 @@ impl ffi::DesktopUiBridge {
     }
 
     fn open_installer_wizard(mut self: Pin<&mut Self>) {
+        cancel_installer_preflight(self.as_mut());
         self.as_mut().rust_mut().installer_wizard.open();
         publish_installer_wizard(self.as_mut());
     }
 
     fn select_installer_wizard_device(mut self: Pin<&mut Self>, role: QString) {
+        cancel_installer_preflight(self.as_mut());
         let code = String::from(role);
         if let Some(role) = DeviceRole::from_code(&code) {
             self.as_mut()
@@ -1265,6 +1292,7 @@ impl ffi::DesktopUiBridge {
     }
 
     fn select_installer_wizard_connection(mut self: Pin<&mut Self>, mode: QString) {
+        cancel_installer_preflight(self.as_mut());
         let code = String::from(mode);
         if let Some(mode) = ConnectionMode::from_code(&code) {
             self.as_mut()
@@ -1281,6 +1309,7 @@ impl ffi::DesktopUiBridge {
     }
 
     fn select_installer_wizard_channel(mut self: Pin<&mut Self>, channel: QString) {
+        cancel_installer_preflight(self.as_mut());
         let code = String::from(channel);
         if let Some(channel) = installer_preflight::InstallationChannel::from_code(&code) {
             self.as_mut()
@@ -1305,8 +1334,13 @@ impl ffi::DesktopUiBridge {
     }
 
     fn back_installer_wizard(mut self: Pin<&mut Self>) {
+        cancel_installer_preflight(self.as_mut());
         self.as_mut().rust_mut().installer_wizard.back();
         publish_installer_wizard(self.as_mut());
+    }
+
+    fn refresh_installer_wizard_evidence(self: Pin<&mut Self>) {
+        publish_installer_wizard(self);
     }
 
     fn retry_installer_wizard_preflight(mut self: Pin<&mut Self>) {
@@ -1322,6 +1356,7 @@ impl ffi::DesktopUiBridge {
     }
 
     fn cancel_installer_wizard(mut self: Pin<&mut Self>) {
+        cancel_installer_preflight(self.as_mut());
         self.as_mut().rust_mut().installer_wizard.cancel();
         publish_installer_wizard(self.as_mut());
     }
@@ -3533,6 +3568,11 @@ fn to_qvariant_installer_wizard(view: &installer_wizard::WizardView) -> QVariant
     insert_bool(&mut map, "existingSupported", view.existing_supported);
     insert_bool(&mut map, "localOnlySupported", view.local_only_supported);
     insert_bool(&mut map, "privateLanSupported", view.private_lan_supported);
+    insert_bool(
+        &mut map,
+        "tailscaleInspectionSupported",
+        view.tailscale_inspection_supported,
+    );
     insert_bool(&mut map, "manualSupported", view.manual_supported);
     insert_bool(&mut map, "reportReady", view.report_ready);
     insert_bool(&mut map, "evidenceComplete", view.evidence_complete);

@@ -1,4 +1,4 @@
-//! Opt-in, read-only transport discovery. Not wired into the production Wizard.
+//! Read-only transport discovery and advisory Wizard capability presentation.
 //! Adapter implementations are trusted ports; discovery metadata is never auth.
 use async_trait::async_trait;
 use std::{net::IpAddr, time::Duration};
@@ -10,6 +10,7 @@ use synveil_server_network::transport::{LocalCapabilities, Transport, Unavailabl
 use tokio::sync::watch;
 
 pub mod native;
+pub mod preflight;
 
 pub const MAX_ENDPOINTS: usize = 8;
 pub const INSPECTION_TIMEOUT: Duration = Duration::from_secs(2);
