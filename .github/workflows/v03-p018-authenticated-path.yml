@@ -58,7 +58,8 @@ jobs:
         run: |
           cargo test -p synveil-client-sync --lib http_remote::tests:: --locked
       - name: P018 real HTTPS fixtures with simulated paths (not real tailnet)
-        run: cargo test -p synveil-client --lib transport::qualification:: --locked -- --nocapture 2>&1 | tee p018-output.txt
+        run: |
+          cargo test -p synveil-client --lib transport::qualification:: --locked -- --nocapture 2>&1 | tee p018-output.txt
       - name: Existing credential, authorization and lifecycle regressions
         run: cargo test -p synveil-client-sync -p synveil-auth --lib --locked
       - name: Compile opt-in Linux native procedure
