@@ -3006,6 +3006,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "sqlx",
  "synveil-client-sync",
  "synveil-core",
  "synveil-platform",
