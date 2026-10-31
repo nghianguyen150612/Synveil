@@ -55,6 +55,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let worker = GcWorker::new(pool.clone(), policy, vec![object_store], worker_config)?;
     let cycle_activity = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let cycle_success = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    #[cfg(target_os = "linux")]
     let health_window = worker
         .config()
         .cycle_interval()
@@ -62,7 +63,9 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .saturating_add(90);
     let heartbeat = managed_config.cloned().map(|config| {
         let health_pool = pool.clone();
+        #[cfg(target_os = "linux")]
         let cycle_activity = Arc::clone(&cycle_activity);
+        #[cfg(target_os = "linux")]
         let cycle_success = Arc::clone(&cycle_success);
         tokio::spawn(async move {
             loop {
@@ -73,6 +76,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 .await
                 .is_ok_and(|result| result.is_ok_and(|ready| ready.is_ready()));
                 let storage_ready = open_existing_managed_local_storage(&config).is_ok();
+                // Health-file publication is Linux-only; retain both readiness
+                // checks on other platforms even though they publish no file.
+                #[cfg(not(target_os = "linux"))]
+                let _ = (database_ready, storage_ready);
                 #[cfg(target_os = "linux")]
                 if write_host_worker_health(
                     &config,

@@ -1,0 +1,75 @@
+name: v0.3 P022 pairing ceremony
+on:
+  pull_request:
+    branches: [develop/v0.3]
+    paths:
+      - 'crates/pairing-contracts/**'
+      - 'crates/auth/**'
+      - 'crates/metadata/**'
+      - 'crates/api/**'
+      - 'crates/client/**'
+      - 'crates/client-sync/**'
+      - 'crates/server-network/**'
+      - 'Cargo.*'
+      - 'rust-toolchain.toml'
+      - 'docs/v0.3/security/P022_PAIRING_CEREMONY_QUALIFICATION.md'
+      - 'docs/v0.3/manifests/PROMPT022_MANIFEST.md'
+      - '.github/workflows/v03-p022-pairing-ceremony.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  ceremony:
+    name: P022 ceremony (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux credential-store dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config ripgrep
+      - name: Windows compiler environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Windows linker selection
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/select-msvc-linker.ps1
+      - name: Exact checkout and PR head
+        shell: bash
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          git rev-parse HEAD > p022-source.txt
+          echo "$PR_HEAD" >> p022-source.txt
+          rustc --version >> p022-source.txt
+          cargo --version >> p022-source.txt
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      - name: P020, P021 and P022 contracts and races
+        run: cargo test -p synveil-pairing-contracts --locked
+      - name: Existing authentication and client regressions
+        run: cargo test -p synveil-auth -p synveil-api -p synveil-client -p synveil-client-sync -p synveil-server-network --lib --locked
+      - name: Strict Clippy
+        run: cargo clippy -p synveil-pairing-contracts -p synveil-auth -p synveil-api -p synveil-client -p synveil-client-sync -p synveil-server-network --all-targets --locked -- -D warnings
+      - name: Documentation
+        if: runner.os == 'Linux'
+        run: bash scripts/validate-docs.sh
+      - name: Retain source evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p022-source-${{ matrix.os }}-${{ github.run_id }}
+          path: p022-source.txt
+          if-no-files-found: error
