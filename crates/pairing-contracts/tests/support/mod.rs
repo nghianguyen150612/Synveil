@@ -138,9 +138,26 @@ pub async fn redeem(
     now: impl FnOnce() -> i64,
 ) -> Result<Outcome, LedgerError> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    let outcome = redeem_locked(&mut tx, id, installation, device, now).await?;
+    if matches!(outcome, Outcome::Consumed | Outcome::Expired) {
+        tx.commit().await?;
+    }
+    Ok(outcome)
+}
+
+/// P022 composes the unchanged P021 consume checks under its outer writer fence.
+/// Test-only: callers must already hold BEGIN IMMEDIATE and commit/rollback all
+/// ceremony/evidence/ledger mutations together.
+pub async fn redeem_locked(
+    db: &mut SqliteConnection,
+    id: &str,
+    installation: &str,
+    device: &str,
+    now: impl FnOnce() -> i64,
+) -> Result<Outcome, LedgerError> {
     let row = sqlx::query("SELECT binding FROM invitations WHERE id=? AND state='ISSUED'")
         .bind(id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut *db)
         .await?;
     let Some(row) = row else {
         return Ok(Outcome::Denied);
@@ -148,7 +165,7 @@ pub async fn redeem(
     let binding: String = row.get("binding");
     let qr: PairingQrPayload = serde_json::from_str(&binding)?;
     let now = now();
-    if !authorized(&mut tx, &qr, installation).await? || device != qr.target_device_id {
+    if !authorized(db, &qr, installation).await? || device != qr.target_device_id {
         return Ok(Outcome::Denied);
     }
     if now < qr.issued_at_unix {
@@ -157,16 +174,15 @@ pub async fn redeem(
     if now >= qr.expires_at_unix {
         sqlx::query("UPDATE invitations SET state='EXPIRED' WHERE id=?")
             .bind(id)
-            .execute(&mut *tx)
+            .execute(&mut *db)
             .await?;
-        tx.commit().await?;
         return Ok(Outcome::Expired);
     }
     let approved: i64 =
         sqlx::query_scalar("SELECT count(*) FROM approvals WHERE invitation=? AND binding=?")
             .bind(id)
             .bind(binding)
-            .fetch_one(&mut *tx)
+            .fetch_one(&mut *db)
             .await?;
     if approved != 1 {
         return Ok(Outcome::Denied);
@@ -175,15 +191,14 @@ pub async fn redeem(
         "UPDATE invitations SET state='CONSUMED',verifier_id=id WHERE id=? AND state='ISSUED'",
     )
     .bind(id)
-    .execute(&mut *tx)
+    .execute(&mut *db)
     .await?;
     if changed.rows_affected() != 1 {
         return Err(LedgerError);
     }
     sqlx::query("INSERT INTO synthetic_verifiers VALUES (?,'NON_PRODUCTION_SYNTHETIC_V1')")
         .bind(id)
-        .execute(&mut *tx)
+        .execute(&mut *db)
         .await?;
-    tx.commit().await?;
     Ok(Outcome::Consumed)
 }
