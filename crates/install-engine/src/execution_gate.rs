@@ -1434,10 +1434,14 @@ pub fn classify_recovery_readiness(
 mod tests {
     use super::*;
     use crate::{
-        ArtifactIdentity, ArtifactVerificationContext, AuthenticatedManifestArtifact,
         ENGINE_SCHEMA_VERSION, InstallationEffect, InstallationIntent, JournalRecord,
-        LastUseVerificationRequest, PROTECTED_RESOURCES, PlanReviewContext, Precondition,
-        VerificationContract, VerifiedArtifactEvidence,
+        PROTECTED_RESOURCES, PlanReviewContext, Precondition, VerificationContract,
+        VerifiedArtifactEvidence,
+    };
+    #[cfg(target_os = "linux")]
+    use crate::{
+        ArtifactIdentity, ArtifactVerificationContext, AuthenticatedManifestArtifact,
+        LastUseVerificationRequest,
     };
     #[cfg(target_os = "linux")]
     use sha2::Digest;
