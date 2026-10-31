@@ -1,0 +1,74 @@
+name: v0.3 P020 pairing trust contracts
+
+on:
+  pull_request:
+    branches: [develop/v0.3]
+    paths:
+      - 'crates/pairing-contracts/**'
+      - 'crates/auth/**'
+      - 'crates/api/**'
+      - 'crates/client/**'
+      - 'crates/client-sync/**'
+      - 'crates/server-network/**'
+      - 'Cargo.*'
+      - 'rust-toolchain.toml'
+      - 'docs/v0.3/security/P020_PAIRING_TRUST_CONTRACTS.md'
+      - 'docs/v0.3/manifests/PROMPT020_MANIFEST.md'
+      - '.github/workflows/v03-p020-pairing-trust-contracts.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: P020 contracts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux credential-store build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config ripgrep
+      - name: Windows compiler environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Exact checkout SHA
+        shell: bash
+        run: git rev-parse HEAD | tee p020-source-sha.txt
+      - name: Workspace formatting
+        run: cargo fmt --all -- --check
+      - name: Deterministic invitation and concurrency contracts
+        run: cargo test -p synveil-pairing-contracts --locked
+      - name: Existing auth, client and server regressions
+        if: runner.os == 'Linux'
+        run: cargo test -p synveil-auth -p synveil-client -p synveil-client-sync -p synveil-server-network -p synveil-api --lib --locked
+      - name: Strict Clippy for pairing and authorization/client/server boundaries
+        if: runner.os == 'Linux'
+        run: cargo clippy -p synveil-pairing-contracts -p synveil-auth -p synveil-client -p synveil-client-sync -p synveil-server-network -p synveil-api --all-targets --locked -- -D warnings
+      - name: Documentation validation
+        if: runner.os == 'Linux'
+        run: bash scripts/validate-docs.sh
+      - name: Diff whitespace
+        run: git diff --check
+      - name: Retain source evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p020-source-${{ matrix.os }}-${{ github.run_id }}
+          path: p020-source-sha.txt
+          if-no-files-found: error
