@@ -1,0 +1,84 @@
+name: v0.3 P023 pairing revocation and recovery
+
+on:
+  pull_request:
+    branches: [develop/v0.3]
+    paths:
+      - 'crates/pairing-contracts/**'
+      - 'crates/auth/**'
+      - 'crates/metadata/**'
+      - 'crates/api/**'
+      - 'crates/client/**'
+      - 'crates/client-sync/**'
+      - 'crates/install-engine/**'
+      - 'crates/server-network/**'
+      - 'Cargo.*'
+      - 'rust-toolchain.toml'
+      - 'docs/v0.3/security/P023_PAIRING_REVOCATION_RECOVERY.md'
+      - 'docs/v0.3/manifests/PROMPT023_MANIFEST.md'
+      - '.github/workflows/v03-p023-pairing-revocation-recovery.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  recovery:
+    name: P023 contracts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux credential-store dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config ripgrep
+      - name: Windows compiler environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Windows linker selection
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/select-msvc-linker.ps1
+      - name: Exact checkout and PR head
+        shell: bash
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          git rev-parse HEAD > p023-source.txt
+          echo "$PR_HEAD" >> p023-source.txt
+          rustc --version >> p023-source.txt
+          cargo --version >> p023-source.txt
+      - name: Workspace formatting
+        run: cargo fmt --all -- --check
+      - name: P020, P021, P022 and P023 contracts, persistence and races
+        run: cargo test -p synveil-pairing-contracts --locked
+      - name: Authentication, API, client, sync and server-network regressions
+        run: cargo test -p synveil-auth -p synveil-api -p synveil-client -p synveil-client-sync -p synveil-server-network --lib --locked
+      - name: Installer regression
+        run: cargo test -p synveil-install-engine --locked
+      - name: Strict Clippy for qualified boundaries
+        run: cargo clippy -p synveil-pairing-contracts -p synveil-auth -p synveil-api -p synveil-client -p synveil-client-sync -p synveil-install-engine -p synveil-server-network --all-targets --locked -- -D warnings
+      - name: Documentation validation
+        if: runner.os == 'Linux'
+        run: bash scripts/validate-docs.sh
+      - name: Diff whitespace
+        run: git diff --check
+      - name: Retain source evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p023-source-${{ matrix.os }}-${{ github.run_id }}
+          path: p023-source.txt
+          if-no-files-found: error

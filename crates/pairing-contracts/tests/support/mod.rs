@@ -90,6 +90,13 @@ pub async fn transition(
     cancel: bool,
 ) -> Result<Outcome, LedgerError> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    if !cancel {
+        let outcome = issue_locked(&mut tx, id, installation, now).await?;
+        if matches!(outcome, Outcome::Issued | Outcome::Expired) {
+            tx.commit().await?;
+        }
+        return Ok(outcome);
+    }
     let row = sqlx::query("SELECT binding,state FROM invitations WHERE id=?")
         .bind(id)
         .fetch_optional(&mut *tx)
@@ -105,28 +112,60 @@ pub async fn transition(
     if !authorized(&mut tx, &qr, installation).await? {
         return Ok(Outcome::Denied);
     }
-    let now = now();
-    let next = if cancel {
-        "CANCELLED"
-    } else if now >= qr.expires_at_unix {
-        "EXPIRED"
-    } else if now < qr.issued_at_unix || state != "CREATED" {
-        return Ok(Outcome::Denied);
-    } else {
-        "ISSUED"
-    };
-    sqlx::query("UPDATE invitations SET state=? WHERE id=?")
-        .bind(next)
+    let _observed_at = now();
+    sqlx::query("UPDATE invitations SET state='CANCELLED' WHERE id=?")
         .bind(id)
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    Ok(Outcome::Cancelled)
+}
+
+/// P023 uses the existing P021 issue checks while composing creation of a new
+/// invitation with its trusted re-enrollment reservation under one writer
+/// fence. The caller owns the transaction and must commit or roll it back.
+pub async fn issue_locked(
+    db: &mut SqliteConnection,
+    id: &str,
+    installation: &str,
+    now: impl FnOnce() -> i64,
+) -> Result<Outcome, LedgerError> {
+    let row = sqlx::query("SELECT binding,state FROM invitations WHERE id=?")
+        .bind(id)
+        .fetch_optional(&mut *db)
+        .await?;
+    let Some(row) = row else {
+        return Ok(Outcome::Denied);
+    };
+    let state: String = row.get("state");
+    if state != "CREATED" {
+        return Ok(Outcome::Denied);
+    }
+    let qr: PairingQrPayload = serde_json::from_str(row.get("binding"))?;
+    if !authorized(db, &qr, installation).await? {
+        return Ok(Outcome::Denied);
+    }
+    let observed_at = now();
+    if observed_at < qr.issued_at_unix {
+        return Ok(Outcome::Denied);
+    }
+    let next = if observed_at >= qr.expires_at_unix {
+        "EXPIRED"
+    } else {
+        "ISSUED"
+    };
+    let changed = sqlx::query("UPDATE invitations SET state=? WHERE id=? AND state='CREATED'")
+        .bind(next)
+        .bind(id)
+        .execute(&mut *db)
+        .await?;
+    if changed.rows_affected() != 1 {
+        return Err(LedgerError);
+    }
     Ok(if next == "EXPIRED" {
         Outcome::Expired
-    } else if next == "ISSUED" {
-        Outcome::Issued
     } else {
-        Outcome::Cancelled
+        Outcome::Issued
     })
 }
 
