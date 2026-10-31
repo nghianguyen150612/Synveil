@@ -3145,7 +3145,10 @@ version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
+ "sqlx",
+ "tokio",
  "url",
+ "uuid",
 ]
 
 [[package]]
