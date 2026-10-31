@@ -107,6 +107,14 @@ consent is rechecked at confirmation. Observed revocation of accepted evidence
 terminates the pending ceremony. A fresh owner approval or consent cannot
 resurrect a terminal ceremony.
 
+Current target-device eligibility is a separate trusted fixture fact from both
+issuer activity and consent revocation. A missing or inactive device-authority
+row fails closed, even with an active issuer and otherwise valid consent.
+Device revocation is re-read under the same writer fence as confirmation and
+terminates the ceremony; restoring device activity cannot revive it. These
+fixture rows do not authenticate an actual device or change production device
+credential state.
+
 ## SQLite composition, concurrency and recovery
 
 P022's test-only tables store a ceremony snapshot, an independently provisioned
@@ -124,6 +132,12 @@ its writer fence and all checks. No actual credential or cryptographic verifier
 is created. A failed marker insert rolls back the ceremony, approval projection
 and invitation consumption together.
 
+Reference confirmation evidence is that committed snapshot: the complete
+challenge binding, recorded approval/consent evidence IDs, principals and time
+windows, confirmation's observed time, and matching P021 consumed invitation
+and synthetic marker. A client-supplied `confirmed` assertion is never accepted
+as evidence. This is a reference transaction record, not a signature or proof.
+
 Independent connections serialize confirmation, withdrawal, expiry and
 revocation. Sixteen simultaneous confirmations yield one commit and one
 synthetic marker. Cancellation either wins first or loses to a committed
@@ -131,6 +145,11 @@ confirmation. Revocation committed before confirmation's writer fence denies;
 a revocation serialized after a successful confirmation cannot undo that
 commit. Subsequent real credential revocation would require existing authorized
 recovery, whose production implementation is outside P022.
+
+Cancellation terminates the P022 ceremony and retains its unique invitation
+reservation. The P021 invitation stays issued without an approval projection,
+so it cannot be redeemed through this harness or reused for another ceremony.
+This does not qualify a production invitation-cancellation adapter.
 
 Lost approval/consent/confirmation responses can query an exact-bound,
 identity-checked metadata snapshot after reopening the database. Repeating a
