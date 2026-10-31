@@ -44,18 +44,31 @@ Local Linux, Rust/Cargo 1.99.1, implementation source above:
 | `bash scripts/validate-docs.sh` | PASS: 24 validation groups |
 | `git diff --check` | PASS |
 
-The broader authentication/authorization regression and strict Clippy checks are
-in progress. Initial local attempts stopped at missing DBus development metadata;
-retry uses unprivileged extracted Debian libdbus/systemd development files in a
-temporary build sysroot. No repository dependencies or host security policy were
-changed to work around that environmental limitation.
+Additional local checks completed successfully on the same implementation:
 
-Hosted focused [run 41149156161](https://github.com/nghianguyen150612/Synveil/actions/runs/41149156161)
-is queued for both Ubuntu and Windows at observation; neither has passed.
-Earlier run 41149003933 was superseded/cancelled by the strengthened isolation
-and journal-recovery source commit, and is not counted as qualification.
-Final hosted conclusions will be recorded on the draft PR. Green reference jobs
-cannot close any independent security or native qualification gates.
+| Check | Actual conclusion |
+|---|---|
+| `cargo test -p synveil-auth -p synveil-api -p synveil-client -p synveil-client-sync --lib --locked` | PASS: auth 16, API 123, client 132, client-sync 298; 569 total, no failures |
+| `cargo clippy -p synveil-pairing-contracts -p synveil-auth -p synveil-api -p synveil-client -p synveil-client-sync -p synveil-install-engine -p synveil-server-network --all-targets --locked -- -D warnings` | PASS, no warnings |
+
+Initial local broad-check attempts stopped at missing DBus development metadata;
+successful retry used unprivileged extracted Debian libdbus/systemd development
+files in a temporary build sysroot. No repository dependencies or host security
+policy were changed to work around that environmental limitation. No production
+PostgreSQL integration or native mobile/tailnet qualification was performed.
+
+Hosted focused [run 41149252475](https://github.com/nghianguyen150612/Synveil/actions/runs/41149252475),
+associated head `ccbf614807205dc64910cf95a0628a70ad1194ed`, was still **QUEUED**
+on both Ubuntu and Windows at 2026-10-31 00:23 UTC. Neither job executed or passed
+at that observation. That head differs from the implementation SHA only in the
+manifest. This final evidence update also changes documentation only; replacement
+workflow results must be checked on [draft PR #181](https://github.com/nghianguyen150612/Synveil/pull/181).
+Hosted qualification and Windows Clippy repair verification remain **PENDING**,
+not accepted. Earlier focused runs 41149003933 and 41149156161 were superseded
+and cancelled, and are not counted as qualification. Thirteen stale runs on this
+feature branch were cancelled to release capacity; other branches were untouched.
+No hosted success is inferred from passing local Linux checks. Green reference
+jobs cannot close any independent security or native qualification gates.
 
 ## Unresolved decisions
 
