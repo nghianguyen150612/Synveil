@@ -293,6 +293,18 @@ fn crash_worker() {
                 .execute(&mut *tx)
                 .await
                 .unwrap();
+            // Spill dirty pages so restart exercises an on-disk rollback journal.
+            sqlx::query("CREATE TABLE recovery_pressure (padding BLOB)")
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            sqlx::query("INSERT INTO recovery_pressure VALUES (zeroblob(1048576))")
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            let journal =
+                PathBuf::from(format!("{}-journal", std::path::Path::new(&path).display()));
+            assert!(std::fs::metadata(journal).unwrap().len() > 512);
             std::process::exit(73);
         }
         std::process::exit(73);
@@ -521,4 +533,47 @@ async fn no_secret_surface_or_cryptographic_verifier_is_introduced() {
                 .any(|w| w == forbidden.as_bytes())
         );
     }
+}
+
+#[tokio::test]
+async fn readers_never_observe_uncommitted_half_or_complete_redemption() {
+    let f = Fixture::new().await;
+    f.issued().await;
+    let mut writer = f.open().await;
+    let mut reader = f.open().await;
+    let mut tx = writer.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    sqlx::query("UPDATE invitations SET state='CONSUMED',verifier_id=id")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let snapshot = "SELECT state, (SELECT count(*) FROM synthetic_verifiers) FROM invitations";
+    assert_eq!(
+        sqlx::query_as::<_, (String, i64)>(snapshot)
+            .fetch_one(&mut reader)
+            .await
+            .unwrap(),
+        ("ISSUED".into(), 0)
+    );
+    sqlx::query("INSERT INTO synthetic_verifiers VALUES ('inv','NON_PRODUCTION_SYNTHETIC_V1')")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_as::<_, (String, i64)>(snapshot)
+            .fetch_one(&mut reader)
+            .await
+            .unwrap(),
+        ("ISSUED".into(), 0)
+    );
+    tx.commit().await.unwrap();
+    assert_eq!(
+        sqlx::query_as::<_, (String, i64)>(snapshot)
+            .fetch_one(&mut reader)
+            .await
+            .unwrap(),
+        ("CONSUMED".into(), 1)
+    );
+    reader.close().await.unwrap();
+    writer.close().await.unwrap();
+    f.check("CONSUMED", 1).await;
 }

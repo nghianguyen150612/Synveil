@@ -86,7 +86,8 @@ claim that arbitrary strings supplied by a future caller are safe to log.
 The deterministic Linux/Windows matrix runs P020 and durable tests, existing
 auth/API/client/client-sync regressions, installer regressions, formatting and
 strict all-target Clippy. Independent file-backed connections contend for the
-same invitation; exactly one succeeds and one verifier persists. Cancellation
+same invitation; exactly one succeeds and one verifier persists. Independent
+readers see neither uncommitted half-consumption nor an uncommitted verifier. Cancellation
 can win before consumption or lose to a committed consume, with one terminal
 outcome. Tests also cover stale policy, committed issuer revocation, different
 installation/device, absent or altered approval, invalid issue time, inclusive
@@ -94,7 +95,8 @@ expiry, duplicate creation, immutable terminal data, explicit rollback, failed
 verifier insertion and a deferred-constraint failure at commit.
 
 A fresh child test process exits with live uncommitted transactions after the
-first mutation and after both mutations, bypassing Rust destructors. Reopening
+first mutation and after both mutations, bypassing Rust destructors. Dirty-page pressure spills writes to an on-disk
+rollback journal before exit. Reopening
 checks state, verifier count, SQLite integrity and foreign keys before retry.
 Another child commits and exits without returning a redemption response; replay
 must deny and retain exactly one verifier. This models interrupted processes and
