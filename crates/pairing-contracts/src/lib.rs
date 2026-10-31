@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 pub mod ceremony;
+pub mod recovery;
 
 pub const INVITATION_CONTRACT_VERSION: u16 = 1;
 pub const ENROLLMENT_AUDIENCE: &str = "synveil-device-enrollment";
