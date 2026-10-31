@@ -43,7 +43,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libdbus-1-dev pkg-config
+          sudo apt-get install -y libdbus-1-dev pkg-config ripgrep
       - name: Windows compiler environment
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
