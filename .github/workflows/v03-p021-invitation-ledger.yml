@@ -1,0 +1,70 @@
+name: v0.3 P021 invitation ledger
+on:
+  pull_request:
+    branches: [develop/v0.3]
+    paths:
+      - 'crates/pairing-contracts/**'
+      - 'crates/auth/**'
+      - 'crates/metadata/**'
+      - 'crates/api/**'
+      - 'crates/client/**'
+      - 'crates/client-sync/**'
+      - 'crates/install-engine/**'
+      - 'Cargo.*'
+      - 'rust-toolchain.toml'
+      - 'docs/v0.3/**'
+      - '.github/workflows/v03-p021-invitation-ledger.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  ledger:
+    name: P021 ledger (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux credential-store dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config ripgrep
+      - name: Windows compiler environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Windows linker selection
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/select-msvc-linker.ps1
+      - name: Exact checkout
+        shell: bash
+        run: git rev-parse HEAD | tee p021-source-sha.txt
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      - name: P020 and durable P021 qualification
+        run: cargo test -p synveil-pairing-contracts --locked
+      - name: Existing authentication and authorization regressions
+        run: cargo test -p synveil-auth -p synveil-api -p synveil-client -p synveil-client-sync --lib --locked
+      - name: Separate P019 installer regression
+        run: cargo test -p synveil-install-engine --locked
+      - name: Strict Clippy including P019 debt repair
+        run: cargo clippy -p synveil-pairing-contracts -p synveil-auth -p synveil-api -p synveil-client -p synveil-client-sync -p synveil-install-engine -p synveil-server-network --all-targets --locked -- -D warnings
+      - name: Documentation
+        if: runner.os == 'Linux'
+        run: bash scripts/validate-docs.sh
+      - name: Evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p021-source-${{ matrix.os }}-${{ github.run_id }}
+          path: p021-source-sha.txt
+          if-no-files-found: error

@@ -6,13 +6,17 @@
 //! trustworthy by itself. A returned handle proves byte integrity at the time
 //! of hashing, not authorization or identity at a later consumer boundary.
 
+#[cfg(target_os = "linux")]
 use sha2::{Digest, Sha256};
 #[cfg(target_os = "linux")]
+use std::fs::File;
+#[cfg(target_os = "linux")]
 use std::io::Read;
-use std::{fs::File, path::PathBuf};
+use std::path::PathBuf;
 
 pub const LAST_USE_VERIFICATION_SCHEMA_VERSION: u32 = 1;
 pub const MAX_SUPPORTED_ARTIFACT_SIZE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+#[cfg(target_os = "linux")]
 const STREAM_CHUNK_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -248,11 +252,15 @@ impl LastUseVerificationRequest {
 /// Non-serializable open-file evidence. The file path, file descriptor, and
 /// private staging location are never exposed through this API.
 pub struct VerifiedArtifactHandle {
+    #[cfg(target_os = "linux")]
     file: File,
     identity: ArtifactIdentity,
     context: ArtifactVerificationContext,
+    #[cfg(target_os = "linux")]
     artifact_path: PathBuf,
+    #[cfg(target_os = "linux")]
     platform_identity: PlatformFileIdentity,
+    #[cfg(target_os = "linux")]
     parent_identity: DirectoryIdentity,
     verified_digest: [u8; 32],
     verified_size_bytes: u64,
@@ -539,7 +547,7 @@ pub fn verify_last_use(request: LastUseVerificationRequest) -> LastUseVerificati
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (request, expected_digest, expected_size);
+        let _ = (&request.artifact_path, expected_digest, expected_size);
         LastUseVerificationResult::Blocked(
             LastUseVerificationBlocker::PlatformFileIdentityUnavailable,
         )
@@ -701,12 +709,6 @@ struct PlatformFileIdentity {
     changed_seconds: i64,
     changed_nanoseconds: i64,
 }
-
-#[cfg(not(target_os = "linux"))]
-struct DirectoryIdentity;
-
-#[cfg(not(target_os = "linux"))]
-struct PlatformFileIdentity;
 
 #[cfg(target_os = "linux")]
 impl PlatformFileIdentity {

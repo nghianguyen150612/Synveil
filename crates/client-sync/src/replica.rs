@@ -1539,14 +1539,16 @@ mod tests {
     #[test]
     fn platform_windows_readonly_directory_attribute_is_not_a_write_permission() {
         let root = temporary_directory("platform-readonly-directory");
-        let mut permissions = fs::metadata(&root).unwrap().permissions();
+        let original_permissions = fs::metadata(&root).unwrap().permissions();
+        let mut permissions = original_permissions.clone();
         permissions.set_readonly(true);
         fs::set_permissions(&root, permissions).unwrap();
         let admitted = validate_onboarding_root(&root);
         let written = fs::write(root.join("content"), b"unchanged bytes");
-        let mut permissions = fs::metadata(&root).unwrap().permissions();
-        permissions.set_readonly(false);
-        fs::set_permissions(&root, permissions).unwrap();
+        // Restore the directory's exact original attributes rather than
+        // calling set_readonly(false), which needlessly broadens permissions
+        // and triggers strict Clippy on Windows.
+        fs::set_permissions(&root, original_permissions).unwrap();
         assert!(admitted.is_ok());
         assert!(written.is_ok());
         remove_dir_all_bounded(&root).unwrap();
