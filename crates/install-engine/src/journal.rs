@@ -617,7 +617,7 @@ fn sync_committed_file(path: &Path) -> Result<(), JournalError> {
     reject_symlink(path)?;
     #[cfg(windows)]
     {
-        use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+        use std::os::windows::fs::MetadataExt;
 
         const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
         let mut options = OpenOptions::new();
