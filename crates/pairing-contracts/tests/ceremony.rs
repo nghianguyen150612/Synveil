@@ -25,6 +25,7 @@ fn facts() -> ReferenceFacts {
     ReferenceFacts {
         authoritative_invitation: qr(),
         issuer_active: true,
+        target_device_active: true,
         independent_identity: Some(ReferenceServerIdentity {
             installation_id: "install".into(),
             endpoint: "https://reference.example.test".into(),
@@ -85,6 +86,7 @@ fn strict_dtos_have_no_authority_flags_or_credentials() {
         "client_consented",
         "tls_valid",
         "proof_verified",
+        "target_device_active",
         "token",
         "credential",
     ] {
@@ -352,6 +354,28 @@ fn response_validation_challenge_lifetimes_and_early_withdrawal() {
 }
 
 #[test]
+fn device_revocation_denies_independently_of_issuer_and_consent_and_never_revives() {
+    let (mut c, r, mut f) = ready();
+    f.target_device_active = false;
+    assert!(f.issuer_active);
+    assert!(!f.client_consent.as_ref().unwrap().revoked);
+    assert_eq!(c.confirm(&r, &f, 116), Err(CeremonyError::DeviceRevoked));
+    assert_eq!(c.response().state, CeremonyState::Revoked);
+    assert_eq!(c.recover(&r, &f), Err(CeremonyError::DeviceRevoked));
+    f.target_device_active = true;
+    assert_eq!(
+        c.confirm(&r, &f, 117),
+        Err(CeremonyError::InvalidTransition)
+    );
+    let mut c = ReferenceCeremony::claim(claim()).unwrap();
+    f.target_device_active = false;
+    assert_eq!(
+        c.authenticate_identity(&f, 110),
+        Err(CeremonyError::DeviceRevoked)
+    );
+}
+
+#[test]
 fn decisions_from_previous_ceremony_cannot_authorize_a_new_ceremony() {
     let (_, old, mut f) = challenged();
     let mut request = claim();
@@ -386,6 +410,8 @@ impl Fixture {
         support::initialize(&mut db).await.unwrap();
         sqlx::raw_sql("CREATE TABLE ceremonies(id TEXT PRIMARY KEY, invitation TEXT UNIQUE, challenge TEXT UNIQUE, snapshot TEXT NOT NULL);
             CREATE TABLE independent_identity(installation TEXT, endpoint TEXT, fingerprint TEXT, tls INTEGER);
+            CREATE TABLE device_authority(device TEXT PRIMARY KEY, active INTEGER NOT NULL CHECK(active IN (0,1)));
+            INSERT INTO device_authority VALUES ('device',1);
             CREATE TABLE ceremony_events(kind TEXT PRIMARY KEY, evidence_id TEXT UNIQUE, principal TEXT, binding TEXT, issued INTEGER, expires INTEGER, revoked INTEGER);")
             .execute(&mut db).await.unwrap();
         let q = qr();
@@ -532,9 +558,17 @@ async fn current_facts(db: &mut SqliteConnection) -> Result<ReferenceFacts, Ledg
     let identity = sqlx::query("SELECT * FROM independent_identity")
         .fetch_optional(&mut *db)
         .await?;
+    let target_device_active =
+        sqlx::query_scalar::<_, i64>("SELECT active FROM device_authority WHERE device=?")
+            .bind(&invitation.target_device_id)
+            .fetch_optional(&mut *db)
+            .await?
+            .unwrap_or(0)
+            == 1;
     Ok(ReferenceFacts {
         authoritative_invitation: invitation,
         issuer_active: authority.get::<i64, _>("active") == 1,
+        target_device_active,
         independent_identity: identity.map(|r| ReferenceServerIdentity {
             installation_id: r.get("installation"),
             endpoint: r.get("endpoint"),
@@ -713,6 +747,8 @@ async fn sixteen_independent_confirmations_commit_once() {
 async fn committed_authority_changes_stale_or_revoked_decisions_and_expiry_deny() {
     for change in [
         "UPDATE authority SET active=0",
+        "UPDATE device_authority SET active=0",
+        "DELETE FROM device_authority",
         "UPDATE authority SET policy=8",
         "UPDATE authority SET endpoint='https://other.test'",
         "UPDATE authority SET fingerprint='wrong'",
@@ -820,16 +856,20 @@ async fn cancellation_and_confirmation_race_has_one_terminal_outcome() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn revocation_writer_fence_and_post_lock_clock_are_observed() {
-    for revoke in [true, false] {
+    for scenario in 0..3 {
         let f = Fixture::new().await;
         f.ready().await;
         let mut writer = f.open().await;
         let mut tx = writer.begin_with("BEGIN IMMEDIATE").await.unwrap();
-        if revoke {
-            sqlx::query("UPDATE ceremony_events SET revoked=1 WHERE kind='owner'")
-                .execute(&mut *tx)
-                .await
-                .unwrap();
+        if scenario != 2 {
+            sqlx::query(if scenario == 0 {
+                "UPDATE ceremony_events SET revoked=1 WHERE kind='owner'"
+            } else {
+                "UPDATE device_authority SET active=0"
+            })
+            .execute(&mut *tx)
+            .await
+            .unwrap();
         }
         let clock = Arc::new(std::sync::atomic::AtomicI64::new(116));
         let clock2 = clock.clone();
@@ -846,21 +886,21 @@ async fn revocation_writer_fence_and_post_lock_clock_are_observed() {
             result
         });
         waiting.await.unwrap();
-        if !revoke {
+        if scenario == 2 {
             clock.store(180, std::sync::atomic::Ordering::SeqCst);
         }
         tx.commit().await.unwrap();
         writer.close().await.unwrap();
         assert_eq!(
             task.await.unwrap(),
-            Err(if revoke {
-                CeremonyError::Revoked
-            } else {
-                CeremonyError::Expired
+            Err(match scenario {
+                0 => CeremonyError::Revoked,
+                1 => CeremonyError::DeviceRevoked,
+                _ => CeremonyError::Expired,
             })
         );
         f.check(
-            if revoke {
+            if scenario != 2 {
                 CeremonyState::Revoked
             } else {
                 CeremonyState::Expired

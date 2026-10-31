@@ -113,6 +113,7 @@ pub enum CeremonyError {
     ClockRegression,
     Expired,
     Revoked,
+    DeviceRevoked,
     MissingIndependentIdentity,
     IdentityMismatch,
     InvalidTls,
@@ -158,6 +159,7 @@ pub struct ReferenceDecision {
 pub struct ReferenceFacts {
     pub authoritative_invitation: PairingQrPayload,
     pub issuer_active: bool,
+    pub target_device_active: bool,
     pub independent_identity: Option<ReferenceServerIdentity>,
     pub invitation_claim_verified: bool,
     pub owner_approval: Option<ReferenceDecision>,
@@ -385,6 +387,9 @@ impl ReferenceCeremony {
         if !facts.issuer_active {
             return Err(CeremonyError::Revoked);
         }
+        if !facts.target_device_active {
+            return Err(CeremonyError::DeviceRevoked);
+        }
         if &facts.authoritative_invitation != qr {
             return Err(CeremonyError::WrongBinding);
         }
@@ -421,7 +426,7 @@ impl ReferenceCeremony {
             self.state = CeremonyState::Expired;
             return Err(CeremonyError::Expired);
         }
-        if !facts.issuer_active {
+        if !facts.issuer_active || !facts.target_device_active {
             self.state = CeremonyState::Revoked;
         }
         self.check_identity(facts)?;
