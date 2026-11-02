@@ -113,6 +113,7 @@ pub enum ChannelAvailability {
     // Reserved for future authenticated production previews; never emitted today.
     #[allow(dead_code)]
     PreviewAvailable,
+    #[cfg(target_os = "linux")]
     PreviewPartiallyAvailable,
     Unsupported,
     RequiredArtifactMissing,
@@ -120,9 +121,21 @@ pub enum ChannelAvailability {
 }
 
 impl ChannelAvailability {
+    // Partial availability describes an active Linux package-manager install.
+    // Windows uses its own Setup/portable evidence and never emits that state.
+    fn supports_selection(self) -> bool {
+        match self {
+            Self::PreviewAvailable | Self::RequiredArtifactMissing => true,
+            #[cfg(target_os = "linux")]
+            Self::PreviewPartiallyAvailable => true,
+            _ => false,
+        }
+    }
+
     pub const fn label(self) -> &'static str {
         match self {
             Self::PreviewAvailable => "available",
+            #[cfg(target_os = "linux")]
             Self::PreviewPartiallyAvailable => "partially available",
             Self::Unsupported => "unsupported",
             Self::RequiredArtifactMissing => "required artifact missing",
@@ -135,6 +148,7 @@ impl ChannelAvailability {
 pub enum ArtifactEvidenceClass {
     VerifiedReleaseArtifact,
     LocallySuppliedUnverified,
+    #[cfg(target_os = "linux")]
     NativePackageManagerManaged,
     NoArtifact,
     ArtifactIdentityUnknown,
@@ -145,6 +159,7 @@ impl ArtifactEvidenceClass {
         match self {
             Self::VerifiedReleaseArtifact => "verified release artifact",
             Self::LocallySuppliedUnverified => "locally supplied, unverified artifact",
+            #[cfg(target_os = "linux")]
             Self::NativePackageManagerManaged => "native package-manager-managed artifact",
             Self::NoArtifact => "no artifact supplied",
             Self::ArtifactIdentityUnknown => "artifact identity unknown",
@@ -238,7 +253,9 @@ pub enum CapabilityFindingCode {
     UnsupportedOperatingSystemVersion,
     UnsupportedInstallationChannel,
     OperatingSystemEvidenceUnavailable,
+    #[cfg(target_os = "linux")]
     MissingPackageManager,
+    #[cfg(target_os = "linux")]
     MissingNativeDependency(&'static str),
     InstallationChannelAmbiguous,
     ExistingInstallationOwnershipUncertain,
@@ -274,9 +291,11 @@ impl CapabilityFindingCode {
             Self::OperatingSystemEvidenceUnavailable => {
                 "The operating-system version could not be identified safely.".to_owned()
             }
+            #[cfg(target_os = "linux")]
             Self::MissingPackageManager => {
                 "The required native package manager is unavailable.".to_owned()
             }
+            #[cfg(target_os = "linux")]
             Self::MissingNativeDependency(name) => {
                 format!("Required native Host dependency is unavailable: {name}.")
             }
@@ -628,26 +647,14 @@ pub fn inspect(request: PreflightRequest) -> PreflightOutcome {
                 && channels.iter().any(|channel| {
                     channel.active
                         && channel.channel != InstallationChannel::ExistingInstallation
-                        && matches!(
-                            channel.availability,
-                            ChannelAvailability::PreviewAvailable
-                                | ChannelAvailability::PreviewPartiallyAvailable
-                                | ChannelAvailability::RequiredArtifactMissing
-                        )
+                        && channel.availability.supports_selection()
                 })
         },
         |selected| {
             channels
                 .iter()
                 .find(|channel| channel.channel == selected)
-                .is_some_and(|channel| {
-                    matches!(
-                        channel.availability,
-                        ChannelAvailability::PreviewAvailable
-                            | ChannelAvailability::PreviewPartiallyAvailable
-                            | ChannelAvailability::RequiredArtifactMissing
-                    )
-                })
+                .is_some_and(|channel| channel.availability.supports_selection())
         },
     );
     if request.selected_channel.is_none() && active_channel_count != 1 {
@@ -662,12 +669,13 @@ pub fn inspect(request: PreflightRequest) -> PreflightOutcome {
                     CapabilityFindingCode::ArtifactUnavailable,
                 ));
             }
-            if matches!(
-                channel.artifact_evidence,
+            if match channel.artifact_evidence {
                 ArtifactEvidenceClass::LocallySuppliedUnverified
-                    | ArtifactEvidenceClass::ArtifactIdentityUnknown
-                    | ArtifactEvidenceClass::NativePackageManagerManaged
-            ) {
+                | ArtifactEvidenceClass::ArtifactIdentityUnknown => true,
+                #[cfg(target_os = "linux")]
+                ArtifactEvidenceClass::NativePackageManagerManaged => true,
+                _ => false,
+            } {
                 findings.push(CapabilityFinding::new(
                     CapabilityFindingCode::ArtifactVerificationIncomplete,
                 ));
@@ -780,6 +788,7 @@ fn plan_build_blockers(
             ArtifactEvidenceClass::LocallySuppliedUnverified => {
                 ArtifactEvidenceKind::LocallySuppliedUntrustedArtifact
             }
+            #[cfg(target_os = "linux")]
             ArtifactEvidenceClass::NativePackageManagerManaged => {
                 ArtifactEvidenceKind::NativePackageManagerManagedIdentity
             }

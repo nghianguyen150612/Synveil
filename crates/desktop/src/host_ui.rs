@@ -12,7 +12,7 @@ pub struct HostSession {
 impl Default for HostSession {
     fn default() -> Self {
         Self {
-            coordinator: ServerBootstrapCoordinator::new(NativeHostOwners::default()),
+            coordinator: ServerBootstrapCoordinator::new(native_host_owners()),
             review: None,
         }
     }
@@ -189,7 +189,7 @@ impl HostSession {
                 self.review = None;
                 self.coordinator.cancel();
                 let _ = self.coordinator.owners_mut().request(Request::Cancel);
-                self.coordinator = ServerBootstrapCoordinator::new(NativeHostOwners::default());
+                self.coordinator = ServerBootstrapCoordinator::new(native_host_owners());
                 Ok(HostView {
                     step: "selection".to_owned(),
                     feedback: "Setup cancelled. Any already prepared server data is preserved."
@@ -236,5 +236,17 @@ impl HostSession {
             Response::Error { code } => Err(code),
             _ => Err("Invalid Host inspection result.".to_owned()),
         }
+    }
+}
+
+// Linux owns initialized services; the unsupported-platform owner is a unit struct.
+fn native_host_owners() -> NativeHostOwners {
+    #[cfg(target_os = "linux")]
+    {
+        NativeHostOwners::default()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        NativeHostOwners
     }
 }
