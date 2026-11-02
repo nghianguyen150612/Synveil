@@ -26,7 +26,7 @@ These internal Desktop enums have no serde derives or external wire serializatio
 - Documentation validator passed all 24 groups.
 - Local Rust Desktop/installer/bootstrap/host/network compilation was attempted with a temporary Rust toolchain and extracted Qt/DBus sysroot. It is blocked by missing `libsystemd.pc` and limited container disk space (127 MiB remained after compilation); no tests from that command are counted as passed. The authoritative affected-crate test and strict Clippy results must come from hosted CI. No Windows-native claim is made from Linux.
 - Hosted P019 Ubuntu/Windows and global Rust CI (including Desktop Windows native Qt contracts) must pass on the final fix head. Final results and exact head are recorded in the Draft PR description; pending jobs are not passes.
-- The integration base contains P020/P021/P022. P023 remains isolated in PR #183; combined compatibility can be exercised in a detached disposable worktree with only these two source fixes applied. No P023 commits are copied into this fix branch.
+- The integration base contains P020/P021/P022. P023 remains isolated in PR #183; the added Ubuntu/Windows compatibility workflow applies only the pairing-contracts diff from the exact pinned P023 head to the disposable fix CI checkout, then runs P020–P023, authentication/API/client/client-sync/network and installer regressions. Both source identities are retained in CI artifacts. No P023 commits are copied into this fix branch.
 
 ## P028 investigation
 

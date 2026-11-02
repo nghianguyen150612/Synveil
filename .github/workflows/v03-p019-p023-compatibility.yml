@@ -1,0 +1,68 @@
+name: v0.3 P019 repair P023 compatibility
+
+on:
+  pull_request:
+    branches: [develop/v0.3]
+    paths:
+      - 'crates/desktop/**'
+      - 'docs/v0.3/manifests/P019_WINDOWS_CLIPPY_FIX_MANIFEST.md'
+      - '.github/workflows/v03-p019-p023-compatibility.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compatibility:
+    name: P019 plus pinned P023 (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux credential-store dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Windows compiler environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Windows linker selection
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/select-msvc-linker.ps1
+      - name: Apply pinned P023 reference contracts to disposable CI checkout
+        shell: bash
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD > p019-p023-source.txt
+          echo "$PR_HEAD" >> p019-p023-source.txt
+          echo 'P023=3c496a3c75f2b0894a68905db4123f3fe35ab3a7' >> p019-p023-source.txt
+          git fetch origin 3c496a3c75f2b0894a68905db4123f3fe35ab3a7
+          git diff 288222beed0c8e56a3c60dbbeb8e2835a6551750 3c496a3c75f2b0894a68905db4123f3fe35ab3a7 -- crates/pairing-contracts | git apply --index -
+          git diff --cached --check
+      - name: P020 through P023 reference contracts, crash and race regressions
+        run: cargo test -p synveil-pairing-contracts --locked
+      - name: Authentication API client sync and network regressions
+        run: cargo test -p synveil-auth -p synveil-api -p synveil-client -p synveil-client-sync -p synveil-server-network --lib --locked
+      - name: Installer security boundary regressions
+        run: cargo test -p synveil-install-engine --locked
+      - name: Retain both source identities
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p019-p023-${{ matrix.os }}-${{ github.run_id }}
+          path: p019-p023-source.txt
+          if-no-files-found: error
