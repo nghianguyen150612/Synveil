@@ -46,7 +46,35 @@ fn facts(qr: &PairingQrPayload) -> ReferenceFacts {
     }
 }
 
-async fn database_facts(db: &mut SqliteConnection, invitation_id: &str) -> ReferenceFacts {
+async fn database_decision(
+    db: &mut SqliteConnection,
+    ceremony_id: Option<&str>,
+    kind: &str,
+) -> Option<ReferenceDecision> {
+    let ceremony_id = ceremony_id?;
+    let row = sqlx::query(
+        "SELECT evidence_id,principal,binding,issued,expires,revoked FROM ceremony_events WHERE ceremony_id=? AND kind=?",
+    )
+    .bind(ceremony_id)
+    .bind(kind)
+    .fetch_optional(&mut *db)
+    .await
+    .unwrap()?;
+    Some(ReferenceDecision {
+        evidence_id: row.get("evidence_id"),
+        principal_id: row.get("principal"),
+        binding: serde_json::from_str(&row.get::<String, _>("binding")).unwrap(),
+        issued_at_unix: row.get("issued"),
+        expires_at_unix: row.get("expires"),
+        revoked: row.get::<i64, _>("revoked") != 0,
+    })
+}
+
+async fn database_facts(
+    db: &mut SqliteConnection,
+    invitation_id: &str,
+    ceremony_id: Option<&str>,
+) -> ReferenceFacts {
     let binding: String = sqlx::query_scalar("SELECT binding FROM invitations WHERE id=?")
         .bind(invitation_id)
         .fetch_one(&mut *db)
@@ -95,8 +123,8 @@ async fn database_facts(db: &mut SqliteConnection, invitation_id: &str) -> Refer
         }),
         // Trusted synthetic fixture fact, never sourced from the claim request.
         invitation_claim_verified: true,
-        owner_approval: None,
-        client_consent: None,
+        owner_approval: database_decision(db, ceremony_id, "owner").await,
+        client_consent: database_decision(db, ceremony_id, "client").await,
     }
 }
 
@@ -169,7 +197,7 @@ async fn p020_through_p023_compose_in_isolated_sqlite_fixture() {
         qr_claim: serde_json::from_str(&serde_json::to_string(&qr).unwrap()).unwrap(),
     };
     let mut ceremony = ReferenceCeremony::claim(claim).unwrap();
-    let mut trusted = database_facts(&mut db, &qr.invitation_id).await;
+    let mut trusted = database_facts(&mut db, &qr.invitation_id, None).await;
     ceremony.authenticate_identity(&trusted, 111).unwrap();
     let request = ceremony
         .challenge("p024-challenge".into(), 180, &trusted, 112)
@@ -241,7 +269,13 @@ async fn p020_through_p023_compose_in_isolated_sqlite_fixture() {
             .await
             .unwrap();
     }
-    ceremony.confirm(&request, &trusted, 117).unwrap();
+    let current_facts = database_facts(
+        &mut tx,
+        &qr.invitation_id,
+        Some(&request.binding.ceremony_id),
+    )
+    .await;
+    ceremony.confirm(&request, &current_facts, 117).unwrap();
     sqlx::query(
         "INSERT INTO approvals SELECT id,binding FROM invitations WHERE id=? AND state='ISSUED'",
     )
