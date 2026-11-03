@@ -13,7 +13,7 @@
 | P019 repair ancestor | `ccca06177e5ae7c39087a433b3a48ff2f1679753` (merged PR #184). |
 | P023 ancestor | `40801060ceb5c5243c879496eb726136ac81e26b` (merged PR #183). |
 | Implementation source SHA | `84561b26dffb941295d17c1f01944021b5707148` (P024 tests and contracts; identity, decision, and recovery facts are reloaded from trusted fixture state). |
-| Final verified implementation SHA | `84561b26dffb941295d17c1f01944021b5707148`; later commits only close hosted evidence in the documents. |
+| Final verified source/test SHA | `f7e43e6b77c52ccd52e49bc05913c6b578294cd1` (implementation sources at `84561b26dffb941295d17c1f01944021b5707148`, plus provenance documentation). |
 | Draft PR | [#185](https://github.com/nghianguyen150612/Synveil/pull/185), targeting `develop/v0.3`, open as Draft. |
 | Roadmap | `Synveil-v0.3-Context-Roadmap-P001-P060.md` is unavailable in the checkout. Scope is provisional. |
 
@@ -58,14 +58,18 @@ P020–P023 security-specific tests remain in `tests/ceremony.rs`, `tests/durabl
 | `git diff --check` | Pass. |
 
 The initial direct host regression invocation stopped during dependency compilation because the host has no `dbus-1.pc`. The completed regression run used the exact Cargo commands from the hosted workflow in a disposable Rust 1.99.1 Debian container with `libdbus-1-dev`. Its first installer-engine run used container root and hit the existing appimage test non-root guard; the same command was then run successfully as the workspace UID. No product test or guard was changed to obtain a pass.
-| Local Windows/Linux CI | Hosted focused matrix pending; this workspace is Linux. |
+| Focused hosted P024 CI | Pass on `f7e43e6b77c52ccd52e49bc05913c6b578294cd1`: [run 41552115481](https://github.com/nghianguyen150612/Synveil/actions/runs/41552115481), Ubuntu 24.04 and Windows latest. |
 
 ## Hosted validation
 
-The P024 implementation source is `84561b26dffb941295d17c1f01944021b5707148`. Focused P024 and global Rust CI results on the current PR head are pending; final hosted run URLs will be recorded after completion. A green P024 Rust Windows job is not P028 native Windows acceptance. P019's repaired Windows preflight and strict Clippy passed in [run 41437684199](https://github.com/nghianguyen150612/Synveil/actions/runs/41437684199) on repaired source `c095efa092135575b3c941c9fd888222c4557a88`. The separate Windows Inno interruption job [41437684142](https://github.com/nghianguyen150612/Synveil/actions/runs/41437684142/job/125251483708) failed with the reported `INSTALLER_VERIFY_FAILURE: secret-like marker in output`; it remains unresolved and is not relabeled as passing.
+The P024 implementation source is `84561b26dffb941295d17c1f01944021b5707148`; focused P024 passed on qualification head `f7e43e6b77c52ccd52e49bc05913c6b578294cd1` in [run 41552115481](https://github.com/nghianguyen150612/Synveil/actions/runs/41552115481), with both Ubuntu 24.04 and Windows jobs successful. P020–P023 also passed their Ubuntu/Windows workflows on that same head: [P020 run 41552115557](https://github.com/nghianguyen150612/Synveil/actions/runs/41552115557), [P021 run 41552115788](https://github.com/nghianguyen150612/Synveil/actions/runs/41552115788), [P022 run 41552115816](https://github.com/nghianguyen150612/Synveil/actions/runs/41552115816), and [P023 run 41552115551](https://github.com/nghianguyen150612/Synveil/actions/runs/41552115551). P019 preflight passed both OS jobs, including fixed Windows strict Clippy, in [run 41552115609](https://github.com/nghianguyen150612/Synveil/actions/runs/41552115609).
+
+The PR-triggered global Rust CI passed all jobs on qualification head `f7e43e6b77c52ccd52e49bc05913c6b578294cd1`: [run 41552115507](https://github.com/nghianguyen150612/Synveil/actions/runs/41552115507). This includes Linux, Windows and macOS checks/tests, strict formatting/Clippy, and Linux/Windows Qt desktop build jobs. The final documentation-head focused and global reruns will be linked here after they complete. A green Windows desktop build is not P028 native acceptance. The separate Windows native run [41552115529](https://github.com/nghianguyen150612/Synveil/actions/runs/41552115529) built a candidate and passed disposable standard-user install, then failed its evidence-recording gate with `BLOCKED_BY_ENVIRONMENT: required P028 GUI/logon evidence unavailable and named-pipe gate pending`; actual P028 acceptance remains unresolved.
+
+The installer-resilience workflow passed on the qualification head in [run 41552115534](https://github.com/nghianguyen150612/Synveil/actions/runs/41552115534). The prior Windows Inno interruption job [41437684142](https://github.com/nghianguyen150612/Synveil/actions/runs/41437684142/job/125251483708) failed with `INSTALLER_VERIFY_FAILURE: secret-like marker in output`. Its investigation remains an unresolved independent gate and the historical failure is not relabeled as passing.
 
 ## Known blockers and release conclusion
 
 Required unresolved gates are P004-D12 first-contact identity/proof, P004-D13 credential lifecycle/rotation/recovery, other P004 decisions, P028 native Windows acceptance, P036 signing/publisher qualification, independent security review, physical Android/iOS pairing/recovery, real LAN/Tailscale qualification, original roadmap reconciliation, and investigation of the Windows installer interruption reporting `INSTALLER_VERIFY_FAILURE: secret-like marker in output`.
 
-**Release readiness:** P024 is a reference-only closeout. Production pairing remains blocked. The Draft PR must stay unmerged. No P025 work is included.
+**Release readiness:** P024 is a reference-only closeout. Local contract/regression evidence, focused hosted Linux/Windows P024 jobs, and the global Rust CI pass on the implementation head. The exact documentation-head focused and global reruns remain pending as recorded above. Production pairing remains blocked. The Draft PR must stay unmerged. No P025 work is included.

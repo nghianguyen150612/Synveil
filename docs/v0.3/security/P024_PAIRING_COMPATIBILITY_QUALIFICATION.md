@@ -9,8 +9,8 @@
 | Repository / target | `nghianguyen150612/Synveil`, `develop/v0.3` |
 | Assigned branch | `feat/v03-p024-pairing-compatibility-closeout` |
 | Exact starting SHA | `40801060ceb5c5243c879496eb726136ac81e26b` |
-| Implementation / verified source SHA | `84561b26dffb941295d17c1f01944021b5707148`. |
-| Initial final PR head | `84561b26dffb941295d17c1f01944021b5707148`; final hosted evidence head will be listed in the manifest/delivery report. |
+| Implementation source SHA | `84561b26dffb941295d17c1f01944021b5707148`. |
+| Hosted P024 qualification head | `f7e43e6b77c52ccd52e49bc05913c6b578294cd1` (contains the implementation and its provenance documentation). |
 | Draft PR | [#185](https://github.com/nghianguyen150612/Synveil/pull/185). |
 | P019 repair / P023 ancestry | Merged commits `ccca06177e5ae7c39087a433b3a48ff2f1679753` and `40801060ceb5c5243c879496eb726136ac81e26b` are ancestors of the starting SHA. |
 | Roadmap | `Synveil-v0.3-Context-Roadmap-P001-P060.md` is not present in the checkout. Scope stays provisional pending reconciliation. |
@@ -94,12 +94,14 @@ Security assumptions are limited to trusted test fixture construction, fixture-o
 
 ## Validation results
 
-Local and hosted results, exact tested SHAs, commands, and any blocked gates are recorded in [PROMPT024_MANIFEST.md](../manifests/PROMPT024_MANIFEST.md). CI is a focused Linux/Windows Rust desktop contract gate and is not P028 native Windows acceptance.
+Local and hosted results, exact tested SHAs, commands, and any blocked gates are recorded in [PROMPT024_MANIFEST.md](../manifests/PROMPT024_MANIFEST.md). Focused P024 Linux/Windows CI and broad global Rust CI passed on the hosted implementation head. Final documentation-head reruns are tracked in the manifest. CI is a Rust and desktop build gate and is not P028 native Windows acceptance.
 
 ## Release readiness
 
-**Reference pairing qualification:** complete only when the focused tests and final-head Linux/Windows workflow pass; see the manifest for the observed result. **Production pairing:** blocked. Do not enable pairing or merge this Draft PR based solely on this reference evidence.
+**Reference pairing qualification:** the local focused suite, hosted Linux/Windows workflow, and broad global Rust CI pass on the implementation head; the final documentation-head focused rerun remains pending in the manifest. **Production pairing:** blocked. Do not enable pairing or merge this Draft PR based solely on this reference evidence.
 
 Unresolved gates include P004-D12 first-contact identity/proof approval, P004-D13 credential lifecycle approval, remaining P004 decisions, P028 real Windows native acceptance, P036 signing/publisher qualification, independent security review, physical Android/iOS pairing and recovery, real LAN/Tailscale qualification, roadmap reconciliation, and the Windows installer interruption reporting `INSTALLER_VERIFY_FAILURE: secret-like marker in output`.
 
-The P019 Windows Clippy repair has a passing focused hosted run: [run 41437684199](https://github.com/nghianguyen150612/Synveil/actions/runs/41437684199), Windows job `P019 preflight contracts (windows-latest)`, including its strict Clippy step, on repaired P019 source `c095efa092135575b3c941c9fd888222c4557a88`. The separate installer blocker is [run 41437684142, Windows ownership lifecycle and Inno process interruption](https://github.com/nghianguyen150612/Synveil/actions/runs/41437684142/job/125251483708), which is failed. The observed failure marker is recorded as `INSTALLER_VERIFY_FAILURE: secret-like marker in output`; this P024 work does not investigate or suppress it.
+The P019 Windows Clippy repair has a passing focused hosted run on the P024 qualification head: [run 41552115609](https://github.com/nghianguyen150612/Synveil/actions/runs/41552115609), Windows job `P019 preflight contracts (windows-latest)`, including strict Clippy. The independent installer resilience workflow passed on that head in [run 41552115534](https://github.com/nghianguyen150612/Synveil/actions/runs/41552115534), including Windows ownership lifecycle and Inno interruption. A prior separate installer run, [41437684142, Windows ownership lifecycle and Inno process interruption](https://github.com/nghianguyen150612/Synveil/actions/runs/41437684142/job/125251483708), failed with `INSTALLER_VERIFY_FAILURE: secret-like marker in output`. That prior failure remains an unresolved independent gate despite the later workflow pass; this P024 work does not investigate, suppress, or relabel it.
+
+The Windows standard-user native workflow [41552115529](https://github.com/nghianguyen150612/Synveil/actions/runs/41552115529) built its candidate and passed disposable standard-user installation, then failed the required evidence gate with `BLOCKED_BY_ENVIRONMENT: required P028 GUI/logon evidence unavailable and named-pipe gate pending`. This records a native-evidence blocker, not a P028 acceptance pass.
