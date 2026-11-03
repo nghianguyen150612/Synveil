@@ -9,8 +9,9 @@
 | Repository / target | `nghianguyen150612/Synveil`, `develop/v0.3` |
 | Assigned branch | `feat/v03-p024-pairing-compatibility-closeout` |
 | Exact starting SHA | `40801060ceb5c5243c879496eb726136ac81e26b` |
-| Implementation SHA | Recorded in the P024 manifest and final delivery report after the implementation commit. |
-| Final PR head SHA | Recorded after final hosted Linux and Windows runs. |
+| Implementation / verified source SHA | `44deeb342d5b15a84e1ef3f48547d395179f68dd`. |
+| Initial final PR head | `44deeb342d5b15a84e1ef3f48547d395179f68dd`; final hosted head will be listed in the manifest/delivery report. |
+| Draft PR | [#185](https://github.com/nghianguyen150612/Synveil/pull/185). |
 | P019 repair / P023 ancestry | Merged commits `ccca06177e5ae7c39087a433b3a48ff2f1679753` and `40801060ceb5c5243c879496eb726136ac81e26b` are ancestors of the starting SHA. |
 | Roadmap | `Synveil-v0.3-Context-Roadmap-P001-P060.md` is not present in the checkout. Scope stays provisional pending reconciliation. |
 

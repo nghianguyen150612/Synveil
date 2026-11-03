@@ -12,9 +12,9 @@
 | Starting remote feature ref | Same exact SHA as the base; no P024 commits or open PR existed. |
 | P019 repair ancestor | `ccca06177e5ae7c39087a433b3a48ff2f1679753` (merged PR #184). |
 | P023 ancestor | `40801060ceb5c5243c879496eb726136ac81e26b` (merged PR #183). |
-| Implementation source SHA | To record after implementation commit. |
-| Final PR head SHA | To record after final hosted validation. |
-| Draft PR | To record after publication. |
+| Implementation source SHA | `44deeb342d5b15a84e1ef3f48547d395179f68dd` (P024 code, workflow and initial qualification documents). |
+| Final verified implementation SHA | `44deeb342d5b15a84e1ef3f48547d395179f68dd`; later commits only close hosted evidence in the manifest. |
+| Draft PR | [#185](https://github.com/nghianguyen150612/Synveil/pull/185), targeting `develop/v0.3`, open as Draft. |
 | Roadmap | `Synveil-v0.3-Context-Roadmap-P001-P060.md` is unavailable in the checkout. Scope is provisional. |
 
 The original local checkout at `/workspace/Synveil` was clean on branch `work`, HEAD `604499fce0dfd134d82da3d5bb5d4a055c5eea8d`. It was preserved. GitHub confirmed the assigned feature ref and `develop/v0.3` both resolved to the starting base. Work was isolated in `/workspace/Synveil-P024` on the assigned branch. No unrelated staged or unstaged work was overwritten.
@@ -62,7 +62,7 @@ The initial direct host regression invocation stopped during dependency compilat
 
 ## Hosted validation
 
-The P024 workflow and global Rust CI will run against the final PR head. Results and run URLs will be recorded after completion. A green P024 Rust Windows job is not P028 native Windows acceptance. P019's repaired Windows preflight and strict Clippy passed in [run 41437684199](https://github.com/nghianguyen150612/Synveil/actions/runs/41437684199) on repaired source `c095efa092135575b3c941c9fd888222c4557a88`. The separate Windows Inno interruption job [41437684142](https://github.com/nghianguyen150612/Synveil/actions/runs/41437684142/job/125251483708) failed with the reported `INSTALLER_VERIFY_FAILURE: secret-like marker in output`; it remains unresolved and is not relabeled as passing.
+The first Draft PR head is `44deeb342d5b15a84e1ef3f48547d395179f68dd`. Focused P024 and global Rust CI results are pending; the final hosted source SHA and run URLs will be recorded after completion. A green P024 Rust Windows job is not P028 native Windows acceptance. P019's repaired Windows preflight and strict Clippy passed in [run 41437684199](https://github.com/nghianguyen150612/Synveil/actions/runs/41437684199) on repaired source `c095efa092135575b3c941c9fd888222c4557a88`. The separate Windows Inno interruption job [41437684142](https://github.com/nghianguyen150612/Synveil/actions/runs/41437684142/job/125251483708) failed with the reported `INSTALLER_VERIFY_FAILURE: secret-like marker in output`; it remains unresolved and is not relabeled as passing.
 
 ## Known blockers and release conclusion
 
