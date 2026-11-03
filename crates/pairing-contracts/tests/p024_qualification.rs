@@ -325,7 +325,13 @@ async fn p020_through_p023_compose_in_isolated_sqlite_fixture() {
         ceremony.response().state,
         synveil_pairing_contracts::ceremony::CeremonyState::Confirmed
     );
-    let recovered = ceremony.recover(&request, &trusted).unwrap();
+    let recovery_facts = database_facts(
+        &mut db,
+        &qr.invitation_id,
+        Some(&request.binding.ceremony_id),
+    )
+    .await;
+    let recovered = ceremony.recover(&request, &recovery_facts).unwrap();
     assert_eq!(
         recovered.state,
         synveil_pairing_contracts::ceremony::CeremonyState::Confirmed
