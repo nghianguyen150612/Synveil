@@ -12,8 +12,8 @@
 | Starting remote feature ref | Same exact SHA as the base; no P024 commits or open PR existed. |
 | P019 repair ancestor | `ccca06177e5ae7c39087a433b3a48ff2f1679753` (merged PR #184). |
 | P023 ancestor | `40801060ceb5c5243c879496eb726136ac81e26b` (merged PR #183). |
-| Implementation source SHA | `9fcf592c2a00071896e0216cf754611a5e26bd63` (P024 tests and contracts, with exact transaction-fenced trusted-state reload). |
-| Final verified implementation SHA | `9fcf592c2a00071896e0216cf754611a5e26bd63`; later commits only close hosted evidence in the documents. |
+| Implementation source SHA | `84561b26dffb941295d17c1f01944021b5707148` (P024 tests and contracts; identity, decision, and recovery facts are reloaded from trusted fixture state). |
+| Final verified implementation SHA | `84561b26dffb941295d17c1f01944021b5707148`; later commits only close hosted evidence in the documents. |
 | Draft PR | [#185](https://github.com/nghianguyen150612/Synveil/pull/185), targeting `develop/v0.3`, open as Draft. |
 | Roadmap | `Synveil-v0.3-Context-Roadmap-P001-P060.md` is unavailable in the checkout. Scope is provisional. |
 
@@ -62,7 +62,7 @@ The initial direct host regression invocation stopped during dependency compilat
 
 ## Hosted validation
 
-The P024 implementation source is `9fcf592c2a00071896e0216cf754611a5e26bd63`. Focused P024 and global Rust CI results on the current PR head are pending; final hosted run URLs will be recorded after completion. A green P024 Rust Windows job is not P028 native Windows acceptance. P019's repaired Windows preflight and strict Clippy passed in [run 41437684199](https://github.com/nghianguyen150612/Synveil/actions/runs/41437684199) on repaired source `c095efa092135575b3c941c9fd888222c4557a88`. The separate Windows Inno interruption job [41437684142](https://github.com/nghianguyen150612/Synveil/actions/runs/41437684142/job/125251483708) failed with the reported `INSTALLER_VERIFY_FAILURE: secret-like marker in output`; it remains unresolved and is not relabeled as passing.
+The P024 implementation source is `84561b26dffb941295d17c1f01944021b5707148`. Focused P024 and global Rust CI results on the current PR head are pending; final hosted run URLs will be recorded after completion. A green P024 Rust Windows job is not P028 native Windows acceptance. P019's repaired Windows preflight and strict Clippy passed in [run 41437684199](https://github.com/nghianguyen150612/Synveil/actions/runs/41437684199) on repaired source `c095efa092135575b3c941c9fd888222c4557a88`. The separate Windows Inno interruption job [41437684142](https://github.com/nghianguyen150612/Synveil/actions/runs/41437684142/job/125251483708) failed with the reported `INSTALLER_VERIFY_FAILURE: secret-like marker in output`; it remains unresolved and is not relabeled as passing.
 
 ## Known blockers and release conclusion
 
