@@ -68,7 +68,9 @@ pub fn evaluate(
     }
     let (id, method) = match &context.principal {
         Principal::Browser { id } if context.binding.device.is_none() => (id, "browser"),
-        Principal::Device { id, device } if context.binding.device.as_ref() == Some(device) => {
+        Principal::Device { id, device }
+            if !device.is_empty() && context.binding.device.as_ref() == Some(device) =>
+        {
             (id, "device")
         }
         Principal::Unauthenticated => return Decision::Denied,
@@ -129,4 +131,163 @@ pub fn qualify_legacy(legacy_allow: bool, proposed: Decision) -> Decision {
     } else {
         proposed
     }
+}
+
+/// Trusted ownership record, resolved independently of the request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Ownership {
+    pub host: String,
+    pub resource_type: String,
+    pub resource_id: String,
+    pub owner: String,
+}
+
+/// Provenance is a qualification input from a trusted authority snapshot. It is
+/// not a claim accepted from an HTTP request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AuthorityProvenance {
+    Owner { owner: String },
+    Delegated { grantor: String, owner: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Grant {
+    pub assignment: Assignment,
+    pub provenance: AuthorityProvenance,
+}
+
+/// Evidence is supplied by an independently trusted approval store. This type
+/// does not implement an approval protocol, signatures, or single-use execution.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApprovalEvidence {
+    pub approver: Principal,
+    pub requester: Principal,
+    pub binding: Binding,
+    pub revision: u64,
+    pub expires_at: u64,
+    pub revoked: bool,
+    pub approver_authorized: bool,
+    /// Trusted stable human identities, not session IDs.
+    pub approver_actor: String,
+    pub requester_actor: String,
+}
+
+/// A single trusted and consistently read snapshot. Its provenance and atomic
+/// acquisition are responsibilities of a future production implementation.
+pub struct AuthoritySnapshot<'a> {
+    pub policy_version: u32,
+    pub revision: u64,
+    pub ownership: &'a Ownership,
+    pub grants: &'a [Grant],
+    pub vocabulary: &'a [(String, String, String)],
+    pub approval: Option<&'a ApprovalEvidence>,
+}
+
+/// Reference qualification only. No caller-supplied claims may populate the
+/// snapshot, approval requirement, principal, revocation or ownership fields.
+pub fn evaluate_snapshot(
+    context: &Context,
+    now: u64,
+    snapshot: &AuthoritySnapshot<'_>,
+) -> Decision {
+    if snapshot.policy_version != 1 {
+        return Decision::Unsupported;
+    }
+    if context.revision != snapshot.revision || context.principal_revoked || context.device_revoked
+    {
+        return Decision::StaleOrRevoked;
+    }
+    let b = &context.binding;
+    let ownership = snapshot.ownership;
+    if ownership.host != b.host
+        || ownership.owner != b.owner
+        || ownership.resource_type != b.resource_type
+        || ownership.resource_id != b.resource_id
+        || ownership.owner.is_empty()
+    {
+        return Decision::Denied;
+    }
+    let matching: Vec<&Grant> = snapshot
+        .grants
+        .iter()
+        .filter(|g| g.assignment.principal == context.principal && g.assignment.binding == *b)
+        .collect();
+    if matching.iter().any(|g| match &g.provenance {
+        AuthorityProvenance::Owner { owner } => owner != &ownership.owner,
+        AuthorityProvenance::Delegated { grantor, owner } => {
+            owner != &ownership.owner || grantor != owner
+        }
+    }) {
+        return Decision::Denied;
+    }
+    // A valid explicit deny wins regardless of ordering; stale or invalid
+    // records still fail closed even in the presence of an allow.
+    if matching.iter().any(|g| {
+        g.assignment.revision != snapshot.revision
+            || g.assignment.revoked
+            || g.assignment.expires_at.is_some_and(|expiry| now >= expiry)
+    }) {
+        return Decision::StaleOrRevoked;
+    }
+    if matching.iter().any(|g| {
+        !snapshot.vocabulary.iter().any(|(role, resource, action)| {
+            role == &g.assignment.role && resource == &b.resource_type && action == &b.action
+        })
+    }) {
+        return Decision::Unsupported;
+    }
+    if matching.iter().any(|g| g.assignment.deny) {
+        return Decision::Denied;
+    }
+    let assignments: Vec<Assignment> = matching.into_iter().map(|g| g.assignment.clone()).collect();
+    // The original helper's version marker is 1, whereas snapshot revision is
+    // an independently changing generation. Normalize only after validation.
+    let mut normalized = context.clone();
+    normalized.revision = 1;
+    let normalized_assignments: Vec<Assignment> = assignments
+        .into_iter()
+        .map(|mut a| {
+            a.revision = 1;
+            a
+        })
+        .collect();
+    let decision = evaluate(
+        &normalized,
+        1,
+        now,
+        &normalized_assignments,
+        snapshot.vocabulary,
+    );
+    if decision != Decision::RequiresApproval {
+        return decision;
+    }
+    match snapshot.approval {
+        Some(a)
+            if !a.revoked
+                && a.approver_authorized
+                && !a.approver_actor.is_empty()
+                && !a.requester_actor.is_empty()
+                && a.approver_actor != a.requester_actor
+                && a.approver != context.principal
+                && matches!(a.approver, Principal::Browser { ref id } if !id.is_empty())
+                && a.requester == context.principal
+                && a.binding == *b
+                && a.revision == snapshot.revision
+                && now < a.expires_at =>
+        {
+            Decision::Allowed
+        }
+        _ => Decision::RequiresApproval,
+    }
+}
+
+/// Application policy never provides OS privilege. An OS-specific authorization
+/// must be checked separately by the privileged effect's implementation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OsPrivilege {
+    NotGranted,
+}
+
+pub fn application_decision_os_privilege(_: Decision) -> OsPrivilege {
+    OsPrivilege::NotGranted
 }

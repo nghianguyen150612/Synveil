@@ -69,7 +69,7 @@ jobs:
       - name: P020 through P024 pairing contracts and compatibility fixtures
         run: cargo test -p synveil-pairing-contracts --locked
       - name: Authentication, API, client, sync and server-network regressions
-        run: cargo test -p synveil-auth -p synveil-api -p synveil-client -p synveil-client-sync -p synveil-server-network --lib --locked
+        run: cargo test -p synveil-auth -p synveil-api -p synveil-metadata -p synveil-client -p synveil-client-sync -p synveil-server-network --lib --locked
       - name: Installer regression
         run: cargo test -p synveil-install-engine --locked
       - name: Strict Clippy for qualified boundaries
