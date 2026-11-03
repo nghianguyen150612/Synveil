@@ -305,7 +305,7 @@ fn revocation_fence_serializes_fixture_decisions() {
         })
     };
     barrier.wait();
-    let revoked = *state.lock().unwrap();
+    let fence = state.lock().unwrap();
     let binding = Binding {
         host: "h".into(),
         owner: "o".into(),
@@ -321,7 +321,7 @@ fn revocation_fence_serializes_fixture_decisions() {
         audience: "h".into(),
         binding: binding.clone(),
         revision: 1,
-        principal_revoked: revoked,
+        principal_revoked: *fence,
         device_revoked: false,
         approval_required: false,
     };
@@ -339,5 +339,6 @@ fn revocation_fence_serializes_fixture_decisions() {
         evaluate(&context, 1, 1, &[grant], &vocabulary),
         Decision::StaleOrRevoked
     );
+    drop(fence);
     writer.join().unwrap();
 }
