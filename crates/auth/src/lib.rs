@@ -7,6 +7,7 @@
 //! outside this crate. PostgreSQL-specific persistence stays in
 //! `synveil-metadata`.
 
+pub mod authorization_reference;
 mod config;
 mod device_credentials;
 mod errors;
