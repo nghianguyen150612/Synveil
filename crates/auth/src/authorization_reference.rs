@@ -291,3 +291,6 @@ pub enum OsPrivilege {
 pub fn application_decision_os_privilege(_: Decision) -> OsPrivilege {
     OsPrivilege::NotGranted
 }
+
+/// P026 versioned qualification extends this reference boundary only.
+pub mod rbac_v2;

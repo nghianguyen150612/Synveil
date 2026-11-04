@@ -4259,6 +4259,11 @@ mod tests {
         wait_for_cycle(&mut events, fixture.scope.library_id()).await;
         host.shutdown().await.expect("second shutdown");
         assert!(second.calls() >= 1);
+        // Shutdown joins runtime work but the host still owns LocalStateStore,
+        // including its writer-lock file. Release it before fixture removal.
+        drop(events);
+        drop(host);
+        assert_eq!(Arc::strong_count(&fixture.state), 1);
         fixture.close().await;
     }
 
