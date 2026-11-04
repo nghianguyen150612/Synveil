@@ -22,9 +22,44 @@ async fn database() -> (SqlitePool, std::path::PathBuf) {
         .unwrap();
     (pool, path)
 }
-async fn close(pool: SqlitePool, path: std::path::PathBuf) {
+// Drain every permit before closing: SQLx 0.8.6 can still have asynchronous
+// return-to-pool work when Pool::close reports completion. Holding all permits
+// fences that work; explicit connection close awaits each SQLite worker.
+async fn shutdown(pool: &SqlitePool) {
+    let mut connections = Vec::new();
+    for _ in 0..pool.options().get_max_connections() {
+        connections.push(pool.acquire().await.expect("drain fixture connection"));
+    }
+    let (busy, _, _): (i64, i64, i64) = sqlx::query_as("PRAGMA wal_checkpoint(TRUNCATE)")
+        .fetch_one(&mut **connections.first_mut().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        busy, 0,
+        "fixture checkpoint must have no active readers/writers"
+    );
+    for connection in connections {
+        connection
+            .close()
+            .await
+            .expect("close fixture SQLite worker");
+    }
     pool.close().await;
-    std::fs::remove_file(path).unwrap();
+}
+async fn close(pool: SqlitePool, path: std::path::PathBuf) {
+    shutdown(&pool).await;
+    // The last SQLite worker closes the WAL/SHM handles and removes sidecars.
+    // Do not unlink a live database just because Unix permits it.
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = std::path::PathBuf::from(format!("{}{suffix}", path.display()));
+        assert!(
+            !sidecar.exists(),
+            "SQLite sidecar still live: {}",
+            sidecar.display()
+        );
+    }
+    std::fs::remove_file(&path)
+        .unwrap_or_else(|error| panic!("remove closed fixture {}: {error}", path.display()));
 }
 async fn state(pool: &SqlitePool, id: &str) -> i64 {
     sqlx::query_scalar("SELECT revoked FROM grants WHERE id=?")
@@ -155,7 +190,7 @@ async fn atomic_state_rollback_visibility_and_restart() {
             .unwrap();
         conn.close().await.unwrap();
     }
-    pool.close().await;
+    shutdown(&pool).await;
     let options = sqlx::sqlite::SqliteConnectOptions::new().filename(&path);
     let reopened = SqlitePoolOptions::new()
         .connect_with(options)
@@ -207,7 +242,7 @@ async fn approval_consumption_race_lost_response_and_withdrawal() {
         1
     );
     // A lost response cannot restore approval; reopening preserves consumption.
-    pool.close().await;
+    shutdown(&pool).await;
     let options = sqlx::sqlite::SqliteConnectOptions::new().filename(&path);
     let pool = SqlitePoolOptions::new()
         .connect_with(options)
@@ -289,7 +324,7 @@ async fn process_crash_recovers_committed_tombstone_and_discards_uncommitted_aud
     }
     let (pool, path) = database().await;
     revoke(&pool, "root").await;
-    pool.close().await;
+    shutdown(&pool).await;
     let status = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
