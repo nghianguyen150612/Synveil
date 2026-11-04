@@ -76,3 +76,16 @@ Repair in `crates/auth/tests/p026_transactions.rs`: before every normal close or
 P024 root cause: the second `DesktopSyncHost` was shut down but still alive when `HostFixture::close()` ran. `HostInner.state` retained an `Arc<LocalStateStore>`; that object owns `writer_lock: File`, released only on final drop. The existing ten-second cleanup retry cannot release a handle whose owner remains in scope. This test restarts host objects within one OS process, not an external child; it has no child process to kill or reap. Repair in `crates/client-sync/src/host.rs`: drop the event subscription and second host after awaited shutdown, then assert the fixture is the sole state owner before removing its files. Durable-state and cycle assertions remain unchanged. No shared cleanup helper or production sync/credential/authorization code changed.
 
 Initial repaired local checks: all 13 P025/P026 contracts and the exact host10 test passed. Repeated concurrency, full regressions and exact final-head hosted status are recorded below/in the existing Draft PR as validation completes. Hosted Linux success is not Windows evidence; pending/cancelled/skipped runs are never passes. Production RBAC/persistence/approvals/token issuance and all previously listed security/release gates remain disabled or unresolved.
+
+Repair validation ledger (Linux Debian 13, normal locked dependencies; no production behavior changed):
+
+| Check | Result |
+|---|---|
+| Exact `p026_transactions` command, plus P025/P026 reference commands | 13 tests passed; all 55 negative reference rows retained |
+| Repeated `p026_transactions -- --test-threads=8` | 30 complete suites / 150 test executions passed, including 30 crash subprocesses |
+| Exact host10 restart test | Initial pass plus 30 repeated passes; sole-state-owner assertion passed |
+| Complete default auth/API/metadata/client/client-sync/pairing/install-engine/server-network tests, including integration/doc targets | 1,456 passed, zero failed; 439 pre-existing ignored tests requiring external acceptance environments were not run or counted as passes; no new ignores/skips |
+| Eight-package strict all-target Clippy, `--locked -- -D warnings` | Passed |
+| Workspace rustfmt, all 24 documentation validation sections, `git diff --check` | Passed |
+
+Fix commit: `7fcc002bb940f448d23185fcb1aa3a2ddf18a088`, preserving all original P026 commits. The delivery ledger commit is documentation-only. Exact final delivery SHA and immutable hosted run/job links are maintained in the [existing Draft PR #187](https://github.com/nghianguyen150612/Synveil/pull/187); the [head checks](https://github.com/nghianguyen150612/Synveil/pull/187/checks) identify the commit actually tested. Required final-head workflows are P026 Ubuntu/Windows, all global Rust CI jobs, P024 Ubuntu/Windows, P020–P025 and installation resilience. For workflows not retriggered by the manifest-only delivery commit, dispatch against that exact feature-branch head. No preceding-head success substitutes for final-head evidence. At ledger creation these hosted results are still incomplete; PR must remain Draft until required results are observed and independently reviewed. All previous production and release gates remain open regardless of fixture CI success.
