@@ -269,3 +269,48 @@ async fn atomic_grant_creation_contends_with_revocation() {
     assert_eq!(execute(&pool, false).await, Decision::StaleOrRevoked);
     close(pool, path).await;
 }
+
+#[tokio::test]
+async fn process_crash_recovers_committed_tombstone_and_discards_uncommitted_audit() {
+    const CHILD_DATABASE: &str = "SYNVEIL_P026_CRASH_FIXTURE";
+    if let Some(path) = std::env::var_os(CHILD_DATABASE) {
+        let options = sqlx::sqlite::SqliteConnectOptions::new().filename(path);
+        let pool = SqlitePoolOptions::new()
+            .connect_with(options)
+            .await
+            .unwrap();
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        sqlx::query("INSERT INTO audit(event) VALUES ('uncommitted-crash')")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        // No connection/transaction destructors run. OS closes the file handles.
+        std::process::exit(26);
+    }
+    let (pool, path) = database().await;
+    revoke(&pool, "root").await;
+    pool.close().await;
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "process_crash_recovers_committed_tombstone_and_discards_uncommitted_audit",
+            "--nocapture",
+        ])
+        .env(CHILD_DATABASE, &path)
+        .status()
+        .unwrap();
+    assert_eq!(status.code(), Some(26));
+    let options = sqlx::sqlite::SqliteConnectOptions::new().filename(&path);
+    let pool = SqlitePoolOptions::new()
+        .connect_with(options)
+        .await
+        .unwrap();
+    assert_eq!(state(&pool, "root").await, 1);
+    let events: Vec<String> = sqlx::query_scalar("SELECT event FROM audit")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(events, vec!["revoke"]);
+    assert_eq!(execute(&pool, false).await, Decision::StaleOrRevoked);
+    close(pool, path).await;
+}

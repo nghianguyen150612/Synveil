@@ -158,7 +158,7 @@ fn delegated() -> (Context, Policy) {
 fn delegation_attenuation_and_provenance_matrix() {
     let (c, p) = delegated();
     assert_eq!(qualify(&c, &p, "child", "op", 10, true), Decision::Allowed);
-    for case in 0..12 {
+    for case in 0..13 {
         let (c, mut p) = delegated();
         let expected = match case {
             0 => {
@@ -195,6 +195,8 @@ fn delegation_attenuation_and_provenance_matrix() {
             }
             8 => {
                 p.records[0].parent = Some("child".into());
+                p.records[0].grantor = browser("bob");
+                p.records[0].expires = 90;
                 p.recursive = true;
                 Decision::Denied
             }
@@ -206,8 +208,22 @@ fn delegation_attenuation_and_provenance_matrix() {
                 p.records[1].expires = 101;
                 Decision::Denied
             }
-            _ => {
+            11 => {
                 p.actors[1].revoked = true;
+                Decision::Denied
+            }
+            _ => {
+                let malformed = Principal::Device {
+                    id: "malformed".into(),
+                    device: "".into(),
+                };
+                p.actors.push(Actor {
+                    principal: malformed.clone(),
+                    human: "malformed".into(),
+                    revoked: false,
+                });
+                p.records[0].recipient = malformed.clone();
+                p.records[1].grantor = malformed;
                 Decision::Denied
             }
         };
@@ -257,7 +273,7 @@ fn approval_is_policy_derived_and_independent() {
         consumed: false,
     });
     assert_eq!(qualify(&c, &p, "root", "op", 10, true), Decision::Allowed);
-    for case in 0..12 {
+    for case in 0..13 {
         let mut changed = p.clone();
         match case {
             0 => changed.approvals[0].approver = c.principal.clone(),
@@ -271,7 +287,8 @@ fn approval_is_policy_derived_and_independent() {
             8 => changed.approvers.clear(),
             9 => changed.actors[2].human = "alice".into(),
             10 => changed.approvals[0].issued = 11,
-            _ => changed.approvals[0].requester = browser("carol"),
+            11 => changed.approvals[0].requester = browser("carol"),
+            _ => changed.approvals.push(changed.approvals[0].clone()),
         }
         assert_eq!(
             qualify(&c, &changed, "root", "op", 10, true),
@@ -304,4 +321,36 @@ fn device_exact_binding_does_not_create_browser_authority() {
     c.binding.device = Some("device".into());
     c.authentication_method = "browser".into();
     assert_eq!(qualify(&c, &p, "root", "op", 10, true), Decision::Denied);
+}
+
+#[test]
+fn fixture_editor_permissions_and_order_independent_denials() {
+    for (action, name) in [
+        (Action::Read, "read"),
+        (Action::Write, "write"),
+        (Action::Delete, "delete"),
+    ] {
+        let (mut c, mut p) = fixture();
+        c.binding.action = name.into();
+        p.ownership.action = action;
+        p.records[0].scope.action = action;
+        p.records[0].maximum = action;
+        p.records[0].role = Role::FixtureEditor;
+        assert_eq!(qualify(&c, &p, "root", "op", 10, true), Decision::Allowed);
+        if action != Action::Read {
+            p.records[0].role = Role::FixtureViewer;
+            assert_eq!(
+                qualify(&c, &p, "root", "op", 10, true),
+                Decision::Unsupported
+            );
+            p.records[0].role = Role::FixtureEditor;
+        }
+        let mut deny = p.records[0].clone();
+        deny.id = "deny".into();
+        deny.deny = true;
+        p.records.push(deny);
+        assert_eq!(qualify(&c, &p, "root", "op", 10, true), Decision::Denied);
+        p.records.reverse();
+        assert_eq!(qualify(&c, &p, "root", "op", 10, true), Decision::Denied);
+    }
 }

@@ -66,7 +66,7 @@ jobs:
           cargo --version >> p026-source.txt
       - name: Workspace formatting
         run: cargo fmt --all -- --check
-      - name: P026 reference contracts
+      - name: P025 and P026 reference contracts and SQLite transactions
         run: cargo test -p synveil-auth --test p025_reference --test p026_reference --test p026_transactions --locked
       - name: P020 through P024 pairing contracts and compatibility fixtures
         run: cargo test -p synveil-pairing-contracts --locked
@@ -75,7 +75,7 @@ jobs:
       - name: Installer regression
         run: cargo test -p synveil-install-engine --locked
       - name: Strict Clippy for qualified boundaries
-        run: cargo clippy -p synveil-pairing-contracts -p synveil-auth -p synveil-api -p synveil-client -p synveil-client-sync -p synveil-install-engine -p synveil-server-network --all-targets --locked -- -D warnings
+        run: cargo clippy -p synveil-metadata -p synveil-pairing-contracts -p synveil-auth -p synveil-api -p synveil-client -p synveil-client-sync -p synveil-install-engine -p synveil-server-network --all-targets --locked -- -D warnings
       - name: Documentation validation
         if: runner.os == 'Linux'
         run: bash scripts/validate-docs.sh

@@ -97,12 +97,12 @@ pub struct Policy {
 fn actor<'a>(p: &'a Policy, principal: &Principal) -> Option<&'a Actor> {
     let mut found = p.actors.iter().filter(|a| &a.principal == principal);
     let a = found.next()?;
-    if found.next().is_some()
-        || a.revoked
-        || a.human.is_empty()
-        || !matches!(principal,
-        Principal::Browser { id } | Principal::Device { id, .. } if !id.is_empty())
-    {
+    let authenticated_shape = match principal {
+        Principal::Browser { id } => !id.is_empty(),
+        Principal::Device { id, device } => !id.is_empty() && !device.is_empty(),
+        _ => false,
+    };
+    if found.next().is_some() || a.revoked || a.human.is_empty() || !authenticated_shape {
         return None;
     }
     Some(a)
@@ -150,6 +150,15 @@ fn chain(p: &Policy, r: &Record, now: u64, seen: &mut Vec<String>) -> Result<(),
     }
     if !role_allows(r) {
         return Err(Decision::Unsupported);
+    }
+    // Every ancestor must itself be able to use this exact authentication scope.
+    let recipient_scope = match &r.recipient {
+        Principal::Browser { .. } => r.scope.device.is_none(),
+        Principal::Device { device, .. } => r.scope.device.as_ref() == Some(device),
+        _ => false,
+    };
+    if !recipient_scope {
+        return Err(Decision::Denied);
     }
     if r.deny
         || r.maximum != r.scope.action

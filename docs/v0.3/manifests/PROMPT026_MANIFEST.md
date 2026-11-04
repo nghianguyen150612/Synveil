@@ -11,8 +11,8 @@ Worktree: `/workspace/Synveil-p026`; original clean `work` checkout preserved.
 
 - `crates/auth/src/authorization_reference.rs`: v2 reference module declaration.
 - `crates/auth/src/authorization_reference/rbac_v2.rs`: versioned typed fixture policy, permissions, bounded delegation and policy-derived approval; reuses P025 authentication/legacy rules.
-- `crates/auth/tests/p026_reference.rs`: 4 deterministic matrix tests, 53 enumerated negative rows plus positive/compatibility/OS assertions.
-- `crates/auth/tests/p026_transactions.rs`: 4 independent-connection SQLite qualification tests.
+- `crates/auth/tests/p026_reference.rs`: 5 deterministic matrix tests, 55 enumerated negative rows plus positive/compatibility/OS assertions.
+- `crates/auth/tests/p026_transactions.rs`: 5 independent-connection SQLite qualification tests (including subprocess termination).
 - `crates/auth/tests/support/p026.rs`: trusted fixture actors/ownership/assignments.
 - `crates/auth/tests/support/p026.sql`: isolated test-only tables, tombstones and audit; no production migration.
 - `.github/workflows/v03-p026-rbac-policy-delegation.yml`: exact-head Ubuntu/Windows reference and regression checks.
@@ -28,7 +28,7 @@ Hosted exact final commit Ubuntu/Windows and global Rust CI results pending; pen
 
 ## Open requirements and release blockers
 
-P025 inherited audit/provenance/approval/PostgreSQL concurrency/integration matrix remain incomplete for production. SQLite tests qualify fixture state only. Native abrupt-crash/fsync, production authority issuance, PostgreSQL locks/isolation and external effects/outbox still require qualification. Internal maintenance adapter call-graph audit remains open. Test fixture roles do not define approved production roles.
+P025 inherited audit/provenance/approval/PostgreSQL concurrency/integration matrix remain incomplete for production. SQLite tests qualify fixture state only. Power-loss/OS-crash/fsync, production authority issuance, PostgreSQL locks/isolation and external effects/outbox still require qualification. Internal maintenance adapter call-graph audit remains open. Test fixture roles do not define approved production roles.
 
 P028 native Windows interactive GUI, genuine logon and installed-component IPC evidence unavailable. Windows resilience run `41627469609`: missing installed LICENSE. Historical run `41437684142`: `INSTALLER_VERIFY_FAILURE: secret-like marker in output`. Distinct blockers; no verification weakened. Signing, mobile physical-device, real-network and independent security approval remain release gates.
 
