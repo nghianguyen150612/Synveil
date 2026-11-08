@@ -107,6 +107,7 @@ async fn immutable_ids_parent_integrity_and_history() {
         "DELETE FROM grants WHERE id='child'",
         "INSERT INTO grants SELECT 'missing','bob','alice','absent',owner_id,host,resource,resource_type,action,device,role,revision,role_revision,issued,expires,deny,maximum FROM grants WHERE id='root'",
         "INSERT INTO grants SELECT 'cycle','bob','alice','cycle',owner_id,host,resource,resource_type,action,device,role,revision,role_revision,issued,expires,deny,maximum FROM grants WHERE id='root'",
+        "INSERT INTO grants SELECT v.id,'bob','alice',v.parent,g.owner_id,g.host,g.resource,g.resource_type,g.action,g.device,g.role,g.revision,g.role_revision,g.issued,g.expires,g.deny,g.maximum FROM grants g CROSS JOIN (VALUES ('cycle-a','cycle-b'),('cycle-b','cycle-a')) AS v(id,parent) WHERE g.id='root'",
         "UPDATE approvals SET approver=requester",
         "UPDATE audit SET detail='forged'",
         "DELETE FROM audit",
@@ -724,6 +725,16 @@ async fn expiry_is_reloaded_after_a_proven_lock_wait() {
     )])
     .await;
     let holder = begin(&db.pool).await.unwrap();
+    let still_valid: bool = sqlx::query_scalar(
+        "SELECT min(expires)>floor(extract(epoch FROM clock_timestamp()))::bigint FROM grants",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert!(
+        still_valid,
+        "authority must be valid before the coordinated lock wait"
+    );
     let pool = db.pool.clone();
     let (send, recv) = tokio::sync::oneshot::channel();
     let task = tokio::spawn(async move {

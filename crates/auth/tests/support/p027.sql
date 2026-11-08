@@ -29,6 +29,19 @@ CREATE TABLE grants (
  deny boolean NOT NULL DEFAULT false, maximum text NOT NULL DEFAULT 'read',
  CHECK (parent IS DISTINCT FROM id)
 );
+CREATE FUNCTION reject_delegation_cycle() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF EXISTS (
+   WITH RECURSIVE ancestors AS (
+     SELECT id,parent,ARRAY[id] AS seen FROM grants WHERE id=NEW.parent
+     UNION ALL
+     SELECT g.id,g.parent,a.seen || g.id FROM grants g JOIN ancestors a ON g.id=a.parent
+       WHERE NOT g.id=ANY(a.seen)
+   ) SELECT 1 FROM ancestors WHERE id=NEW.id
+ ) THEN RAISE EXCEPTION 'P027 cyclic delegation' USING ERRCODE='23514'; END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER reject_delegation_cycle AFTER INSERT ON grants FOR EACH ROW EXECUTE FUNCTION reject_delegation_cycle();
 CREATE TABLE revocations (
  grant_id text PRIMARY KEY REFERENCES grants(id), reason text NOT NULL,
  revoked_at timestamptz NOT NULL DEFAULT clock_timestamp()
