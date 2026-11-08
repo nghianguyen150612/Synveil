@@ -1,6 +1,6 @@
 # P027 manifest
 
-Status: provisional reference qualification. Production RBAC, role tables, approval endpoints, token issuance and pairing activation remain disabled. P027 does not approve production security or start P028.
+Status: provisional reference qualification. Local Linux PostgreSQL evidence is complete; final-head hosted qualification remains required. Production RBAC, role tables, approval endpoints, token issuance and pairing activation remain disabled. P027 does not approve production security or start P028.
 
 ## Starting state and delivery
 
@@ -10,7 +10,9 @@ Status: provisional reference qualification. Production RBAC, role tables, appro
 - Branch: `feat/v03-p027-authority-ledger-reference`, initially identical to base.
 - Workspace: `/workspace/Synveil`, fresh clean clone, one worktree. No existing P027 implementation or PR found. No unrelated changes, reset, force push or history rewrite.
 - Authoritative P001–P060 roadmap unavailable; scope remains provisional.
-- Implementation/final commit identifiers and the single Draft PR link are recorded in the PR delivery ledger. A commit cannot embed its own SHA. Exact-head hosted results are recorded separately from preceding-head results.
+- Single [Draft PR #188](https://github.com/nghianguyen150612/Synveil/pull/188), targeting `develop/v0.3`, remains unmerged.
+- Implementation: `04b4cbed8bf2adfe51a1b4677bcc55a94260a18c`; cycle hardening: `aa3b38d6de4faa63fac2a91856cf0816fe2c357b`; final Rust/SQL test source: `dcbc651ec41d3552faec698680221d15f4e541cc`; evidence-output repair: `79ae1a33e026501534b4766bffe01bbdca77f844`.
+- Final delivery SHA and exact-head hosted states are recorded in the PR body. A commit cannot embed its own SHA. Preceding-head results do not qualify the final head.
 
 ## Changed files
 
@@ -30,17 +32,36 @@ Production source, migrations and P025/P026/P020–P024 contracts remain unchang
 
 Executor: Debian 13 Linux, Rust/Cargo 1.99.1. Disposable loopback-only Docker PostgreSQL 17.11, image digest `sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f`. This is Linux evidence, not Windows-hosted PostgreSQL race evidence.
 
-| Check | Actual observed result at implementation commit |
+| Check | Actual observed result |
 |---|---|
-| Initial P027 PostgreSQL qualification | 10/10 passed; expanded suite then 13/13 passed, including genuine process exit and database lock/error probes. Final 15-test suite and repeat count pending below/PR ledger. |
-| P026 reference matrix | 5/5 passed, original 55-case negative matrix retained. |
-| Final repeated P027, actual database restart, PostgreSQL regressions | In progress; not yet counted as PASS. |
-| Eight boundary package library/integration/doc regressions | In progress; not yet counted as PASS. |
-| Strict Clippy, formatting, docs, whitespace | In progress; not yet counted as PASS. |
-| Hosted final-head checks | Not yet observed. Pending, failed, cancelled, skipped or unavailable jobs are not passes. |
-| Actual Windows-hosted PostgreSQL races | UNAVAILABLE in existing Linux service-container infrastructure. Windows compilation/contracts are a distinct gate. |
+| Final P027 PostgreSQL suite | 15 tests × 10 complete repeated suites = 150 passed, zero failed/ignored. Includes 10 real child-process exits, backend termination, SERIALIZABLE conflicts, actual deadlocks, ordered revocation/expiry, negative scope/provenance matrix and single-use approval/idempotency. Same final Rust/SQL source throughout; workflow-only evidence repair occurred during repetition. Earlier 10/13/14-test passes are historical and are not substituted for this count. |
+| Actual database server restart | Both prepare and verify phases passed; Docker PostgreSQL start time changed from `2026-11-08T08:29:12.817791371Z` to `2026-11-08T08:57:31.382895992Z`. Committed grant, revocation, approval consumption, operation, audit/outbox and status recovery survived. This was an ordinary server restart, not power loss. |
+| Fresh-database PostgreSQL regressions | Full final regression script: 9/9 passed, each in a newly created disposable database: 6 auth/bootstrap/session/device tests; P005 owner/device; P015 joined router/ObjectStore matrix (`P015_MATRIX_COMPLETE`); metadata owner-scoped immutable version history. |
+| P025/P026 reference and SQLite | 13/13 passed (3 + 5 + 5); original 55 negative reference rows unchanged. Included in regression counts below. |
+| Eight boundary library suites | 691 passed, zero failed/ignored: auth, API, metadata, client, client-sync, server-network, pairing-contracts and install-engine. |
+| Complete integration/binary/doc target inventory for those packages | 90 targets evaluated separately to fit disk: 760 passed, 5 failed due to unavailable systemd runtime, 439 existing default-ignored cases. New P027 target was excluded here and explicitly run above. Of the historical ignored cases, 9 were subsequently selected and passed in real PostgreSQL; the other 430 are not claimed as passes. |
+| Combined existing regression result | 1,451 passed, 5 environment-blocked failures; no test weakened, new ignore or suppressed failure. This is not a green full-suite result. |
+| Release-artifact source boundary | 9/9 passed after moving generated qualification evidence under ignored `target/p027-evidence`. The initial untracked-source rejection was real and corrected without weakening source validation. |
+| Strict Clippy | All targets of the eight boundary packages passed `--locked -- -D warnings` on final Rust/SQL source. Whole-workspace Qt Clippy is left to global hosted CI, not claimed locally. |
+| Formatting, docs and whitespace | Workspace rustfmt, all 24 documentation validation sections, shell syntax and Git whitespace passed. Final delivery checks are also recorded in the PR body. |
+| Hosted exact final-head gates | Required; status/run links recorded in PR #188. Queued/in-progress, failed, cancelled, skipped and unavailable checks are distinct from passes. |
+| Actual Windows-hosted PostgreSQL races | UNAVAILABLE in existing Linux service-container infrastructure. Windows compilation/contracts are a separate hosted gate. |
 
-The initial broad build encountered missing libdbus development metadata, then exhausted local disk while linking many integration executables. Development packages were downloaded from the configured Debian snapshot and extracted under `/workspace/scratch/p027-deps`; no system package policy or product dependency was changed. Only this task's generated Cargo outputs were removed. Debug info/incremental output are disabled locally, and regressions are batched to fit the workspace. The failed build attempts are infrastructure failures, not passing tests.
+The five baseline failures all report `Failed to create directory '/run/systemd/': Permission denied` from host `systemd-analyze verify` in this unprivileged executor:
+
+- `linux_deployment_adversarial_units::adversarial_sandbox_negative_surface_locked`.
+- `linux_install_lifecycle::systemd_artifacts_match_validated_definitions`.
+- `linux_sandbox_hardening_units::hardened_unit_verifies_cleanly`.
+- `linux_service_identity_units::systemd_units_verify_cleanly`.
+- `scheduled_maintenance_lifecycle_units::systemd_units_parse_cleanly_with_analyze_if_available`.
+
+Their tests and production units remain unchanged. These are BLOCKED locally, not PASS. Hosted Linux must supply its actual results.
+
+The initial broad build encountered missing libdbus development metadata, then exhausted disk while linking many integration executables. Development packages were downloaded from the configured Debian snapshot and extracted under `/workspace/scratch/p027-deps`. Only this task's generated Cargo outputs were cleaned; large non-executable Rust cache artifacts were moved to task-private `/dev/shm/synveil-p027-rust-cache` with links in `target`, freeing disk for normal executable output. Debug info/incremental output were disabled and targets executed in batches. No product dependency, system security guard or test assertion changed.
+
+An initial PostgreSQL bootstrap run returned connection-unavailable errors while independent live qualification was overlapping; that attempt was not counted as a pass. A later local cleanup race prevented one metadata executable from starting. After serializing the live regression runner and retaining its binaries until completion, the full nine-case script passed against nine fresh databases. Qualification output initially made the release-source unit reject untracked inputs; the script/workflow now retain evidence under ignored build output, and that complete nine-test unit target passed afterward. Failed setup/build attempts are not test passes.
+
+Local logs are retained under `/workspace/scratch/p027-*.log`, `/workspace/scratch/p027-batched`, and `target/p027-evidence`. The focused hosted workflow uploads its own exact-source evidence. No bearer credentials or real device material are included.
 
 Reproduction with PostgreSQL 17 and standard build dependencies:
 
@@ -61,6 +82,8 @@ git diff --check
 Database restart protocol: set `SYNVEIL_P027_RESTART_FILE` to a task-private absolute file. Run the exact `durable_reconnect_and_database_restart_probe` with `SYNVEIL_P027_RESTART_PHASE=prepare`, restart **only the disposable test server**, wait for readiness, then run with `SYNVEIL_P027_RESTART_PHASE=verify`. The focused workflow implements this sequence. It validates ordinary server restart, not power-loss or forced database crash. Normal suite execution performs reconnect without claiming a server restart.
 
 ## Hosted gates and release limitations
+
+Observed preceding-head evidence: focused [run 42464989871](https://github.com/nghianguyen150612/Synveil/actions/runs/42464989871) on `79ae1a33e026501534b4766bffe01bbdca77f844` reached Linux live qualification and passed the Windows harness compilation/P025/P026 steps while the workflow was still in progress. Those intermediate steps are not a completed workflow pass. Earlier implementation-head runs were cancelled by subsequent pushes; they are not passes. Preceding-head AppImage [run 42464664534](https://github.com/nghianguyen150612/Synveil/actions/runs/42464664534) failed acquiring the pinned runtime with `BLOCKED_APPIMAGE_RUNTIME: upstream HTTPS request failed`; downstream jobs/steps were skipped, not qualified. Final-head results must be assessed independently.
 
 Required exact-head evidence: P027 Linux live PostgreSQL and Windows contracts; P025/P026; P020–P024 compatibility; global Rust CI; existing PostgreSQL owner/device authorization; Windows installer/client-sync gates. Results must identify source SHA, run URL, job and state. The PR remains Draft and unmerged. A skipped mandatory job does not qualify its workflow as green.
 

@@ -56,6 +56,7 @@ jobs:
       - name: Exact source and PostgreSQL evidence
         run: |
           mkdir -p target/p027-evidence
+          find target/p027-evidence -maxdepth 1 -type f -name '*.txt' -delete
           git rev-parse HEAD | tee target/p027-evidence/p027-source.txt
           rustc --version | tee -a target/p027-evidence/p027-source.txt
           psql "$SYNVEIL_P027_DATABASE_URL" -Atc 'SHOW server_version' | tee -a target/p027-evidence/p027-source.txt
