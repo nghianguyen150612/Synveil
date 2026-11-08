@@ -1,0 +1,125 @@
+name: v0.3 P027 PostgreSQL authority ledger
+
+on:
+  pull_request:
+    branches: [develop/v0.3]
+    paths:
+      - 'crates/**'
+      - 'Cargo.*'
+      - 'docs/v0.3/**'
+      - 'scripts/qualify-p027-postgres-regressions.sh'
+      - '.github/workflows/v03-p027-postgres-authority-ledger.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  postgres:
+    name: P027 Linux PostgreSQL 17 transactions and recovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: p027
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd="pg_isready -U postgres -d p027"
+          --health-interval=5s --health-timeout=5s --health-retries=12
+    env:
+      SYNVEIL_P027_DISPOSABLE: '1'
+      SYNVEIL_P027_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/p027
+      SYNVEIL_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/p027
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config postgresql-client ripgrep
+      - name: Exact source and PostgreSQL evidence
+        run: |
+          git rev-parse HEAD | tee p027-source.txt
+          rustc --version | tee -a p027-source.txt
+          psql "$SYNVEIL_P027_DATABASE_URL" -Atc 'SHOW server_version' | tee -a p027-source.txt
+          psql "$SYNVEIL_P027_DATABASE_URL" -Atc 'SHOW server_version' | rg '^17\.'
+      - name: Real transactions, lock ordering, crash and recovery (five repetitions)
+        run: |
+          set -euo pipefail
+          for iteration in 1 2 3 4 5; do
+            cargo test -p synveil-auth --test p027_postgres --locked -- --ignored --test-threads=4 --nocapture 2>&1 | tee "p027-qualification-$iteration.txt"
+            rg 'test result: ok\. 14 passed; 0 failed; 0 ignored;' "p027-qualification-$iteration.txt"
+          done
+      - name: Committed authority and consumption survive an actual database restart
+        env:
+          SYNVEIL_P027_RESTART_FILE: ${{ runner.temp }}/p027-restart-schema.txt
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          SYNVEIL_P027_RESTART_PHASE=prepare cargo test -p synveil-auth --test p027_postgres --locked durable_reconnect_and_database_restart_probe -- --exact --ignored
+          docker restart "$POSTGRES_CONTAINER"
+          for attempt in $(seq 1 30); do
+            if pg_isready -h 127.0.0.1 -p 5432 -U postgres -d p027; then break; fi
+            sleep 1
+          done
+          SYNVEIL_P027_RESTART_PHASE=verify cargo test -p synveil-auth --test p027_postgres --locked durable_reconnect_and_database_restart_probe -- --exact --ignored
+      - name: P025/P026 and SQLite qualification
+        run: cargo test -p synveil-auth --test p025_reference --test p026_reference --test p026_transactions --locked
+      - name: Fresh database authentication, ownership and device regressions
+        run: bash scripts/qualify-p027-postgres-regressions.sh
+      - name: P020–P024 and application boundary regressions
+        run: cargo test -p synveil-auth -p synveil-api -p synveil-metadata -p synveil-client -p synveil-client-sync -p synveil-server-network -p synveil-pairing-contracts -p synveil-install-engine --locked
+      - name: Formatting, strict Clippy, documentation and whitespace
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy -p synveil-auth -p synveil-api -p synveil-metadata -p synveil-client -p synveil-client-sync -p synveil-server-network -p synveil-pairing-contracts -p synveil-install-engine --all-targets --locked -- -D warnings
+          bash scripts/validate-docs.sh
+          git diff --check
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: p027-postgres-evidence-${{ github.sha }}-${{ github.run_id }}
+          path: p027-*.txt
+          if-no-files-found: error
+
+  windows-contracts:
+    # GitHub service containers are Linux-only. This job compiles the PostgreSQL
+    # harness and runs contracts; it does NOT claim Windows PostgreSQL races.
+    name: P027 Windows compilation and contracts (no live PostgreSQL)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Linker
+        shell: pwsh
+        run: ./scripts/select-msvc-linker.ps1
+      - uses: Swatinem/rust-cache@v2
+      - name: Compile real PostgreSQL harness
+        run: cargo test -p synveil-auth --test p027_postgres --locked --no-run
+      - name: P025/P026 contracts and durable SQLite
+        run: cargo test -p synveil-auth --test p025_reference --test p026_reference --test p026_transactions --locked
+      - name: Pairing, installer and client-sync regressions
+        run: cargo test -p synveil-pairing-contracts -p synveil-install-engine -p synveil-client-sync --locked
+      - name: Strict auth Clippy including PostgreSQL harness
+        run: cargo clippy -p synveil-auth --all-targets --locked -- -D warnings
