@@ -7,14 +7,17 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'windows-security.ps1')
 $P027PgVersion = '17.11'
 $P027Tools = @('initdb.exe','pg_ctl.exe','pg_isready.exe','postgres.exe','psql.exe')
-$P027ImageReference = 'https://github.com/actions/runner-images/blob/fad015e47059f40cf0786dcb4593384f6a0720d3/images/windows/Windows2025-Readme.md'
+$P027ImageReferences = @{
+    'win25' = 'https://github.com/actions/runner-images/blob/fad015e47059f40cf0786dcb4593384f6a0720d3/images/windows/Windows2025-Readme.md'
+    'win25-vs2026' = 'https://github.com/actions/runner-images/blob/win25-vs2026/20261103.298/images/windows/Windows2025-VS2026-Readme.md'
+}
 
 function Assert-P027Image {
-    if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_OS -cne 'Windows' -or
-        $env:ImageOS -cne 'win25' -or $env:ImageVersion -cnotmatch '^\d{8}\.\d+\.\d+$' -or
-        $env:SYNVEIL_P027_DISPOSABLE -cne '1') {
-        throw 'P027_PG_PROVENANCE_FAILURE: disposable GitHub Windows 2025 image required'
-    }
+    if ($env:GITHUB_ACTIONS -cne 'true') { throw 'P027_PG_PROVENANCE_FAILURE: GitHub Actions required' }
+    if ($env:RUNNER_OS -cne 'Windows') { throw 'P027_PG_PROVENANCE_FAILURE: Windows host required' }
+    if ($env:ImageOS -cnotin @('win25','win25-vs2026')) { throw 'P027_PG_PROVENANCE_FAILURE: unreviewed Windows image variant' }
+    if ($env:ImageVersion -cnotmatch '^\d{8}\.\d+\.\d+$') { throw 'P027_PG_PROVENANCE_FAILURE: image version required' }
+    if ($env:SYNVEIL_P027_DISPOSABLE -cne '1') { throw 'P027_PG_PROVENANCE_FAILURE: disposable opt-in required' }
     if (![IO.Path]::IsPathFullyQualified($env:RUNNER_TEMP)) { throw 'P027_PG_PROVENANCE_FAILURE: runner temp missing' }
     Assert-NoReparseAncestry $env:RUNNER_TEMP
 }
@@ -83,7 +86,7 @@ function Write-P027Evidence($State) {
     [IO.Directory]::CreateDirectory($directory) | Out-Null
     $evidence = [ordered]@{
         source_head=(& git rev-parse HEAD); image_os=$State.image_os; image_version=$State.image_version
-        reviewed_image_reference=$P027ImageReference; postgres_version=$State.version; tools=$State.tools
+        reviewed_image_reference=$P027ImageReferences[$State.image_os]; postgres_version=$State.version; tools=$State.tools
         fixture_scope='new UUID directory under RUNNER_TEMP; loopback only; no installed service/data access'
     }
     $evidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $directory 'windows-postgres-provenance.json') -Encoding utf8

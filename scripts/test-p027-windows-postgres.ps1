@@ -31,8 +31,10 @@ $state.data = $env:PGDATA
 Reject { Assert-P027State $state } 'P027_PG_SCOPE_FAILURE'
 $state.data = Join-Path $validRoot 'data'; $state.marker = 'untrusted-cache'
 Reject { Assert-P027State $state } 'P027_PG_PROVENANCE_FAILURE'
+$original = $env:ImageOS
+try { $env:ImageOS='unreviewed-image'; Reject { Assert-P027Image } 'P027_PG_PROVENANCE_FAILURE' } finally { $env:ImageOS=$original }
 $original = $env:ImageVersion
 try { $env:ImageVersion=''; Reject { Assert-P027Image } 'P027_PG_PROVENANCE_FAILURE' } finally { $env:ImageVersion=$original }
 $original = $env:SYNVEIL_P027_DISPOSABLE
 try { $env:SYNVEIL_P027_DISPOSABLE='0'; Reject { Assert-P027Image } 'P027_PG_PROVENANCE_FAILURE' } finally { $env:SYNVEIL_P027_DISPOSABLE=$original }
-Write-Host 'P027 Windows PostgreSQL provenance/version/hash/scope guard negatives: 10 passed; no server started'
+Write-Host 'P027 Windows PostgreSQL provenance/version/hash/scope guard negatives: 11 passed; no server started'
