@@ -64,7 +64,7 @@ jobs:
           set -euo pipefail
           for iteration in 1 2 3 4 5; do
             cargo test -p synveil-auth --test p027_postgres --locked -- --ignored --test-threads=4 --nocapture 2>&1 | tee "p027-qualification-$iteration.txt"
-            rg 'test result: ok\. 14 passed; 0 failed; 0 ignored;' "p027-qualification-$iteration.txt"
+            rg 'test result: ok\. 15 passed; 0 failed; 0 ignored;' "p027-qualification-$iteration.txt"
           done
       - name: Committed authority and consumption survive an actual database restart
         env:

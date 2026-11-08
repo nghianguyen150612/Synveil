@@ -829,3 +829,41 @@ async fn durable_reconnect_and_database_restart_probe() {
     );
     db.close().await;
 }
+
+#[tokio::test]
+#[ignore = "explicit disposable PostgreSQL 17 required"]
+async fn approval_cannot_cross_existing_resources_and_consumes_exact_candidate() {
+    let db = Ledger::new().await;
+    sqlx::query("INSERT INTO ownership SELECT 'lib-b',owner_id,host,owner_actor,approver,resource_type,action,device,legacy_allow FROM ownership WHERE resource='lib'").execute(&db.pool).await.unwrap();
+    sqlx::query("INSERT INTO grants SELECT 'root-b','bob','owner-actor',NULL,owner_id,host,'lib-b',resource_type,action,device,role,revision,role_revision,issued,expires,deny,maximum FROM grants WHERE id='root'").execute(&db.pool).await.unwrap();
+    let mut r = Request::normal();
+    r.context.binding.resource_id = "lib-b".into();
+    r.grant = "root-b".into();
+    // Resource B and its grant are valid. A's otherwise matching approval must
+    // still fail; caller's approval_required=false cannot suppress the policy.
+    assert_eq!(
+        execute(&db.pool, &r).await.unwrap(),
+        Outcome::Rejected(Decision::RequiresApproval)
+    );
+    consistent(&db, 0).await;
+    sqlx::query("INSERT INTO approvals SELECT 'approval-b','request-b',operation,requester,approver,owner_id,host,'lib-b',resource_type,action,device,revision,issued,expires,false,NULL FROM approvals WHERE id='approval'").execute(&db.pool).await.unwrap();
+    assert_eq!(execute(&db.pool, &r).await.unwrap(), Outcome::Executed);
+    assert_eq!(
+        db.scalar(
+            "SELECT count(*) FROM approvals WHERE id='approval-b' AND consumed_by='operation'"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        db.scalar("SELECT count(*) FROM approvals WHERE id='approval' AND consumed_by IS NULL")
+            .await,
+        1
+    );
+    assert_eq!(
+        execute(&db.pool, &Request::normal()).await.unwrap(),
+        Outcome::IdentityConflict
+    );
+    consistent(&db, 1).await;
+    db.close().await;
+}

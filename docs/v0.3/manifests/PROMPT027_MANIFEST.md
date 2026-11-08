@@ -18,7 +18,7 @@ Status: provisional reference qualification. Production RBAC, role tables, appro
 |---|---|
 | `crates/auth/tests/support/p027.sql` | Private PostgreSQL schema, fixture identities, persisted ownership/roles/delegation, immutable grants/tombstones, approvals, idempotent operation outcomes, audit and synthetic outbox. |
 | `crates/auth/tests/support/p027.rs` | Test-only SERIALIZABLE adapter, current authority reconstruction, P026 evaluation, bounded conflict retries, transactional consumption/execution and recovery. |
-| `crates/auth/tests/p027_postgres.rs` | 14 real PostgreSQL qualification tests; independent connections, ordered contention, negative matrices, backend/process failure, reconnect and optional external database restart probe. |
+| `crates/auth/tests/p027_postgres.rs` | 15 real PostgreSQL qualification tests; independent connections, ordered contention, negative matrices, backend/process failure, reconnect and optional external database restart probe. |
 | `scripts/qualify-p027-postgres-regressions.sh` | Six auth and three API/metadata PostgreSQL regressions, each in a new disposable database; requires exactly one executed test per case. |
 | `.github/workflows/v03-p027-postgres-authority-ledger.yml` | Exact source checkout; Linux PostgreSQL 17 repeated tests and actual server restart; Windows harness compilation and contract/installer/sync regressions. |
 | `docs/v0.3/security/P027_POSTGRES_AUTHORITY_LEDGER_QUALIFICATION.md` | Production boundary audit, schema/lock/recovery contracts, inventory, limitations and open gates. |
@@ -32,7 +32,7 @@ Executor: Debian 13 Linux, Rust/Cargo 1.99.1. Disposable loopback-only Docker Po
 
 | Check | Actual observed result at implementation commit |
 |---|---|
-| Initial P027 PostgreSQL qualification | 10/10 passed; expanded suite then 13/13 passed, including genuine process exit and database lock/error probes. Final 14-test suite and repeat count pending below/PR ledger. |
+| Initial P027 PostgreSQL qualification | 10/10 passed; expanded suite then 13/13 passed, including genuine process exit and database lock/error probes. Final 15-test suite and repeat count pending below/PR ledger. |
 | P026 reference matrix | 5/5 passed, original 55-case negative matrix retained. |
 | Final repeated P027, actual database restart, PostgreSQL regressions | In progress; not yet counted as PASS. |
 | Eight boundary package library/integration/doc regressions | In progress; not yet counted as PASS. |
