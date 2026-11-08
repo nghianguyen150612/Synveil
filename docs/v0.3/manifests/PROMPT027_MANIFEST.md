@@ -1,6 +1,6 @@
 # P027 manifest
 
-Status: provisional reference qualification. Local Linux PostgreSQL evidence is complete; final-head hosted qualification remains required. Production RBAC, role tables, approval endpoints, token issuance and pairing activation remain disabled. P027 does not approve production security or start P028.
+Status: provisional reference qualification. Local Linux PostgreSQL evidence is complete; hosted closeout evidence is tracked per exact source head in PR #188. Production RBAC, role tables, approval endpoints, token issuance and pairing activation remain disabled. P027 does not approve production security or start P028.
 
 ## Starting state and delivery
 
@@ -45,7 +45,7 @@ Executor: Debian 13 Linux, Rust/Cargo 1.99.1. Disposable loopback-only Docker Po
 | Strict Clippy | All targets of the eight boundary packages passed `--locked -- -D warnings` on final Rust/SQL source. Whole-workspace Qt Clippy is left to global hosted CI, not claimed locally. |
 | Formatting, docs and whitespace | Workspace rustfmt, all 24 documentation validation sections, shell syntax and Git whitespace passed. Final delivery checks are also recorded in the PR body. |
 | Hosted exact final-head gates | Required; status/run links recorded in PR #188. Queued/in-progress, failed, cancelled, skipped and unavailable checks are distinct from passes. |
-| Actual Windows-hosted PostgreSQL races | UNAVAILABLE in existing Linux service-container infrastructure. Windows compilation/contracts are a separate hosted gate. |
+| Actual Windows-hosted PostgreSQL races | The original head had no live Windows evidence. Closeout adds a separately gated, real Windows 2025 PostgreSQL 17.11 job; its exact final-head result is maintained in PR #188. Compilation/contracts remain distinct. |
 
 The five baseline failures all report `Failed to create directory '/run/systemd/': Permission denied` from host `systemd-analyze verify` in this unprivileged executor:
 
@@ -55,7 +55,7 @@ The five baseline failures all report `Failed to create directory '/run/systemd/
 - `linux_service_identity_units::systemd_units_verify_cleanly`.
 - `scheduled_maintenance_lifecycle_units::systemd_units_parse_cleanly_with_analyze_if_available`.
 
-Their tests and production units remain unchanged. These are BLOCKED locally, not PASS. Hosted Linux must supply its actual results.
+Their original failures remain BLOCKED results at that executor checkpoint. Their tests and production units are unchanged. The closeout re-executed all five successfully in the isolated real-verifier environment described below; that new evidence does not relabel the earlier failures or qualify native service execution.
 
 The initial broad build encountered missing libdbus development metadata, then exhausted disk while linking many integration executables. Development packages were downloaded from the configured Debian snapshot and extracted under `/workspace/scratch/p027-deps`. Only this task's generated Cargo outputs were cleaned; large non-executable Rust cache artifacts were moved to task-private `/dev/shm/synveil-p027-rust-cache` with links in `target`, freeing disk for normal executable output. Debug info/incremental output were disabled and targets executed in batches. No product dependency, system security guard or test assertion changed.
 
@@ -118,3 +118,18 @@ The closeout adds the test-only Windows PostgreSQL lifecycle/guard scripts and t
 Server self-host acceptance `42465362141` is independently blocked: `artifact-identity` failed with `BLOCKED_BY_EXTERNAL_INPUT: trusted publisher keyring variable is absent`. The Ubuntu/Fedora/VM-control jobs await self-hosted labels `synveil-ubuntu-24.04-p036`, `synveil-fedora-42-p036`, and `synveil-p036-vm-control`. No trust key or signed production artifact is synthesized to bypass those P036 gates. A successful contract/source job does not qualify those missing native/artifact jobs.
 
 Closeout source changes: `.github/workflows/v03-p027-postgres-authority-ledger.yml`, `scripts/p027-windows-postgres.ps1`, `scripts/test-p027-windows-postgres.ps1`, this manifest and the P027 security qualification. Production Rust, SQL authority semantics, acquisition scripts and lock files remain unchanged.
+
+
+### Closeout local qualification and evidence interpretation
+
+The closeout re-ran all library/integration/binary/doc tests for the eight boundary packages in one normal Cargo invocation: **1,456 passed, zero failed, 454 default-ignored**. Five complete P027 PostgreSQL suites additionally passed: **75 executions**, including genuine process exits and PostgreSQL conflicts. The fresh-database regression script passed **9/9** again. Of the 454 ignored default cases, 15 P027 and 9 historical tests were selected explicitly; the other 430 are not counted as passing. All 15 P027 test functions and P026's 55-row matrix remain unchanged.
+
+The acquisition/runtime/manifest/channel/installer/Linux invocation and lifecycle Python suites passed **277 tests**, with zero failures or skips, plus the Windows installer, installer security and resilience structural validators. All eight boundary packages passed strict all-target Clippy with `-D warnings`; workspace formatting, all 24 documentation sections and Git whitespace passed. The two new PowerShell files parsed successfully under PowerShell 7.5.4 and their pure version/inventory/provenance negatives passed locally. Positive Windows provisioning or database behavior is counted only from the hosted Windows job.
+
+For the five former systemd failures, the local executor still has an unprivileged host `/run`; no host permission guard was changed. A task-private, network-disabled container ran the exact installed Debian `systemd-analyze` 257.13-1~deb13u1 binary and its actual shared-library dependencies, with a writable private `/run`. Binary SHA-256: `d89a879c2c87c4465e3a09588e18f27a14dd9228898679bbdbbc978802f64dce`. The command proxy copied each requested real unit input into that container, preserved its bytes/mode, and checked a round trip for exact byte equality before invoking the same system-scope verifier with the original arguments. Host unit files, test assertions, production security directives and host permissions were untouched; no dummy verifier, forced success or `--user` fallback was used. All five exact assertions passed inside the full Cargo suite. This qualifies static unit verification in that environment, not systemd service execution, genuine native logon or P036 acceptance. The local proxy and logs remain in `/workspace/scratch/p027-systemd-bin` and `/workspace/scratch/p027-closeout-*.log`.
+
+Local storage exhausted while preparing the extra verifier. Only task-generated artifacts were managed: the task's PostgreSQL container filesystem was exported, its database volume preserved, and the same root filesystem re-imported as a single-layer local fixture to remove Docker VFS intermediate copies. The PostgreSQL executable hash before and after was identical: `5fa5f4cb92953e720a6814653888183abd7988d31a505125dec3a12bd51f29be`. The database data was not reset, no upstream artifact pin was changed, and subsequent PostgreSQL tests used the same 17.11 executable. This storage operation is not counted as an additional crash/recovery test.
+
+Closeout implementation began at `d20f1412e9279a697b5d239b8b580e11a994a4ba`. The first Windows live job failed closed before database execution because `windows-2025` selected the reviewed `win25-vs2026` image rather than `win25`; `327538025e1275530b3dfc37210830d9b59fc5da` explicitly added that independently checked image variant, retaining PostgreSQL 17.11. Its guard negatives passed, then `initdb` returned exit 1 while the original fixture helper discarded its native output. `e944b0c49d4f265adc1eb2e1818f2943a1306de7` retains bounded native diagnostics and fixture provenance on failure, and grants the new fixture's owner SID access directly instead of depending on an inherited Administrators ACL. An unobserved cause for the discarded native output is not asserted. Failed/superseded attempts do not count as Windows database passes.
+
+The final source SHA, local final-head rechecks, and complete exact-head hosted workflow/job matrix are recorded in the [PR #188 delivery ledger](https://github.com/nghianguyen150612/Synveil/pull/188). That ledger distinguishes successful reference jobs, recovered artifact/candidate jobs, unavailable native/publisher inputs, failures, cancellations, skips and queued jobs. A successful candidate build does not approve P028; a missing P036 trust input or runner is not a P027 database defect. The PR remains Draft and unmerged, and all production/security gates listed above remain open.
