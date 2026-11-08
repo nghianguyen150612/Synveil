@@ -8,6 +8,8 @@ on:
       - 'Cargo.*'
       - 'docs/v0.3/**'
       - 'scripts/qualify-p027-postgres-regressions.sh'
+      - 'scripts/p027-windows-postgres.ps1'
+      - 'scripts/test-p027-windows-postgres.ps1'
       - '.github/workflows/v03-p027-postgres-authority-ledger.yml'
   workflow_dispatch:
 
@@ -125,3 +127,58 @@ jobs:
         run: cargo test -p synveil-pairing-contracts -p synveil-install-engine -p synveil-client-sync --locked
       - name: Strict auth Clippy including PostgreSQL harness
         run: cargo clippy -p synveil-auth --all-targets --locked -- -D warnings
+
+
+  windows-postgres:
+    name: P027 Windows PostgreSQL 17.11 transactions and recovery
+    runs-on: windows-2025
+    timeout-minutes: 45
+    env:
+      SYNVEIL_P027_DISPOSABLE: '1'
+      CARGO_TERM_COLOR: never
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Linker
+        run: ./scripts/select-msvc-linker.ps1
+      - uses: Swatinem/rust-cache@v2
+      - name: Reject invalid PostgreSQL provenance, version, inventory and scope
+        run: ./scripts/test-p027-windows-postgres.ps1
+      - name: Initialize a new loopback-only disposable PostgreSQL cluster
+        run: ./scripts/p027-windows-postgres.ps1 -Action start
+      - name: Real Windows PostgreSQL transactions, conflicts and process recovery (five repetitions)
+        run: |
+          for ($iteration = 1; $iteration -le 5; $iteration++) {
+            $log = "target/p027-evidence/windows-postgres-$iteration.txt"
+            git rev-parse HEAD | Set-Content -LiteralPath $log
+            cargo test -p synveil-auth --test p027_postgres --locked -- --ignored --test-threads=4 --nocapture 2>&1 | Tee-Object -FilePath $log -Append
+            if ($LASTEXITCODE -ne 0) { throw "P027 Windows PostgreSQL failed: iteration $iteration" }
+            if (!(Select-String -LiteralPath $log -Pattern 'test result: ok\. 15 passed; 0 failed; 0 ignored;')) {
+              throw 'P027 Windows PostgreSQL did not execute all 15 tests'
+            }
+          }
+      - name: Recover committed authority after an actual Windows database-process restart
+        run: |
+          $env:SYNVEIL_P027_RESTART_FILE = Join-Path $env:RUNNER_TEMP 'p027-restart-schema.txt'
+          $env:SYNVEIL_P027_RESTART_PHASE = 'prepare'
+          cargo test -p synveil-auth --test p027_postgres --locked durable_reconnect_and_database_restart_probe -- --exact --ignored 2>&1 | Tee-Object -FilePath target/p027-evidence/windows-postgres-prepare.txt
+          if ($LASTEXITCODE -ne 0) { throw 'P027 restart preparation failed' }
+          ./scripts/p027-windows-postgres.ps1 -Action restart
+          $env:SYNVEIL_P027_RESTART_PHASE = 'verify'
+          cargo test -p synveil-auth --test p027_postgres --locked durable_reconnect_and_database_restart_probe -- --exact --ignored 2>&1 | Tee-Object -FilePath target/p027-evidence/windows-postgres-restart.txt
+          if ($LASTEXITCODE -ne 0) { throw 'P027 Windows database restart recovery failed' }
+      - name: Stop only the disposable fixture database
+        if: always()
+        run: ./scripts/p027-windows-postgres.ps1 -Action stop
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: p027-windows-postgres-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/p027-evidence/windows-*
+          if-no-files-found: error

@@ -90,3 +90,31 @@ Required exact-head evidence: P027 Linux live PostgreSQL and Windows contracts; 
 Open security/release gates: P004-D05/D06/D09 and all remaining decisions, D12/D13 pairing trust/lifecycle, exhaustive maintenance call-graph audit, authenticated production authority issuance, approval/audit/privacy/retention and external-effect/outbox integration, independent security review, P028 real native Windows acceptance, P036 publisher signing, physical Android/iOS pairing/recovery, real LAN/Tailscale, roadmap reconciliation, historical missing-LICENSE and installer secret-marker root-cause investigations. Recent resilience successes do not resolve those historical investigations.
 
 Transactional PostgreSQL writes prove reference consistency only. Database administrators can defeat application triggers; no tamper-evident audit, external-effect atomicity, general production authority provenance or Windows native acceptance is claimed.
+
+
+## Hosted recovery closeout
+
+Starting checkpoint: clean `a42de8538e051107f68d222cc0bbc7d8a6c89bd9` on the existing P027 branch/PR #188; base/P026 ancestry unchanged. Live hosted verification confirmed P027 Linux transactions/recovery, Windows compilation/contracts, all 11 global Rust CI jobs, P020–P026 and P015 passed on that checkpoint. Earlier queued snapshots above are historical, not their current conclusions.
+
+Original acquisition failures shared two implementations: AppImage/clean-machine used `scripts/acquire-appimage-runtime.py`; Windows installer/security/resilience/native-candidate used `scripts/build-windows-installer.ps1`. The Python downloader allowed at most five redirects, approved HTTPS hosts and a 30-second socket timeout, with no acquisition retry. Inno used three attempts, 90 seconds per request and 2/4-second waits; its HttpClient follows HTTPS delivery redirects. Neither acquisition path trusted an existence-only shared cache. Both staged downloads before identity validation; AppImage published only after all verification, and Inno executed only after its locked SHA-256 matched. The old catch-all errors suppressed HTTP status/exception details: their original specific HTTP/DNS/TLS/timeout causes cannot be reconstructed from the retained logs and must not be invented.
+
+The original pinned endpoints were probed without changing sources: all returned HTTP 200 locally in approximately 0.4–1.0 seconds, with redirects delivering assets from `release-assets.githubusercontent.com`. Exact bytes and existing verification succeeded:
+
+| Identity | Existing pin |
+|---|---|
+| AppImage runtime release/source | `AppImage/type2-runtime`, tag `20251108`, source `dd6cebedcbddde9c82f89b011e8e1d40b6e43868` |
+| Runtime endpoint | `https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64` |
+| Runtime size/SHA-256 | 944,632 bytes; `2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d` |
+| Detached signature SHA-256 | `de8262d60b5f82bcff11b77598aedef86d2c375fc246d6a675f6cac68b6dfda7` |
+| Public key SHA-256 / signer | `db8b615eb5bbf5e8418d52906b4a492960926370e2c5041ad6acaccda56ef0c6` / `570C77ACEA40C0F1B758902CBF96CCA56490F695` |
+| License SHA-256 | `aa154fc9070614bbe7921f89db11efd1dba7a1f3a41685958110e2230f9c0ca1` |
+| Inno Setup version/endpoint | `6.7.3`; `https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe` |
+| Inno size/SHA-256 | 10,592,232 bytes; `9c73c3bae7ed48d44112a0f48e66742c00090bdb5bef71d9d3c056c66e97b732` |
+
+The unchanged AppImage acquisition completed local ELF, release/tag metadata, digest, license and GnuPG signer verification. Attempt 2 of the same six hosted runs was requested before source edits. AppImage `42465362183`, clean-machine `42465362222`, installer security `42465362206`, and installation resilience `42465362246` recovered without acquisition changes. Windows installer `42465362321` and native candidate `42465362618` were still executing at this documentation checkpoint; final outcomes are recorded in the PR's exact-head job ledger. This demonstrates recovered availability, not the unavailable original HTTP error code. No retry/cache/mirror/pin/signature/trust-root modification was made to either acquisition implementation.
+
+The closeout adds the test-only Windows PostgreSQL lifecycle/guard scripts and the separate live Windows workflow job described in the qualification document. It preserves all 15 PostgreSQL tests, P026's 55-case matrix and the passing Linux/Windows contract jobs. New source/implementation commit identifiers and the exact final-head run/job matrix are recorded in [Draft PR #188](https://github.com/nghianguyen150612/Synveil/pull/188), including the distinction between actual Windows-hosted PostgreSQL evidence and compilation. Until a live job finishes successfully, it remains unqualified.
+
+Server self-host acceptance `42465362141` is independently blocked: `artifact-identity` failed with `BLOCKED_BY_EXTERNAL_INPUT: trusted publisher keyring variable is absent`. The Ubuntu/Fedora/VM-control jobs await self-hosted labels `synveil-ubuntu-24.04-p036`, `synveil-fedora-42-p036`, and `synveil-p036-vm-control`. No trust key or signed production artifact is synthesized to bypass those P036 gates. A successful contract/source job does not qualify those missing native/artifact jobs.
+
+Closeout source changes: `.github/workflows/v03-p027-postgres-authority-ledger.yml`, `scripts/p027-windows-postgres.ps1`, `scripts/test-p027-windows-postgres.ps1`, this manifest and the P027 security qualification. Production Rust, SQL authority semantics, acquisition scripts and lock files remain unchanged.
