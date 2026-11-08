@@ -4,6 +4,8 @@ set -euo pipefail
 : "${SYNVEIL_TEST_DATABASE_URL:?disposable PostgreSQL administrator URL required}"
 [[ "${SYNVEIL_P027_DISPOSABLE:-}" == 1 ]] || { echo 'Disposable opt-in required' >&2; exit 1; }
 admin_url=$SYNVEIL_TEST_DATABASE_URL
+evidence_dir=${SYNVEIL_P027_EVIDENCE_DIR:-target/p027-evidence}
+mkdir -p "$evidence_dir"
 while read -r package target test_name; do
   database="p027_regression_$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
   psql "$admin_url" -v ON_ERROR_STOP=1 -c "CREATE DATABASE $database"
@@ -13,8 +15,8 @@ from urllib.parse import urlsplit, urlunsplit
 url = urlsplit(sys.argv[1])
 print(urlunsplit(url._replace(path='/' + sys.argv[2])))
 PY
-  ) cargo test -p "$package" --test "$target" --locked "$test_name" -- --exact --ignored --test-threads=1 --nocapture 2>&1 | tee "p027-regression-$test_name.txt"
-  rg 'test result: ok\. 1 passed; 0 failed; 0 ignored;' "p027-regression-$test_name.txt"
+  ) cargo test -p "$package" --test "$target" --locked "$test_name" -- --exact --ignored --test-threads=1 --nocapture 2>&1 | tee "$evidence_dir/p027-regression-$test_name.txt"
+  rg 'test result: ok\. 1 passed; 0 failed; 0 ignored;' "$evidence_dir/p027-regression-$test_name.txt"
 done <<'CASES'
 synveil-auth postgres postgres_authentication_bootstrap_is_atomic_and_race_safe
 synveil-auth postgres postgres_browser_sessions_are_opaque_expiring_and_revocable

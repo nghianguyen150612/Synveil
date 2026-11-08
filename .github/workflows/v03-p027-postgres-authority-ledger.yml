@@ -55,16 +55,17 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config postgresql-client ripgrep
       - name: Exact source and PostgreSQL evidence
         run: |
-          git rev-parse HEAD | tee p027-source.txt
-          rustc --version | tee -a p027-source.txt
-          psql "$SYNVEIL_P027_DATABASE_URL" -Atc 'SHOW server_version' | tee -a p027-source.txt
+          mkdir -p target/p027-evidence
+          git rev-parse HEAD | tee target/p027-evidence/p027-source.txt
+          rustc --version | tee -a target/p027-evidence/p027-source.txt
+          psql "$SYNVEIL_P027_DATABASE_URL" -Atc 'SHOW server_version' | tee -a target/p027-evidence/p027-source.txt
           psql "$SYNVEIL_P027_DATABASE_URL" -Atc 'SHOW server_version' | rg '^17\.'
       - name: Real transactions, lock ordering, crash and recovery (five repetitions)
         run: |
           set -euo pipefail
           for iteration in 1 2 3 4 5; do
-            cargo test -p synveil-auth --test p027_postgres --locked -- --ignored --test-threads=4 --nocapture 2>&1 | tee "p027-qualification-$iteration.txt"
-            rg 'test result: ok\. 15 passed; 0 failed; 0 ignored;' "p027-qualification-$iteration.txt"
+            cargo test -p synveil-auth --test p027_postgres --locked -- --ignored --test-threads=4 --nocapture 2>&1 | tee "target/p027-evidence/p027-qualification-$iteration.txt"
+            rg 'test result: ok\. 15 passed; 0 failed; 0 ignored;' "target/p027-evidence/p027-qualification-$iteration.txt"
           done
       - name: Committed authority and consumption survive an actual database restart
         env:
@@ -94,7 +95,7 @@ jobs:
         if: always()
         with:
           name: p027-postgres-evidence-${{ github.sha }}-${{ github.run_id }}
-          path: p027-*.txt
+          path: target/p027-evidence/*.txt
           if-no-files-found: error
 
   windows-contracts:
