@@ -65,20 +65,50 @@ function Assert-P027State($State) {
     Assert-NoReparseAncestry $State.data
     Assert-P027Inventory $State.tools @(Get-P027Inventory)
 }
+function Invoke-P027BoundedProcess([string]$File, [string[]]$Arguments, [bool]$AllowOpenOutput = $false, [int]$TimeoutMilliseconds = 120000) {
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = $File
+    $info.UseShellExecute = $false
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    foreach ($argument in $Arguments) { $info.ArgumentList.Add($argument) }
+    $process = [Diagnostics.Process]::Start($info)
+    $stdout = $process.StandardOutput.ReadToEndAsync()
+    $stderr = $process.StandardError.ReadToEndAsync()
+    try {
+        if (!$process.WaitForExit($TimeoutMilliseconds)) {
+            $process.Kill($true)
+            $process.WaitForExit()
+            throw 'P027_PG_PROCESS_TIMEOUT: native fixture process exceeded its bound'
+        }
+        $exitCode = $process.ExitCode
+        # pg_ctl may leave an inherited output handle in its persistent server
+        # child. Completion is the controller's exit, not the child's pipe EOF.
+        $outReady = $stdout.Wait(2000)
+        $errReady = $stderr.Wait(2000)
+        if ((!$outReady -or !$errReady) -and !$AllowOpenOutput) {
+            throw 'P027_PG_OUTPUT_TIMEOUT: native fixture output did not close'
+        }
+        $output = if ($outReady) { $stdout.GetAwaiter().GetResult() } else { '' }
+        $errors = if ($errReady) { $stderr.GetAwaiter().GetResult() } else { '' }
+        if ($exitCode -ne 0) {
+            $diagnostic = $output + "`n" + $errors
+            Write-Host $diagnostic.Substring(0,[Math]::Min($diagnostic.Length,65536))
+            throw "P027_PG_TOOL_FAILURE: native fixture process exited $exitCode"
+        }
+        if (!$outReady -or !$errReady) { Write-Host 'P027 controller exited successfully; persistent child output is in postgres.log' }
+        return $output
+    } finally {
+        $process.StandardOutput.Dispose()
+        $process.StandardError.Dispose()
+        $process.Dispose()
+    }
+}
 function Invoke-P027Tool($State, [string]$Name, [string[]]$Arguments) {
     Assert-P027State $State
     if ($Name -cnotin $P027Tools) { throw 'P027_PG_INTEGRITY_FAILURE: unknown tool' }
     $path = ($State.tools | Where-Object name -CEQ $Name).path
-    $output = & $path @Arguments 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        $exitCode = $LASTEXITCODE
-        # Fixture tools receive no real credentials. Preserve their bounded
-        # diagnostics instead of replacing the actionable error with exit 1.
-        $diagnostic = (@($output) | ForEach-Object { $_.ToString() }) -join "`n"
-        Write-Host $diagnostic.Substring(0,[Math]::Min($diagnostic.Length,65536))
-        throw "P027_PG_TOOL_FAILURE: $Name exit $exitCode"
-    }
-    return $output
+    return Invoke-P027BoundedProcess $path $Arguments ($Name -ceq 'pg_ctl.exe')
 }
 function Get-P027StatePath { return Join-Path $env:RUNNER_TEMP 'p027-postgres-state.json' }
 function Read-P027State {
