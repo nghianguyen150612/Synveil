@@ -40,4 +40,4 @@ try { $env:SYNVEIL_P027_DISPOSABLE='0'; Reject { Assert-P027Image } 'P027_PG_PRO
 $powershell = (Get-Process -Id $PID).Path
 Reject { Invoke-P027BoundedProcess $powershell @('-NoProfile','-Command','exit 7') } 'P027_PG_TOOL_FAILURE'
 Reject { Invoke-P027BoundedProcess $powershell @('-NoProfile','-Command','Start-Sleep -Seconds 60') $false 300 } 'P027_PG_PROCESS_TIMEOUT'
-Write-Host 'P027 Windows PostgreSQL provenance/version/hash/scope/process guard negatives: 13 passed; no server started' 
+Write-Host 'P027 Windows PostgreSQL provenance/version/hash/scope/process guard negatives: 13 passed; no server started'
