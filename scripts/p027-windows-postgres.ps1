@@ -70,7 +70,14 @@ function Invoke-P027Tool($State, [string]$Name, [string[]]$Arguments) {
     if ($Name -cnotin $P027Tools) { throw 'P027_PG_INTEGRITY_FAILURE: unknown tool' }
     $path = ($State.tools | Where-Object name -CEQ $Name).path
     $output = & $path @Arguments 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "P027_PG_TOOL_FAILURE: $Name exit $LASTEXITCODE" }
+    if ($LASTEXITCODE -ne 0) {
+        $exitCode = $LASTEXITCODE
+        # Fixture tools receive no real credentials. Preserve their bounded
+        # diagnostics instead of replacing the actionable error with exit 1.
+        $diagnostic = (@($output) | ForEach-Object { $_.ToString() }) -join "`n"
+        Write-Host $diagnostic.Substring(0,[Math]::Min($diagnostic.Length,65536))
+        throw "P027_PG_TOOL_FAILURE: $Name exit $exitCode"
+    }
     return $output
 }
 function Get-P027StatePath { return Join-Path $env:RUNNER_TEMP 'p027-postgres-state.json' }
@@ -105,12 +112,24 @@ function Start-P027Postgres {
     try { $listener.Start() } finally { $listener.Stop() }
     $root = Join-Path $env:RUNNER_TEMP ('p027-pg-' + [guid]::NewGuid().ToString('N'))
     [IO.Directory]::CreateDirectory($root) | Out-Null
+    # PostgreSQL can drop the Administrators group from its token. Grant the
+    # fixture owner SID directly rather than depending on an inherited admin ACL.
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $acl = [Security.AccessControl.DirectorySecurity]::new()
+    $acl.SetOwner($sid)
+    $acl.SetAccessRuleProtection($true,$false)
+    $rule = [Security.AccessControl.FileSystemAccessRule]::new($sid,[Security.AccessControl.FileSystemRights]::FullControl,
+        [Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit',
+        [Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow)
+    $acl.AddAccessRule($rule)
+    Set-Acl -LiteralPath $root -AclObject $acl
     $data = Join-Path $root 'data'
     [IO.Directory]::CreateDirectory($data) | Out-Null
     $state = [pscustomobject]@{ marker='Synveil-P027-disposable-v1'; version=$P027PgVersion; image_os=$env:ImageOS; image_version=$env:ImageVersion; port=55427; root=$root; data=$data; tools=$tools }
     $json = [Text.Encoding]::UTF8.GetBytes(($state | ConvertTo-Json -Depth 8))
     $stream = [IO.File]::Open($statePath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
     try { $stream.Write($json,0,$json.Length); $stream.Flush($true) } finally { $stream.Dispose() }
+    Write-P027Evidence $state
     # Disposable fixture password, no real credential or bearer material.
     $passwordFile = Join-Path $root 'fixture-password.txt'
     [IO.File]::WriteAllText($passwordFile,'p027-disposable',[Text.UTF8Encoding]::new($false))
@@ -125,7 +144,6 @@ function Start-P027Postgres {
         $server = Invoke-P027Tool $state 'psql.exe' @('-h','127.0.0.1','-p','55427','-U','p027','-d','p027','-Atc','SHOW server_version_num')
         if ($server.Trim() -cne '170011') { throw 'P027_PG_VERSION_FAILURE: wrong server' }
     } finally { Remove-Item Env:PGPASSWORD }
-    Write-P027Evidence $state
     'SYNVEIL_P027_DATABASE_URL=postgresql://p027:p027-disposable@127.0.0.1:55427/p027' | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8
 }
 function Restart-P027Postgres {
