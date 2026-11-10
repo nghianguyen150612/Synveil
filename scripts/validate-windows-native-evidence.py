@@ -209,6 +209,9 @@ def validate(record: dict[str, Any]) -> None:
 
     if record["result"] == "PASS":
         require(env["qualification"] == "qualified_isolated_native", "hosted/unqualified evidence cannot be PASS")
+        require(session_class == "genuine_interactive", "PASS requires a genuine interactive session")
+        require("identity_binding" in record and record["identity_binding"]["process_session_id"] > 0,
+                "PASS requires user and interactive session identity binding")
         require(env["architecture"] == "x86_64", "PASS requires x86-64 Windows")
         require(env["operator_approved"], "PASS requires explicit operator approval for an isolated environment")
         require(session["interactive_status"] == "PASS" and session["new_logon_status"] == "PASS"

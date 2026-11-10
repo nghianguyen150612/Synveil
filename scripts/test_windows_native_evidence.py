@@ -45,6 +45,7 @@ def passing_record() -> dict:
             "harness_revision_sha256": "d" * 64, "qualification": "qualified_isolated_native",
             "operator_approved": True,
         },
+        "identity_binding": {"user_sid_sha256": "a" * 64, "process_session_id": 1},
         "privilege": {"category": "standard_user", "elevated": False},
         "session": {
             "classification": "genuine_interactive", "interactive_status": "PASS",
@@ -73,6 +74,17 @@ class EvidenceContractTests(unittest.TestCase):
 
     def test_complete_qualified_evidence_passes(self) -> None:
         contract.validate(passing_record())
+
+    def test_pass_requires_genuine_session_and_identity(self) -> None:
+        record = passing_record()
+        record["session"]["classification"] = "service"
+        self.assertRejected(record, "genuine interactive session")
+        record = passing_record()
+        del record["identity_binding"]
+        self.assertRejected(record, "identity binding")
+        record = passing_record()
+        record["identity_binding"]["process_session_id"] = 0
+        self.assertRejected(record, "identity binding")
 
     def test_component_evidence_digests_are_required_and_validated(self) -> None:
         record = passing_record()
