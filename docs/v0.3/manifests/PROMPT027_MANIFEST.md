@@ -41,6 +41,15 @@ job `129647085871`. Current `cargo-deny` reported
 advisory identifies its bundled SQLite 3.46.0 as affected; it requires SQLite
 3.54.0 or newer.
 
+Repair-resumption checkpoint: fetched `develop/v0.3` was still
+`c55ca38eb3fcfac030ad90e9863a5d16475e3fd0`; the existing remote feature branch
+was at `d677f1bc63d0c7278846ec11075830c36bab7eae`; Draft PR #188 was
+OPEN/DRAFT/UNMERGED. No newer feature commits were present. The feature repair
+was done in a clean `/workspace/Synveil-p027` worktree, then pushed by ordinary
+fast-forward; no reset or history rewrite was used. Earlier SQLx compatibility
+probe worktrees were left isolated from this branch, and their rejected
+candidate findings are summarized in the qualification document.
+
 The full feature and source audit found that SQLite is required for desktop
 client-sync durable state and the P026 transaction, WAL, race and subprocess
 crash/recovery qualification. Root SQLx explicitly enables both PostgreSQL and
@@ -74,13 +83,34 @@ Repair-source local validation: `cargo deny check advisories`,
 `cargo deny check bans licenses sources`, rustfmt, strict Clippy for auth and
 metadata, metadata all-target check, all 16 auth unit tests, all 5 P026
 reference tests, all 5 P026 SQLite transaction tests, and 25 repeated SQLite
-race/rollback/crash test executions passed. The full workspace strict Clippy
-and `client-sync` all-target check were attempted but stopped at the missing
-system `dbus-1.pc` development package in this executor; they are required on
-the final hosted head. This executor has no PostgreSQL binaries or configured
+race/rollback/crash test executions passed. The P025 reference target also
+passed all 3 tests. The installer-engine suite passed 124 tests. The full
+workspace strict Clippy and `client-sync` all-target check were attempted but
+stopped at the missing system `dbus-1.pc` development package in this executor.
+This executor has no PostgreSQL binaries or configured
 `SYNVEIL_TEST_DATABASE_URL`, so no local P027 live PostgreSQL result is claimed.
-The updated source's hosted run matrix is recorded below after exact-head jobs
-complete. The independent security review is still open.
+
+### Exact-head hosted repair matrix
+
+All rows below were run on implementation SHA
+`0eeaf7da9950e4ac86ea0fd9e5e41d51a0fa1f64`. The push-triggered and
+PR-triggered Global Rust CI runs both completed all 11 jobs successfully.
+
+| Workflow | Exact-head run | Result |
+|---|---|---|
+| Global Rust CI (push) | [42786054261](https://github.com/nghianguyen150612/Synveil/actions/runs/42786054261) | 11/11 jobs passed, including dependency policy, strict quality, Windows/Linux Qt, and Windows/Linux/macOS checks and tests. |
+| Global Rust CI (PR) | [42786065526](https://github.com/nghianguyen150612/Synveil/actions/runs/42786065526) | 11/11 jobs passed, including dependency policy, strict quality, Windows/Linux Qt, and Windows/Linux/macOS checks and tests. |
+| P027 PostgreSQL authority ledger | [42786065867](https://github.com/nghianguyen150612/Synveil/actions/runs/42786065867) | Linux PostgreSQL [129727446519](https://github.com/nghianguyen150612/Synveil/actions/runs/42786065867/job/129727446519), Windows PostgreSQL 17.11 [129727446032](https://github.com/nghianguyen150612/Synveil/actions/runs/42786065867/job/129727446032), and Windows compile/P025/P026 SQLite/client-sync contracts [129727446341](https://github.com/nghianguyen150612/Synveil/actions/runs/42786065867/job/129727446341): all passed. |
+| P015 PostgreSQL/ObjectStore authorization | [42786065460](https://github.com/nghianguyen150612/Synveil/actions/runs/42786065460) | Passed. |
+| P020–P024 pairing qualification | [P020 42786065504](https://github.com/nghianguyen150612/Synveil/actions/runs/42786065504), [P021 42786065822](https://github.com/nghianguyen150612/Synveil/actions/runs/42786065822), [P022 42786065644](https://github.com/nghianguyen150612/Synveil/actions/runs/42786065644), [P023 42786065810](https://github.com/nghianguyen150612/Synveil/actions/runs/42786065810), [P024 42786065710](https://github.com/nghianguyen150612/Synveil/actions/runs/42786065710) | All Windows and Ubuntu jobs passed. |
+| P025/P026 authorization and SQLite qualification | [P025 42786065870](https://github.com/nghianguyen150612/Synveil/actions/runs/42786065870), [P026 42786065814](https://github.com/nghianguyen150612/Synveil/actions/runs/42786065814) | All Windows and Ubuntu jobs passed; the 55 negative P026 cases remain unchanged. |
+| Installer security hardening | [42786065778](https://github.com/nghianguyen150612/Synveil/actions/runs/42786065778) | All jobs passed. |
+| Installation resilience hardening | [42786065588](https://github.com/nghianguyen150612/Synveil/actions/runs/42786065588) | All jobs passed. |
+| Windows installer smoke | [42786065737](https://github.com/nghianguyen150612/Synveil/actions/runs/42786065737) | Passed. |
+
+Linux DEB/RPM build and reproducibility passed in [run 42786065742](https://github.com/nghianguyen150612/Synveil/actions/runs/42786065742), as did its systemd and Qt reproducibility jobs. Its Fedora DNF install job `129752554628` failed with `InstallationFailed: The native package manager did not complete successfully`; its Ubuntu APT install job `129752554975` reached desktop launch and failed on a Qt QML symbol lookup. These package-install/runtime results are not counted as passes and are tracked separately from the dependency repair.
+
+Other unrelated exact-head failures remain: the P036 publisher `artifact-identity` job [129727445656](https://github.com/nghianguyen150612/Synveil/actions/runs/42786065823/job/129727445656), P028 `standard-user-native` [129740418195](https://github.com/nghianguyen150612/Synveil/actions/runs/42786065865/job/129740418195), and Ubuntu desktop/QML installation jobs that could not locate `qml6-module-qtquick-nativestyle`. They do not represent dependency-policy successes. The local SQLx compatibility patch still requires independent security review before acceptance; PR #188 remains Draft and unmerged.
 
 ## Local validation ledger
 
