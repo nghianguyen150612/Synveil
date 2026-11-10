@@ -23,10 +23,64 @@ Status: provisional reference qualification. Local Linux PostgreSQL evidence is 
 | `crates/auth/tests/p027_postgres.rs` | 15 real PostgreSQL qualification tests; independent connections, ordered contention, negative matrices, backend/process failure, reconnect and optional external database restart probe. |
 | `scripts/qualify-p027-postgres-regressions.sh` | Six auth and three API/metadata PostgreSQL regressions, each in a new disposable database; requires exactly one executed test per case. |
 | `.github/workflows/v03-p027-postgres-authority-ledger.yml` | Exact source checkout; Linux PostgreSQL 17 repeated tests and actual server restart; Windows harness compilation and contract/installer/sync regressions. |
+| `Cargo.toml`, `Cargo.lock` | Route SQLx's existing SQLite driver through the narrow patched source and lock the fixed native binding. |
+| `vendor/sqlx-sqlite/` | Traceable SQLx 0.8.6 package source with a one-line `libsqlite3-sys` version-range change; provenance is recorded beside the source. |
 | `docs/v0.3/security/P027_POSTGRES_AUTHORITY_LEDGER_QUALIFICATION.md` | Production boundary audit, schema/lock/recovery contracts, inventory, limitations and open gates. |
 | This manifest | Reproducible validation and delivery evidence. |
 
 Production source, migrations and P025/P026/P020–P024 contracts remain unchanged.
+
+## RUSTSEC-2026-0459 dependency repair
+
+The exact-head Rust CI failure was reproduced on the verified starting head
+`d677f1bc63d0c7278846ec11075830c36bab7eae`, workflow
+[42752709142](https://github.com/nghianguyen150612/Synveil/actions/runs/42752709142),
+job `129647085871`. Current `cargo-deny` reported
+`RUSTSEC-2026-0459` / CVE-2026-119375 through
+`sqlx 0.8.6 -> sqlx-sqlite 0.8.6 -> libsqlite3-sys 0.30.1`. The upstream
+advisory identifies its bundled SQLite 3.46.0 as affected; it requires SQLite
+3.54.0 or newer.
+
+The full feature and source audit found that SQLite is required for desktop
+client-sync durable state and the P026 transaction, WAL, race and subprocess
+crash/recovery qualification. Root SQLx explicitly enables both PostgreSQL and
+SQLite, and SQLx SQLite's `bundled` feature is active in the production and
+workspace build trees. This is compiled bundled code, including on Windows,
+Linux and macOS; there is no second `links = "sqlite3"` package in the graph.
+Removing SQLite would remove required product and qualification behavior.
+
+| Candidate | Result |
+|---|---|
+| Remove SQLite | Rejected: client-sync uses on-disk SQLite in production, and P026 relies on real WAL transactions, independent connections and crash/recovery behavior. |
+| Published SQLx upgrade | Rejected: crates.io SQLx 0.9.0 metadata still requires `libsqlite3-sys ^0.37.0`, below patched 0.39.x. The official SQLx change merged as PR #4502 on 2026-11-08, but applying SQLx 0.9 to this workspace also changes APIs and fails initial compatibility checks in existing SQL/query and auth code. |
+| Narrow upstream-source patch | Selected: vendor the exact published SQLx `sqlx-sqlite 0.8.6` source and change only its `libsqlite3-sys` requirement to `>=0.39.0, <0.40.0`. No Rust or SQLite C source is changed. This remains subject to independent security review before acceptance. |
+
+| Dependency | Before | After |
+|---|---:|---:|
+| `sqlx` | 0.8.6 | 0.8.6 |
+| `sqlx-sqlite` | 0.8.6 from crates.io | 0.8.6 from traceable local vendor source |
+| `libsqlite3-sys` | 0.30.1; bundled SQLite 3.46.0 | 0.39.1; bundled SQLite 3.54.1 |
+
+The vendored archive identity is SHA-256
+`c2d12fe70b2c1b4401038055f90f151b78208de1f9f89a7dbfd41587a10c3eea`, from
+SQLx source commit `bab1b022bd56a64f9a08b46b36b97c5cff19d77e`. The selected
+binding archive checksum is
+`14a5f01b87b92705d07b433c06f96cbc764637d81a0bffb5734ce17cf0f9a2b3`.
+`cargo tree -i libsqlite3-sys` resolves exactly one `libsqlite3-sys 0.39.1`;
+`cargo tree -e features -i libsqlite3-sys` confirms `bundled` remains enabled.
+The compiled library's `sqlite3_libversion()` returned `3.54.1`.
+
+Repair-source local validation: `cargo deny check advisories`,
+`cargo deny check bans licenses sources`, rustfmt, strict Clippy for auth and
+metadata, metadata all-target check, all 16 auth unit tests, all 5 P026
+reference tests, all 5 P026 SQLite transaction tests, and 25 repeated SQLite
+race/rollback/crash test executions passed. The full workspace strict Clippy
+and `client-sync` all-target check were attempted but stopped at the missing
+system `dbus-1.pc` development package in this executor; they are required on
+the final hosted head. This executor has no PostgreSQL binaries or configured
+`SYNVEIL_TEST_DATABASE_URL`, so no local P027 live PostgreSQL result is claimed.
+The updated source's hosted run matrix is recorded below after exact-head jobs
+complete. The independent security review is still open.
 
 ## Local validation ledger
 
