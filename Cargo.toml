@@ -32,7 +32,7 @@ publish = false
 # here only when an active crate has an immediate, reviewed consumer. Core
 # currently consumes UUIDv7 generation, RFC 3339 timestamp support, and the
 # compiled IANA timezone database for the scheduling domain. SQLx and Tokio
-# stay in the metadata adapter boundary rather than entering core.
+# stay in metadata and client-sync adapter boundaries rather than entering core.
 [workspace.dependencies]
 axum = { version = "0.8", features = ["macros"] }
 bytes = "1"
@@ -108,7 +108,11 @@ windows-sys = { version = "0.61.2", default-features = false, features = [
     "Win32_System_WindowsProgramming",
 ] }
 
+# SQLx 0.8.6 caps libsqlite3-sys at 0.30.1. Vendor only its SQLite adapter
+# with an upstream-source dependency-range patch so bundled SQLite can use the
+# maintained, security-fixed 0.39.x binding. See vendor/sqlx-sqlite/README.synveil.md.
 [patch.crates-io]
+sqlx-sqlite = { path = "vendor/sqlx-sqlite" }
 # CXX-Qt 0.10 collects Qt modules in a randomized HashSet before emitting
 # native link directives. Keep the release link order stable across processes.
 cxx-qt-build = { path = "vendor/cxx-qt-build" }
