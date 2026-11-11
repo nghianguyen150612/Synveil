@@ -78,6 +78,7 @@ jobs:
           python3 scripts/validate-windows-native-acceptance.py
           python3 scripts/test_windows_native_evidence.py
           python3 scripts/test_windows_native_phase_ledger.py
+          python3 scripts/test_windows_native_coordinator.py
           cargo check --locked -p synveil-client --example p013_windows_control_probe
           cargo test -p synveil-client --test desktop_control_ipc --locked
           ./scripts/validate-install-acceptance.sh
