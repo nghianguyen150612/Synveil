@@ -481,6 +481,7 @@ def main() -> int:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         module.validate(summary)
+        module.validate_component_files(summary, args.evidence_directory)
     except (OSError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError,
             subprocess.SubprocessError, RuntimeError) as exc:
         print(f"P013_SUMMARY_INCOMPLETE: {exc}", file=sys.stderr)

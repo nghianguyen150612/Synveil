@@ -86,6 +86,33 @@ class EvidenceContractTests(unittest.TestCase):
         record["identity_binding"]["process_session_id"] = 0
         self.assertRejected(record, "identity binding")
 
+    def test_cli_pass_requires_component_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.json"
+            path.write_text(json.dumps(passing_record()))
+            result = subprocess.run([sys.executable, str(MODULE), str(path)], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("PASS requires actual component files", result.stderr)
+
+    def test_actual_component_bytes_are_checked(self) -> None:
+        record = passing_record()
+        names = {"environment": "windows-native-environment-v1.json", "gui": "windows-gui-journey-v1.json",
+                 "logon": "windows-new-logon-v1.json", "logoff": "windows-logoff-shutdown-v1.json",
+                 "uninstall": "windows-uninstall-preservation-v1.json", "cleanup": "windows-p013-cleanup-v1.json"}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for key, filename in names.items():
+                data = key.encode()
+                (root / filename).write_bytes(data)
+                record["component_evidence_sha256"][key] = hashlib.sha256(data).hexdigest()
+            contract.validate_component_files(record, root)
+            (root / names["gui"]).write_bytes(b"tampered")
+            with self.assertRaisesRegex(contract.EvidenceError, "component gui digest mismatch"):
+                contract.validate_component_files(record, root)
+            (root / names["gui"]).unlink()
+            with self.assertRaisesRegex(contract.EvidenceError, "component gui is missing or unsafe"):
+                contract.validate_component_files(record, root)
+
     def test_component_evidence_digests_are_required_and_validated(self) -> None:
         record = passing_record()
         del record["component_evidence_sha256"]["gui"]
