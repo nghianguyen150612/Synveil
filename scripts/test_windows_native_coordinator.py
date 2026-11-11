@@ -74,8 +74,12 @@ class CoordinatorTests(unittest.TestCase):
 
     def test_corrupt_evidence_blocks_resume(self):
         c.advance(self.path, 'PREFLIGHT', self.evidence('PREFLIGHT'))
-        with sqlite3.connect(str(self.path)) as db:
+        db = sqlite3.connect(str(self.path))
+        try:
             db.execute('UPDATE phases SET evidence=?', (b'tampered',))
+            db.commit()
+        finally:
+            db.close()
         self.rejected('EVIDENCE_CORRUPT', c.read_state, self.path)
         self.rejected('EVIDENCE_CORRUPT', c.advance, self.path, 'CANDIDATE_VERIFIED', self.evidence('CANDIDATE_VERIFIED'))
 
