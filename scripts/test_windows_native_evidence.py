@@ -200,6 +200,33 @@ class EvidenceContractTests(unittest.TestCase):
         self.assertEqual(record["checks"]["consistent_runtime_identity"], "FAIL")
         self.assertEqual(record["result"], "FAIL")
 
+    def test_phase_binding_rejects_cross_session_and_timeline(self) -> None:
+        components = {
+            "environment": {"identity_binding": {"process_session_id": 1}, "executed_at_utc": "2026-01-01T00:00:00Z"},
+            "gui": {"process_session_id": 1, "executed_at_utc": "2026-01-01T00:01:00Z"},
+            "logon": {"session": {"process_session_id": 2, "authentication_luid_sha256": "a" * 64,
+                       "logon_time_utc": "2026-01-01T00:02:00Z", "task_trigger_time_utc": "2026-01-01T00:03:00Z",
+                       "task_start_time_utc": "2026-01-01T00:04:00Z"}, "executed_at_utc": "2026-01-01T00:05:00Z"},
+            "logoff": {"session": {"authentication_luid_sha256": "a" * 64, "logon_time_utc": "2026-01-01T00:02:00Z",
+                        "logoff_time_utc": "2026-01-01T00:06:00Z"}, "executed_at_utc": "2026-01-01T00:07:00Z"},
+            "uninstall": {"executed_at_utc": "2026-01-01T00:08:00Z"},
+            "cleanup": {"executed_at_utc": "2026-01-01T00:09:00Z"},
+        }
+        import copy
+        self.assertEqual(summary.phase_binding(components), "PASS")
+        for phase, field, value in (("gui", "process_session_id", 9),
+                                    ("logoff", "authentication_luid_sha256", "b" * 64),
+                                    ("logoff", "logon_time_utc", "2026-01-01T00:00:00Z"),
+                                    ("logoff", "logoff_time_utc", "2026-01-01T00:03:00Z"),
+                                    ("cleanup", "executed_at_utc", "2026-01-01T00:00:00Z")):
+            with self.subTest(phase=phase, field=field):
+                changed = copy.deepcopy(components)
+                target = changed[phase].get("session", changed[phase]) if field in {"authentication_luid_sha256", "logon_time_utc", "logoff_time_utc"} else changed[phase]
+                target[field] = value
+                self.assertEqual(summary.phase_binding(changed), "FAIL")
+        del components["logon"]["session"]["authentication_luid_sha256"]
+        self.assertEqual(summary.phase_binding(components), "NOT_RUN")
+
     def test_summary_cli_records_missing_component_evidence_without_pass(self) -> None:
         source = "a" * 40
         setup_bytes = b"P013 candidate identity fixture"
