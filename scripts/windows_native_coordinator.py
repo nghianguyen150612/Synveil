@@ -8,6 +8,7 @@ verified Windows ACL and observer adapter exists.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import datetime as dt
 import hashlib
 import json
@@ -40,9 +41,30 @@ def clock() -> str:
 def open_db(path: Path) -> sqlite3.Connection:
     require(path.is_file() and not path.is_symlink(), 'STATE_UNSAFE_OR_MISSING')
     db = sqlite3.connect(str(path), timeout=5, isolation_level=None)
-    db.execute('PRAGMA foreign_keys=ON')
-    db.execute('PRAGMA synchronous=FULL')
+    try:
+        db.execute('PRAGMA foreign_keys=ON')
+        db.execute('PRAGMA synchronous=FULL')
+    except BaseException:
+        db.close()
+        raise
     return db
+
+
+@contextmanager
+def database(path: Path):
+    """Close every connection deterministically; closing rolls back open transactions."""
+    db = open_db(path)
+    try:
+        yield db
+    except BaseException:
+        if db.in_transaction:
+            db.rollback()
+        raise
+    else:
+        if db.in_transaction:
+            db.rollback()
+    finally:
+        db.close()
 
 
 def initialize(path: Path, *, fixture: bool, approval: str, expires: str) -> str:
@@ -62,19 +84,13 @@ def initialize(path: Path, *, fixture: bool, approval: str, expires: str) -> str
     os.close(fd)
     run_id = secrets.token_hex(16)
     try:
-        with open_db(path) as db:
-            db.executescript('''
-                BEGIN IMMEDIATE;
-                CREATE TABLE run (id TEXT PRIMARY KEY, mode TEXT NOT NULL, created TEXT NOT NULL,
-                                  deadline TEXT NOT NULL, status TEXT NOT NULL);
-                CREATE TABLE phases (position INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL,
-                                     digest TEXT UNIQUE NOT NULL, evidence BLOB NOT NULL,
-                                     completed TEXT NOT NULL);
-                CREATE TABLE cleanup (id INTEGER PRIMARY KEY CHECK (id=1), result TEXT NOT NULL,
-                                      digest TEXT NOT NULL, evidence BLOB NOT NULL, recorded TEXT NOT NULL);
-                COMMIT;
-            ''')
+        with database(path) as db:
+            db.execute('BEGIN IMMEDIATE')
+            db.execute('CREATE TABLE run (id TEXT PRIMARY KEY, mode TEXT NOT NULL, created TEXT NOT NULL, deadline TEXT NOT NULL, status TEXT NOT NULL)')
+            db.execute('CREATE TABLE phases (position INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, digest TEXT UNIQUE NOT NULL, evidence BLOB NOT NULL, completed TEXT NOT NULL)')
+            db.execute('CREATE TABLE cleanup (id INTEGER PRIMARY KEY CHECK (id=1), result TEXT NOT NULL, digest TEXT NOT NULL, evidence BLOB NOT NULL, recorded TEXT NOT NULL)')
             db.execute('INSERT INTO run VALUES (?, ?, ?, ?, ?)', (run_id, 'FIXTURE_ONLY', clock(), deadline.isoformat(), 'ACTIVE'))
+            db.execute('COMMIT')
     except Exception:
         # Retain a failed initialization for inspection; never delete unknown state.
         raise
@@ -92,7 +108,7 @@ def _run(db: sqlite3.Connection) -> tuple:
 
 def read_state(path: Path) -> dict:
     try:
-        with open_db(path) as db:
+        with database(path) as db:
             run_id, mode, deadline, status = _run(db)
             rows = db.execute('SELECT position, name, digest, evidence FROM phases ORDER BY position').fetchall()
             for index, (position, name, digest, evidence) in enumerate(rows):
@@ -117,7 +133,7 @@ def advance(path: Path, phase: str, evidence: bytes) -> None:
     require(isinstance(item, dict) and set(item) == {'run_id', 'phase', 'result', 'mode'}, 'EVIDENCE_INVALID')
     require(item['mode'] == 'FIXTURE_ONLY' and item['result'] == 'PASS', 'EVIDENCE_NOT_FIXTURE_PASS')
     try:
-        with open_db(path) as db:
+        with database(path) as db:
             db.execute('BEGIN IMMEDIATE')
             run_id, _, deadline, status = _run(db)
             require(status == 'ACTIVE', 'RUN_TERMINAL')
@@ -151,7 +167,7 @@ def record_cleanup(path: Path, evidence: bytes) -> None:
     require(isinstance(item, dict) and set(item) == {'run_id', 'mode', 'result'}, 'EVIDENCE_INVALID')
     require(item['mode'] == 'FIXTURE_ONLY' and item['result'] in ('PASS', 'FAIL', 'BLOCKED'), 'CLEANUP_RESULT_INVALID')
     try:
-        with open_db(path) as db:
+        with database(path) as db:
             db.execute('BEGIN IMMEDIATE')
             run_id, _, _, status = _run(db)
             require(status == 'ACTIVE', 'RUN_TERMINAL')

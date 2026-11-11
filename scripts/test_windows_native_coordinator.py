@@ -6,6 +6,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import windows_native_coordinator as c
@@ -89,6 +90,52 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(c.read_state(self.path)['status'], 'FINALIZED')
         self.rejected('RUN_TERMINAL', c.advance, self.path, c.PHASES[-1], self.evidence(c.PHASES[-1]))
         self.rejected('RUN_TERMINAL', c.record_cleanup, self.path, cleanup)
+
+    def test_database_can_be_deleted_after_successful_operations(self):
+        c.read_state(self.path)
+        c.advance(self.path, 'PREFLIGHT', self.evidence('PREFLIGHT'))
+        cleanup = json.dumps({'run_id': self.run, 'mode': 'FIXTURE_ONLY', 'result': 'PASS'}).encode()
+        c.record_cleanup(self.path, cleanup)
+        self.assertTrue(self.path.unlink() is None)
+        self.assertFalse(self.path.exists())
+
+    def test_database_can_be_deleted_after_operation_errors(self):
+        self.rejected('PHASE_ORDER_INVALID', c.advance, self.path, 'INSTALLED', self.evidence('INSTALLED'))
+        self.rejected('CLEANUP_RESULT_INVALID', c.record_cleanup, self.path,
+                      json.dumps({'run_id': self.run, 'mode': 'FIXTURE_ONLY', 'result': 'UNKNOWN'}).encode())
+        self.assertTrue(self.path.unlink() is None)
+        self.assertFalse(self.path.exists())
+
+    def test_open_db_closes_handle_when_pragma_setup_fails(self):
+        class FakeDb:
+            closed = False
+            def execute(self, _statement):
+                raise sqlite3.OperationalError('pragma failure')
+            def close(self):
+                self.closed = True
+        fake = FakeDb()
+        with mock.patch.object(c.sqlite3, 'connect', return_value=fake):
+            self.rejected('STATE_UNSAFE_OR_MISSING', c.open_db, self.path.parent / 'missing.db')
+            # Existing file passes path preflight; fail during PRAGMA instead.
+            with mock.patch.object(Path, 'is_file', return_value=True), \
+                 mock.patch.object(Path, 'is_symlink', return_value=False):
+                with self.assertRaises(sqlite3.OperationalError):
+                    c.open_db(self.path)
+        self.assertTrue(fake.closed)
+
+    def test_sqlite_database_reopens_after_child_process_exit(self):
+        ctx = multiprocessing.get_context('spawn')
+        q = ctx.Queue()
+        worker = ctx.Process(target=concurrent_step, args=(str(self.path), self.evidence('PREFLIGHT'), q))
+        worker.start()
+        worker.join(15)
+        self.assertEqual(worker.exitcode, 0)
+        self.assertEqual(q.get(timeout=3), 'PASS')
+        reopened = sqlite3.connect(str(self.path), timeout=1)
+        try:
+            self.assertEqual(reopened.execute('SELECT name FROM phases').fetchone()[0], 'PREFLIGHT')
+        finally:
+            reopened.close()
 
     def test_unsafe_path_and_invalid_evidence(self):
         self.rejected('EVIDENCE_INVALID', c.advance, self.path, 'PREFLIGHT', b'garbage')
