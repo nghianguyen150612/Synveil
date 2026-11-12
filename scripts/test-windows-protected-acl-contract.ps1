@@ -37,4 +37,8 @@ $script:acls['observer'].SetAccessRuleProtection($true, $false)
 $rule = [Security.AccessControl.FileSystemAccessRule]::new($subject, [Security.AccessControl.FileSystemRights]::Modify, ([Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit), [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
 [void]$script:acls['observer'].AddAccessRule($rule)
 Assert-Failure { Get-ExpectedAcl 'observer' $false $false } 'P028_UNEXPECTED_ACL_RULE'
-Write-Output 'P028_ACL_CONTRACT_TESTS_PASS: 4 policies, 5 negative checks (in-memory only)'
+Set-RunAcl 'wrong-rights' $true $true
+$wrong = [Security.AccessControl.FileSystemAccessRule]::new($subject, [Security.AccessControl.FileSystemRights]::ReadAndExecute, ([Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit), [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
+[void]$script:acls['wrong-rights'].SetAccessRule($wrong)
+Assert-Failure { Get-ExpectedAcl 'wrong-rights' $true $true } 'P028_UNEXPECTED_ACL_RULE'
+Write-Output 'P028_ACL_CONTRACT_TESTS_PASS: 4 policies, 6 negative checks (in-memory only)'

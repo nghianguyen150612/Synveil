@@ -79,6 +79,11 @@ function Get-ExpectedAcl([string]$Path, [bool]$Inbox, [bool]$IncludeSubject = $t
     $expected[$adminSid.Value] = [Security.AccessControl.FileSystemRights]::FullControl
     $expected[$systemSid.Value] = [Security.AccessControl.FileSystemRights]::FullControl
     if ($IncludeSubject) { $expected[$subject.Value] = if ($Inbox) { [Security.AccessControl.FileSystemRights]::Modify } else { [Security.AccessControl.FileSystemRights]::ReadAndExecute } }
+    # Allow rules constructed by .NET include Synchronize even when the named
+    # rights constant omits it. Compare the resulting mask, not effective access.
+    foreach ($key in @($expected.Keys)) {
+        $expected[$key] = $expected[$key] -bor [Security.AccessControl.FileSystemRights]::Synchronize
+    }
     foreach ($rule in $rules) {
         $sid = $rule.IdentityReference.Value
         if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
@@ -87,6 +92,7 @@ function Get-ExpectedAcl([string]$Path, [bool]$Inbox, [bool]$IncludeSubject = $t
             $rule.PropagationFlags -ne [Security.AccessControl.PropagationFlags]::None -or
             -not $expected.ContainsKey($sid) -or
             $rule.FileSystemRights -ne $expected[$sid]) {
+            Write-Warning ("P028_ACL_RULE_DIAGNOSTIC rights={0} mask=0x{1:X} inheritance={2} propagation={3} type={4} inherited={5} expectedPrincipal={6}" -f $rule.FileSystemRights, [int]$rule.FileSystemRights, $rule.InheritanceFlags, $rule.PropagationFlags, $rule.AccessControlType, $rule.IsInherited, $expected.ContainsKey($sid))
             throw 'P028_UNEXPECTED_ACL_RULE'
         }
         $expected.Remove($sid)
