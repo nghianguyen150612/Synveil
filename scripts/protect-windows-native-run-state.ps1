@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory=$true)][ValidateSet('Initialize','Verify','Advance')][string]$Action,
     [Parameter(Mandatory=$true)][string]$ApprovedRoot,
     [string]$RunId,
-    [Parameter(Mandatory=$true)][ValidatePattern('^S-1-5-21-(?:[0-9]+-){2}[0-9]+$')][string]$SubjectSid,
+    [Parameter(Mandatory=$true)][ValidatePattern('^S-1-5-21-(?:[0-9]+-){3}[0-9]+$')][string]$SubjectSid,
     [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{40}$')][string]$SourceCommit,
     [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{40}$')][string]$HarnessCommit,
     [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{64}$')][string]$CandidateSha256,
@@ -82,7 +82,8 @@ function Get-ExpectedAcl([string]$Path, [bool]$Inbox, [bool]$IncludeSubject = $t
     foreach ($rule in $rules) {
         $sid = $rule.IdentityReference.Value
         if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
-            $rule.InheritanceFlags -ne [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit -or
+            $rule.IsInherited -or
+            $rule.InheritanceFlags -ne ([Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit) -or
             $rule.PropagationFlags -ne [Security.AccessControl.PropagationFlags]::None -or
             -not $expected.ContainsKey($sid) -or
             $rule.FileSystemRights -ne $expected[$sid]) {
@@ -201,8 +202,8 @@ if ($Action -eq 'Initialize') {
     Get-ExpectedAcl $runRoot $false
     Get-ExpectedAcl $trustedPath $false
     Get-ExpectedAcl $inboxPath $true
-    Get-ExpectedAcl $observerInbox $false
-    Get-ExpectedAcl $evidenceRoot $false
+    Get-ExpectedAcl $observerInbox $false $false
+    Get-ExpectedAcl $evidenceRoot $false $false
     Write-Output "P028_PROTECTED_RUN_CREATED $RunId"
     exit 0
 }
@@ -216,8 +217,8 @@ if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) { throw 'P028_RUN_S
 Get-ExpectedAcl $runRoot $false
 Get-ExpectedAcl $trustedPath $false
 Get-ExpectedAcl $inboxPath $true
-Get-ExpectedAcl $observerInbox $false
-Get-ExpectedAcl $evidenceRoot $false
+Get-ExpectedAcl $observerInbox $false $false
+Get-ExpectedAcl $evidenceRoot $false $false
 $mutex = [Threading.Mutex]::new($false, 'Global\SynveilP028-' + $RunId)
 $hasLock = $false
 try {
@@ -231,10 +232,18 @@ try {
         $state.candidate_sha256 -cne $CandidateSha256 -or $state.manifest_sha256 -cne $ManifestSha256) {
         throw 'P028_RUN_STATE_IDENTITY_MISMATCH'
     }
+    $subjectHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($subject.Value))).ToLowerInvariant()
+    $controllerHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($identity.User.Value))).ToLowerInvariant()
+    if ($state.subject_sid_sha256 -cne $subjectHash) { throw 'P028_SUBJECT_IDENTITY_MISMATCH' }
+    if ($state.controller_sid_sha256 -cne $controllerHash) { throw 'P028_CONTROLLER_IDENTITY_MISMATCH' }
     if ([DateTimeOffset]::UtcNow -gt [DateTimeOffset]::Parse($state.expires_at_utc)) { throw 'P028_RUN_EXPIRED' }
     if ((Get-MachineDigest) -cne $state.machine_guid_sha256 -or [int](Get-CimInstance Win32_OperatingSystem).BuildNumber -ne [int]$state.os_build) { throw 'P028_MACHINE_IDENTITY_MISMATCH' }
     if ($Action -eq 'Verify') { Write-Output "P028_PROTECTED_RUN_VERIFIED $RunId $($state.status)"; exit 0 }
     if ($state.status -cne 'ACTIVE') { throw 'P028_RUN_TERMINAL' }
+    # JSON fields and the directory ACL do not authenticate the event collectors,
+    # candidate or observer provenance. Do not record a native PASS until that
+    # independent authority is implemented and qualified.
+    throw 'P028_NATIVE_AUTHORITY_UNAVAILABLE'
     if ($Action -ne 'Advance' -or [string]::IsNullOrWhiteSpace($Phase) -or [string]::IsNullOrWhiteSpace($EvidenceFile)) { throw 'P028_TRANSITION_ARGUMENTS_INVALID' }
     if ($state.phases.Count -ge 13 -or $Phase -cne @('PREFLIGHT','CANDIDATE_VERIFIED','ENVIRONMENT_QUALIFIED','INSTALLED','GUI_VERIFIED','IPC_VERIFIED','STARTUP_CONFIGURED','LOGOFF_OBSERVED','NEW_LOGON_OBSERVED','LOGON_TRIGGER_VERIFIED','LIFECYCLE_VERIFIED','CLEANUP_VERIFIED','EVIDENCE_FINALIZED')[$state.phases.Count]) { throw 'P028_PHASE_ORDER_INVALID' }
     $observerPhases = @('PREFLIGHT','CANDIDATE_VERIFIED','ENVIRONMENT_QUALIFIED','LOGOFF_OBSERVED','NEW_LOGON_OBSERVED','LOGON_TRIGGER_VERIFIED','CLEANUP_VERIFIED','EVIDENCE_FINALIZED')

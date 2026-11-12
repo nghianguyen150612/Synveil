@@ -23,6 +23,15 @@ env:
   SYNVEIL_ENABLE_QMLCACHEGEN_WRAPPER: "1"
 
 jobs:
+  protected-acl-contract:
+    runs-on: windows-2025
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test in-memory protected ACL contract
+        shell: pwsh
+        run: ./scripts/test-windows-protected-acl-contract.ps1
+
   build-windows-candidate:
     runs-on: windows-2025
     timeout-minutes: 60
@@ -79,6 +88,7 @@ jobs:
           python3 scripts/test_windows_native_evidence.py
           python3 scripts/test_windows_native_phase_ledger.py
           python3 scripts/test_windows_native_coordinator.py
+          python3 scripts/test_windows_protected_state_contract.py
           cargo check --locked -p synveil-client --example p013_windows_control_probe
           cargo test -p synveil-client --test desktop_control_ipc --locked
           ./scripts/validate-install-acceptance.sh
