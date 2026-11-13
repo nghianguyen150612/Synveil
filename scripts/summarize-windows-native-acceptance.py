@@ -191,6 +191,50 @@ def component_candidate_matches(component: dict[str, Any], source: str, candidat
     )
 
 
+def phase_binding(components: dict[str, dict[str, Any]]) -> str:
+    """Check bindings available in v1 records; absence never establishes a pass."""
+    env = get(components, "environment", "identity_binding", "process_session_id")
+    gui = get(components, "gui", "process_session_id")
+    logon = get(components, "logon", "session", default={}) or {}
+    logoff = get(components, "logoff", "session", default={}) or {}
+    values = [env, gui, logon.get("process_session_id"),
+              logon.get("authentication_luid_sha256"), logoff.get("authentication_luid_sha256"),
+              logon.get("logon_time_utc"), logon.get("task_trigger_time_utc"),
+              logon.get("task_start_time_utc"), logoff.get("logon_time_utc"),
+              logoff.get("logoff_time_utc")]
+    if any(value is None for value in values):
+        return "NOT_RUN"
+    if any(type(value) is not int or value <= 0 for value in values[:3]) or env != gui:
+        return "FAIL"
+    if any(not isinstance(value, str) or not HEX64.fullmatch(value) for value in values[3:5]):
+        return "FAIL"
+    if values[3] != values[4]:
+        return "FAIL"
+    try:
+        times = [dt.datetime.fromisoformat(value.replace("Z", "+00:00")) for value in values[5:]]
+        if any(value.tzinfo is None for value in times):
+            return "FAIL"
+        start, trigger, task, observed_start, end = times
+        if start != observed_start or not start <= trigger <= task <= end:
+            return "FAIL"
+        created = []
+        for name in ("environment", "gui", "logon", "logoff", "uninstall", "cleanup"):
+            value = get(components, name, "executed_at_utc")
+            if value is None:
+                return "NOT_RUN"
+            stamp = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                return "FAIL"
+            created.append(stamp)
+        if not (created[0] <= created[1] <= created[2] <= created[3] <= created[4] <= created[5]):
+            return "FAIL"
+        if not (task <= created[2] <= end <= created[3]):
+            return "FAIL"
+    except (ValueError, TypeError, AttributeError, OverflowError):
+        return "FAIL"
+    return "PASS"
+
+
 def owner_checks(gui: dict[str, Any]) -> dict[str, Any]:
     return get(gui, "control_ipc", "owner", "checks", default={}) or {}
 
@@ -266,6 +310,7 @@ def make_summary(components: dict[str, dict[str, Any]], component_hashes: dict[s
         identity_binding_status = "PASS"
     runtime_identity = combine(
         identity_binding_status,
+        phase_binding(components),
         gui_states.get("installed_client_process"),
         logon_checks.get("client_expected_sid"),
         uninstall_checks.get("interactive_standard_user"),
@@ -436,6 +481,7 @@ def main() -> int:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         module.validate(summary)
+        module.validate_component_files(summary, args.evidence_directory)
     except (OSError, ValueError, TypeError, KeyError, AttributeError, json.JSONDecodeError,
             subprocess.SubprocessError, RuntimeError) as exc:
         print(f"P013_SUMMARY_INCOMPLETE: {exc}", file=sys.stderr)

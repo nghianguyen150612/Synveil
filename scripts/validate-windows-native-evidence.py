@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import re
 import sys
@@ -209,6 +210,9 @@ def validate(record: dict[str, Any]) -> None:
 
     if record["result"] == "PASS":
         require(env["qualification"] == "qualified_isolated_native", "hosted/unqualified evidence cannot be PASS")
+        require(session_class == "genuine_interactive", "PASS requires a genuine interactive session")
+        require("identity_binding" in record and record["identity_binding"]["process_session_id"] > 0,
+                "PASS requires user and interactive session identity binding")
         require(env["architecture"] == "x86_64", "PASS requires x86-64 Windows")
         require(env["operator_approved"], "PASS requires explicit operator approval for an isolated environment")
         require(session["interactive_status"] == "PASS" and session["new_logon_status"] == "PASS"
@@ -254,15 +258,42 @@ def validate(record: dict[str, Any]) -> None:
     scan(record)
 
 
+def validate_component_files(record: dict[str, Any], directory: Path) -> None:
+    """Verify summary commitments against the actual bounded component bytes."""
+    filenames = {
+        "environment": "windows-native-environment-v1.json",
+        "gui": "windows-gui-journey-v1.json",
+        "logon": "windows-new-logon-v1.json",
+        "logoff": "windows-logoff-shutdown-v1.json",
+        "uninstall": "windows-uninstall-preservation-v1.json",
+        "cleanup": "windows-p013-cleanup-v1.json",
+    }
+    for name, filename in filenames.items():
+        expected = record["component_evidence_sha256"][name]
+        path = directory / filename
+        if expected is None:
+            require(not path.exists(), f"component {name} exists without a digest")
+            continue
+        require(path.is_file() and not path.is_symlink(), f"component {name} is missing or unsafe")
+        require(path.stat().st_size <= 4 * 1024 * 1024, f"component {name} is too large")
+        require(hashlib.sha256(path.read_bytes()).hexdigest() == expected,
+                f"component {name} digest mismatch")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("evidence", type=Path)
+    parser.add_argument("--component-directory", type=Path, help="verify actual component bytes against summary digests")
     args = parser.parse_args()
     try:
         record = json.loads(args.evidence.read_text(encoding="utf-8"))
         if not isinstance(record, dict):
             raise EvidenceError("evidence root must be an object")
         validate(record)
+        if record["result"] == "PASS":
+            require(args.component_directory is not None, "PASS requires actual component files")
+        if args.component_directory is not None:
+            validate_component_files(record, args.component_directory)
     except (OSError, json.JSONDecodeError, EvidenceError) as exc:
         print(f"windows native evidence: INVALID ({exc})", file=sys.stderr)
         return 1
