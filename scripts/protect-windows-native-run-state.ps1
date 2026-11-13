@@ -230,7 +230,8 @@ $hasLock = $false
 try {
     try { $hasLock = $mutex.WaitOne([TimeSpan]::FromSeconds(10)) } catch [Threading.AbandonedMutexException] { $hasLock = $true }
     if (-not $hasLock) { throw 'P028_COORDINATOR_LOCK_TIMEOUT' }
-    $stateBytes = [IO.File]::ReadAllBytes($statePath)
+    [void](Assert-NoReparsePath $statePath)
+    $stateBytes = [P028SafeEvidenceReader]::Read($statePath, 65536)
     if ($stateBytes.Length -gt 65536) { throw 'P028_STATE_TOO_LARGE' }
     $state = [Text.Encoding]::UTF8.GetString($stateBytes) | ConvertFrom-Json
     if ($state.schema_version -ne 1 -or $state.run_id -cne $RunId -or @('ACTIVE','FINALIZED') -cnotcontains $state.status -or
@@ -244,6 +245,15 @@ try {
     if ($state.controller_sid_sha256 -cne $controllerHash) { throw 'P028_CONTROLLER_IDENTITY_MISMATCH' }
     if ([DateTimeOffset]::UtcNow -gt [DateTimeOffset]::Parse($state.expires_at_utc)) { throw 'P028_RUN_EXPIRED' }
     if ((Get-MachineDigest) -cne $state.machine_guid_sha256 -or [int](Get-CimInstance Win32_OperatingSystem).BuildNumber -ne [int]$state.os_build) { throw 'P028_MACHINE_IDENTITY_MISMATCH' }
+    # No authenticated native observer can Advance in this checkpoint. A restored
+    # or tampered file claiming recorded phases/finalization must fail even Verify.
+    if ($state.mode -cne 'WINDOWS_PROTECTED_PENDING_NATIVE_AUTHORITY' -or
+        $state.status -cne 'ACTIVE' -or
+        -not ($state.PSObject.Properties.Name -ccontains 'phases') -or
+        -not ($state.phases -is [array]) -or
+        $state.phases.Count -ne 0 -or
+        -not ($state.PSObject.Properties.Name -ccontains 'finalization_digest') -or
+        $null -ne $state.finalization_digest) { throw 'P028_UNAUTHORIZED_STATE_ADVANCEMENT' }
     if ($Action -eq 'Verify') { Write-Output "P028_PROTECTED_RUN_VERIFIED $RunId $($state.status)"; exit 0 }
     if ($state.status -cne 'ACTIVE') { throw 'P028_RUN_TERMINAL' }
     # JSON fields and the directory ACL do not authenticate the event collectors,
@@ -279,12 +289,12 @@ try {
     if (@('LOGOFF_OBSERVED','NEW_LOGON_OBSERVED','LOGON_TRIGGER_VERIFIED') -ccontains $Phase) {
         $guiEvidencePath = Join-Path $evidenceRoot 'GUI_VERIFIED.json'
         if (-not (Test-Path -LiteralPath $guiEvidencePath -PathType Leaf)) { throw 'P028_INITIAL_SESSION_EVIDENCE_MISSING' }
-        $initialSession = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($guiEvidencePath)) | ConvertFrom-Json
+        $initialSession = [Text.Encoding]::UTF8.GetString([P028SafeEvidenceReader]::Read($guiEvidencePath, 4194304)) | ConvertFrom-Json
         if ($Phase -eq 'LOGOFF_OBSERVED' -and ([int]$record.session_id -ne [int]$initialSession.session_id -or $record.logon_identity_sha256 -cne $initialSession.logon_identity_sha256)) { throw 'P028_LOGOFF_IDENTITY_MISMATCH' }
         if ($Phase -in @('NEW_LOGON_OBSERVED','LOGON_TRIGGER_VERIFIED')) {
             $newEvidencePath = Join-Path $evidenceRoot 'NEW_LOGON_OBSERVED.json'
             if ($Phase -eq 'LOGON_TRIGGER_VERIFIED' -and -not (Test-Path -LiteralPath $newEvidencePath -PathType Leaf)) { throw 'P028_NEW_LOGON_EVIDENCE_MISSING' }
-            $newSession = if ($Phase -eq 'LOGON_TRIGGER_VERIFIED') { [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($newEvidencePath)) | ConvertFrom-Json } else { $record }
+            $newSession = if ($Phase -eq 'LOGON_TRIGGER_VERIFIED') { [Text.Encoding]::UTF8.GetString([P028SafeEvidenceReader]::Read($newEvidencePath, 4194304)) | ConvertFrom-Json } else { $record }
             if ($newSession.logon_identity_sha256 -ceq $initialSession.logon_identity_sha256) { throw 'P028_LOGON_REPLAY' }
             if ($Phase -eq 'LOGON_TRIGGER_VERIFIED' -and ([int]$record.session_id -ne [int]$newSession.session_id -or $record.logon_identity_sha256 -cne $newSession.logon_identity_sha256)) { throw 'P028_TASK_SESSION_MISMATCH' }
         }
@@ -298,7 +308,8 @@ try {
     $out = [IO.File]::Open($destTemp, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
     try { $out.Write($raw); $out.Flush($true) } finally { $out.Dispose() }
     if (Test-Path -LiteralPath $destination) {
-        if ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant() -cne $digest) { throw 'P028_EVIDENCE_REPLAY' }
+        $existingDigest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([P028SafeEvidenceReader]::Read($destination, 4194304))).ToLowerInvariant()
+        if ($existingDigest -cne $digest) { throw 'P028_EVIDENCE_REPLAY' }
         Remove-Item -LiteralPath $destTemp -Force
     } else { [IO.File]::Move($destTemp, $destination) }
     $now = [DateTimeOffset]::UtcNow.ToString('o')

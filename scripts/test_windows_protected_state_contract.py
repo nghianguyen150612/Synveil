@@ -30,5 +30,32 @@ class ProtectedStateContractTests(unittest.TestCase):
                         SOURCE.index('$raw = [P028SafeEvidenceReader]::Read'))
 
 
+    def test_persisted_state_and_prior_evidence_use_bounded_handle_reads(self):
+        self.assertNotIn('[IO.File]::ReadAllBytes(', SOURCE)
+        for expression in (
+            '[P028SafeEvidenceReader]::Read($statePath, 65536)',
+            '[P028SafeEvidenceReader]::Read($guiEvidencePath, 4194304)',
+            '[P028SafeEvidenceReader]::Read($newEvidencePath, 4194304)',
+            '[P028SafeEvidenceReader]::Read($destination, 4194304)',
+        ):
+            self.assertIn(expression, SOURCE)
+        self.assertIn('[void](Assert-NoReparsePath $statePath)', SOURCE)
+        self.assertNotIn('Get-FileHash -LiteralPath $destination', SOURCE)
+
+    def test_verify_rejects_unauthorized_pending_native_phase_state(self):
+        self.assertIn("throw 'P028_UNAUTHORIZED_STATE_ADVANCEMENT'", SOURCE)
+        for condition in (
+            "$state.mode -cne 'WINDOWS_PROTECTED_PENDING_NATIVE_AUTHORITY'",
+            "$state.status -cne 'ACTIVE'",
+            "-not ($state.phases -is [array])",
+            "$state.phases.Count -ne 0",
+            "$null -ne $state.finalization_digest",
+        ):
+            self.assertIn(condition, SOURCE)
+        self.assertLess(SOURCE.index("throw 'P028_UNAUTHORIZED_STATE_ADVANCEMENT'"),
+                        SOURCE.index("if ($Action -eq 'Verify')"))
+        self.assertIn("throw 'P028_NATIVE_AUTHORITY_UNAVAILABLE'", SOURCE)
+
+
 if __name__ == '__main__':
     unittest.main()

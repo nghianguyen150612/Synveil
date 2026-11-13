@@ -53,3 +53,9 @@ The new Windows-hosted ACL test constructs and checks security descriptors in me
 The RUSTSEC-2026-0486 lockfile update to `rustix` 1.1.6 passed local dependency policy and installer-engine tests; [exact-head Rust CI #43140141790](https://github.com/nghianguyen150612/Synveil/actions/runs/43140141790) was queued/in progress when checked, so its hosted conclusion remains pending. The SQLx SQLite independent security review, signing and all other earlier gates remain open.
 
 Until independently authenticated provenance is available, `Advance` now fails closed with `P028_NATIVE_AUTHORITY_UNAVAILABLE` after identity and terminal-state checks. The remaining transition code is groundwork and cannot record a phase. `Verify` reports only the checks it performs; it is not evidence of effective-access isolation or native acceptance.
+
+## P028-A7: pending-authority verification invariant
+
+The protected run-state controller retains an explicit `Advance` stop until native observer provenance can be authenticated. While that gate exists, `Verify` now rejects run-state JSON claiming any completed phases or finalization, a non-active status or a mode other than `WINDOWS_PROTECTED_PENDING_NATIVE_AUTHORITY`. It also reads state and previously persisted GUI/new-logon/evidence bytes through the pre-existing bounded Windows file-handle reader, rejecting a reparse point on the opened file. Source regressions validate the wiring, not Windows effective access.
+
+This is defensive groundwork only. The handle reader does not prove trust against an administrator/kernel attacker, independently verify event provenance, eliminate every parent-path race or supply cross-session native acceptance. A real observer adapter, token-isolation tests and approved interactive native validation are still required. Native acceptance remains BLOCKED.
