@@ -56,6 +56,49 @@ class ProtectedStateContractTests(unittest.TestCase):
                         SOURCE.index("if ($Action -eq 'Verify')"))
         self.assertIn("throw 'P028_NATIVE_AUTHORITY_UNAVAILABLE'", SOURCE)
 
+    def test_native_observer_queries_os_sources_under_verified_token(self):
+        self.assertIn("$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)", SOURCE)
+        self.assertIn("[P028TokenElevationCheck]::IsElevated()", SOURCE)
+        self.assertIn("Get-WinEvent -FilterHashtable @{LogName='Security';Id=$EventId", SOURCE)
+        self.assertIn("Microsoft-Windows-Security-Auditing", SOURCE)
+        self.assertIn("[P028ObserverNative]::ProcessToken", SOURCE)
+        self.assertIn("[P028ObserverNative]::WtsSessionIsActive", SOURCE)
+        self.assertIn("P028_SUBJECT_TOKEN_NOT_ORDINARY_USER", SOURCE)
+        self.assertIn("P028_MACHINE_BOOT_IDENTITY_MISMATCH", SOURCE)
+        self.assertIn("boot_time_sha256=(Hash-P028Text", SOURCE)
+        self.assertIn("Get-P028Event $item 4624 'Security'", SOURCE)
+        self.assertIn("Get-P028Event $item 4634 'Security'", SOURCE)
+
+    def test_observer_records_are_context_bound_and_not_phase_success(self):
+        self.assertIn("mode='WINDOWS_NATIVE_OBSERVER'; result='OBSERVED'", SOURCE)
+        self.assertIn("machine_guid_sha256=$RunState.machine_guid_sha256", SOURCE)
+        self.assertIn("observer_sid_sha256=(Hash-P028Text $identity.User.Value)", SOURCE)
+        self.assertIn("controller_sid_sha256=$RunState.controller_sid_sha256", SOURCE)
+        self.assertIn("Save-P028ObserverRecord $record $initialPath", SOURCE)
+        self.assertIn("Save-P028ObserverRecord $record $logoffPath", SOURCE)
+        self.assertIn("Save-P028ObserverRecord $record 'P028-NEW-LOGON-v1.json'", SOURCE)
+        self.assertIn("P028_BLOCKED_LOGON_TRIGGER_PROVENANCE_UNAVAILABLE", SOURCE)
+        self.assertIn("P028_OBSERVER_RECORD_ALREADY_EXISTS", SOURCE)
+        self.assertIn("P028_BLOCKED_OBSERVER_SEQUENCE_LOGON_TRIGGER_UNSUPPORTED", SOURCE)
+        self.assertIn("P028_OBSERVER_SEQUENCE_REPLAY_OR_CHAIN_INVALID", SOURCE)
+        self.assertIn("P028_OBSERVER_SEQUENCE_SESSION_MISMATCH", SOURCE)
+
+    def test_observer_does_not_open_the_native_phase_gate(self):
+        native_guard = SOURCE.index("throw 'P028_NATIVE_AUTHORITY_UNAVAILABLE'")
+        phase_read = SOURCE.index("$raw = [P028SafeEvidenceReader]::Read($sourcePath, 4194304)")
+        self.assertLess(native_guard, phase_read)
+        self.assertLess(SOURCE.index("result='OBSERVED'"), native_guard)
+
+    def test_observer_output_write_is_bounded_atomic_and_single_use(self):
+        start = SOURCE.index('function Save-P028ObserverRecord')
+        end = SOURCE.index('function Get-P028SecurityEvents', start)
+        writer = SOURCE[start:end]
+        self.assertIn('[IO.FileMode]::CreateNew', writer)
+        self.assertIn('$stream.Flush($true)', writer)
+        self.assertIn('[IO.File]::Move($temporary, $destination)', writer)
+        self.assertIn('P028_OBSERVER_RECORD_ALREADY_EXISTS', writer)
+        self.assertIn('P028SafeEvidenceReader]::Read($destination, 262144)', writer)
+
 
 if __name__ == '__main__':
     unittest.main()
