@@ -84,3 +84,26 @@ Exact A8 source head `20399e9cc61039bfa00ed29033e2c5cdb73dcdac` was tested by [W
 | `P028_NATIVE_ACCEPTED` | false | No approved native interactive Windows qualification was executed. |
 
 The starting checkpoint's [P027 PostgreSQL run #43351781449](https://github.com/nghianguyen150612/Synveil/actions/runs/43351781449) passed PostgreSQL transaction suites and failed strict Clippy/format validation at `crates/server-storage/src/wizard.rs:1098` (`clippy::needless_bool`). This unrelated issue was inspected and left untouched. Independent P027 SQLx security review and P036 signing blockers remain visible.
+
+### A8 continuation from recovered PR head `035dae99df7831a32e6205f6dc3ae67f3c297910`
+
+Recovery found `/workspace/Synveil` clean on local branch `work` at `604499fce0dfd134d82da3d5bb5d4a055c5eea8d`; it was not the requested P028 checkout. The live PR #189 branch had advanced beyond the supplied `975540f` to `035dae9`. The PR head was fetched and checked out on the requested branch name; the pre-existing `work` branch and files were preserved. PR #189 remains open, Draft, unmerged, and based on `develop/v0.3`.
+
+This continuation closes a source-level gap in `VerifyObserverSequence`: saved observer JSON and its chained digest are no longer the only event reference checked. The verifier re-queries each exact Security `EventRecordID` from Windows with `Get-WinEvent`, validates the 4624/4634 provider, channel and schema again, and compares the OS event XML digest, timestamp (accounting for the record's second-resolution serialized time), subject SID, normalized Authentication LUID, and interactive logon type. A missing, changed, duplicate, unsupported, or ambiguous record fails closed. This recheck is still not a cryptographic signature or protection against a malicious administrator/kernel. `ObserveLogonTrigger` remains BLOCKED and `Advance` still throws `P028_NATIVE_AUTHORITY_UNAVAILABLE` before reading subject evidence.
+
+Local checks on this continuation: `test_windows_native_provenance.py` 10 PASS (synthetic fixtures only); `test_windows_protected_state_contract.py` 12 PASS (source wiring only); coordinator 11 PASS; evidence 50 PASS; phase ledger 4 PASS; `validate-windows-native-acceptance.py` PASS with checkpoint blocked; `git diff --check` PASS. This environment has no PowerShell executable, so PowerShell parse and Windows API execution were not run locally. These results do not qualify actual Windows ACLs, tokens, event records, logoff/logon, or effective isolation.
+
+At head `035dae99df7831a32e6205f6dc3ae67f3c297910`, Windows native run [#44010167037](https://github.com/nghianguyen150612/Synveil/actions/runs/44010167037) had `protected-acl-contract` PASS (in-memory descriptor only), `Validate checkpoint wiring` PASS, and PowerShell parser PASS; the candidate runtime build was still in progress when inspected. The earlier same-head run [#44010159460](https://github.com/nghianguyen150612/Synveil/actions/runs/44010159460) had its candidate validation step in progress and in-memory ACL job PASS. These are exact-head source/contract checks, not completed candidate or native acceptance results. The next code commit requires its own exact-head CI inspection.
+
+The separate P027 run [#44007397382](https://github.com/nghianguyen150612/Synveil/actions/runs/44007397382) tested `20399e9cc61039bfa00ed29033e2c5cdb73dcdac`: PostgreSQL transaction/recovery suites passed on Windows and Linux, but Linux strict Clippy failed at `crates/server-storage/src/wizard.rs:1098` for `clippy::needless_bool`. This is unrelated to P028 and was not changed. The later P027 run at `035dae9` was pending at inspection. Independent P027 SQLx security review and P036 signing blockers remain open.
+
+| Gate | State after this continuation | Evidence and remaining conditions |
+| --- | --- | --- |
+| `P028_ACL_CONTRACT_PASS` | true, scoped | Hosted in-memory ACL contract passes; it does not prove effective NTFS isolation. |
+| `P028_PROTECTED_STATE_IMPLEMENTED` | false | Effective access, parent-component substitution races, interrupted Windows writes, and separate real controller/observer token qualification remain. |
+| `P028_TRUSTED_OBSERVER_IMPLEMENTED` | false | Direct 4624/4634 observation and exact-record re-query exist; LogonTrigger provenance, independently separated controller/observer authority, and native Windows qualification remain. |
+| `P028_COORDINATOR_IMPLEMENTED` | false | Native advancement remains blocked by `P028_NATIVE_AUTHORITY_UNAVAILABLE`; fixture coordinator is not a native coordinator. |
+| `P028_HARNESS_IMPLEMENTED` | false | GUI/IPC, LogonTrigger, lifecycle, cleanup, interruption recovery, and finalization are not orchestrated. |
+| `P028_NATIVE_ACCEPTED` | false | No approved disposable Windows 11 AMD64 interactive qualification was run. |
+
+Next scope: qualify the observer and protected directory with real ordinary-user and elevated tokens on an explicitly approved disposable Windows 11 AMD64 VM; implement or prove an independently attributable LogonTrigger-to-session binding; then wire authenticated observations to resumable native phase transitions and the lifecycle/cleanup harness. Keep the phase guard closed until those conditions and the relevant native qualifications pass.

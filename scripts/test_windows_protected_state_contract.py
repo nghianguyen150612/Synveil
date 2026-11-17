@@ -99,6 +99,52 @@ class ProtectedStateContractTests(unittest.TestCase):
         self.assertIn('P028_OBSERVER_RECORD_ALREADY_EXISTS', writer)
         self.assertIn('P028SafeEvidenceReader]::Read($destination, 262144)', writer)
 
+    def test_sequence_verifier_requeries_exact_os_events(self):
+        start = SOURCE.index('function Get-P028SecurityEventByRecordId')
+        end = SOURCE.index('function Invoke-P028ObserverAction', start)
+        verifier = SOURCE[start:end]
+        self.assertIn("Get-WinEvent -LogName 'Security' -FilterXPath $filter -MaxEvents 2", verifier)
+        self.assertIn("$EventId -notin @(4624,4634)", verifier)
+        self.assertIn("$RecordId -le 0", verifier)
+        self.assertIn("$actual.XmlSha256 -cne [string]$Record.event.record_sha256", verifier)
+        self.assertIn("$actual.Data.TargetUserSid -cne $ExpectedSid", verifier)
+        self.assertIn('(Hash-P028Text $actualLuid) -cne $ExpectedLuidHash', verifier)
+        self.assertIn("$actual.Data.LogonType -notin @('2','10')", verifier)
+
+        start = SOURCE.index('function Verify-P028ObserverSequence')
+        end = SOURCE.index('$root = Assert-NoReparsePath', start)
+        sequence = SOURCE[start:end]
+        for record, event_id in (('initial', 4624), ('logoff', 4634), ('newLogon', 4624)):
+            self.assertIn(f'Assert-P028ObserverEventRequery ${record}.Record {event_id}', sequence)
+        self.assertLess(sequence.index('Assert-P028ObserverEventRequery'),
+                        sequence.index('$records = @($initial.Record,$logoff.Record,$newLogon.Record)'))
+
+    def test_os_event_requery_does_not_open_native_authority_gate(self):
+        self.assertIn('P028_OBSERVER_EVENT_REQUERY_MISMATCH', SOURCE)
+        self.assertIn('P028_BLOCKED_OBSERVER_SEQUENCE_LOGON_TRIGGER_UNSUPPORTED', SOURCE)
+        self.assertIn("throw 'P028_NATIVE_AUTHORITY_UNAVAILABLE'", SOURCE)
+        self.assertLess(SOURCE.index("throw 'P028_NATIVE_AUTHORITY_UNAVAILABLE'"),
+                        SOURCE.index('$raw = [P028SafeEvidenceReader]::Read($sourcePath, 4194304)'))
+
+    def test_phase_evidence_is_durable_before_checkpoint_and_retry_is_idempotent(self):
+        start = SOURCE.index("$destination = Join-Path $evidenceRoot ($Phase + '.json')")
+        end = SOURCE.index('Write-Output "P028_PHASE_RECORDED', start)
+        advance = SOURCE[start:end]
+        self.assertIn('[IO.FileMode]::CreateNew', advance)
+        self.assertIn('$out.Flush($true)', advance)
+        self.assertIn('[IO.File]::Move($destTemp, $destination)', advance)
+        self.assertIn("if ($existingDigest -cne $digest) { throw 'P028_EVIDENCE_REPLAY' }", advance)
+        self.assertLess(advance.index("[IO.File]::Move($destTemp, $destination)"),
+                        advance.index('$state.phases += [ordered]@'))
+        self.assertIn('Save-RunState $state', advance)
+
+        start = SOURCE.index('function Save-RunState')
+        end = SOURCE.index('function Hash-P028Text', start)
+        checkpoint = SOURCE[start:end]
+        self.assertIn('[IO.FileMode]::CreateNew', checkpoint)
+        self.assertIn('$stream.Flush($true)', checkpoint)
+        self.assertIn('[IO.File]::Move($temporary, $statePath, $true)', checkpoint)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -401,6 +401,38 @@ function Get-P028SecurityEvents([int]$EventId, [DateTime]$StartTime) {
     if ($events.Count -gt 4096) { throw 'P028_OBSERVER_EVENT_QUERY_TRUNCATED' }
     return ,$events
 }
+function Get-P028SecurityEventByRecordId([int]$EventId, [long]$RecordId) {
+    if ($EventId -notin @(4624,4634) -or $RecordId -le 0) { throw 'P028_EVENT_RECORD_REFERENCE_INVALID' }
+    # EventRecordID is numeric and bounded above, so it is safe to interpolate
+    # into this XPath. Re-read the OS event log instead of trusting persisted
+    # observer JSON or its digest as an authority.
+    $filter = "*[System[EventRecordID=$RecordId]]"
+    try { $events = @(Get-WinEvent -LogName 'Security' -FilterXPath $filter -MaxEvents 2 -ErrorAction Stop) }
+    catch { throw 'P028_OBSERVER_EVENT_REQUERY_FAILED' }
+    if ($events.Count -ne 1) { throw 'P028_OBSERVER_EVENT_REQUERY_AMBIGUOUS' }
+    $required = if ($EventId -eq 4624) { @('TargetUserSid','TargetLogonId','LogonType') } else { @('TargetUserSid','TargetLogonId') }
+    return Get-P028Event $events[0] $EventId 'Security' $required
+}
+function Assert-P028ObserverEventRequery($Record, [int]$ExpectedId, [string]$ExpectedLuidHash, [string]$ExpectedSid) {
+    if ([int]$Record.event.event_id -ne $ExpectedId -or
+        [long]$Record.event.record_id -le 0 -or
+        [string]$Record.event.record_sha256 -notmatch '^[0-9a-f]{64}$') {
+        throw 'P028_OBSERVER_EVENT_REFERENCE_INVALID'
+    }
+    $actual = Get-P028SecurityEventByRecordId $ExpectedId ([long]$Record.event.record_id)
+    $storedTime = [DateTimeOffset]::Parse([string]$Record.event.occurred_at_utc).ToUniversalTime()
+    $actualLuid = Normalize-P028LogonId ([string]$actual.Data.TargetLogonId)
+    if ([string]::IsNullOrWhiteSpace($actualLuid)) { throw 'P028_OBSERVER_EVENT_LOGON_ID_INVALID' }
+    if ($actual.XmlSha256 -cne [string]$Record.event.record_sha256 -or
+        [Math]::Abs(($actual.TimeUtc - $storedTime).TotalSeconds) -ge 1 -or
+        [string]$actual.Data.TargetUserSid -cne $ExpectedSid -or
+        (Hash-P028Text $actualLuid) -cne $ExpectedLuidHash) {
+        throw 'P028_OBSERVER_EVENT_REQUERY_MISMATCH'
+    }
+    if ($ExpectedId -eq 4624 -and [string]$actual.Data.LogonType -notin @('2','10')) {
+        throw 'P028_OBSERVER_EVENT_LOGON_TYPE_MISMATCH'
+    }
+}
 function Invoke-P028ObserverAction($RunState, [string]$RequestedAction) {
     $subjectSid = $subject.Value
     $initialPath = 'P028-INITIAL-SESSION-v1.json'
@@ -484,6 +516,10 @@ function Verify-P028ObserverSequence($RunState) {
     $initial = Read-P028ObserverRecord 'P028-INITIAL-SESSION-v1.json' 'ObserveInitialSession' $RunState
     $logoff = Read-P028ObserverRecord 'P028-LOGOFF-v1.json' 'ObserveLogoff' $RunState
     $newLogon = Read-P028ObserverRecord 'P028-NEW-LOGON-v1.json' 'ObserveNewLogon' $RunState
+    $subjectSid = $subject.Value
+    Assert-P028ObserverEventRequery $initial.Record 4624 ([string]$initial.Record.session.authentication_luid_sha256) $subjectSid
+    Assert-P028ObserverEventRequery $logoff.Record 4634 ([string]$initial.Record.session.authentication_luid_sha256) $subjectSid
+    Assert-P028ObserverEventRequery $newLogon.Record 4624 ([string]$newLogon.Record.session.authentication_luid_sha256) $subjectSid
     $records = @($initial.Record,$logoff.Record,$newLogon.Record)
     $expectedObserver = Hash-P028Text $identity.User.Value
     foreach ($record in $records) {
