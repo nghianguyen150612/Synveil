@@ -69,7 +69,7 @@ def valid_sequence() -> dict:
                     observed=-90)
     new = record(event("Security", 4624, 102, -50), session_value=session("5" * 64, 5),
                  observed=-40, logon_type=10)
-    trigger = record(event("Microsoft-Windows-TaskScheduler/Operational", 107, 103, -30),
+    trigger = record(event("Microsoft-Windows-TaskScheduler/Operational", 119, 103, -30),
                      session_value=session("5" * 64, 5), observed=-20)
     trigger.pop("session")
     trigger["task_name"] = context()["expected_task_name"]
@@ -170,6 +170,18 @@ class NativeProvenanceFixtureTests(unittest.TestCase):
         data = valid_sequence()
         data["logon_trigger"]["task_process"]["authentication_luid_sha256"] = "8" * 64
         self.assertRejected("TASK_PROCESS_SESSION_MISMATCH", data)
+
+    def test_timed_and_user_initiated_events_cannot_claim_logon_trigger(self) -> None:
+        for event_id in (107, 110):
+            with self.subTest(event_id=event_id):
+                data = valid_sequence()
+                data["logon_trigger"]["event"]["event_id"] = event_id
+                self.assertRejected("EVENT_SOURCE_OR_ID_UNSUPPORTED", data)
+
+    def test_same_admin_sid_cannot_fill_both_roles(self) -> None:
+        data = valid_sequence()
+        data["initial_session"]["context"]["observer_sid_sha256"] = "d" * 64
+        self.assertRejected("CONTROLLER_OBSERVER_IDENTITY_COLLISION", data)
 
     def test_untrusted_json_cannot_be_promoted_to_native_evidence(self) -> None:
         data = valid_sequence()

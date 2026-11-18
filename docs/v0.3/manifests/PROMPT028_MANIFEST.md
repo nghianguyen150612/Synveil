@@ -115,3 +115,22 @@ On this resumed workspace, portable PowerShell 7.7 parsed all eight Windows acce
 The exact-head [Windows native run #44011579475](https://github.com/nghianguyen150612/Synveil/actions/runs/44011579475) has `protected-acl-contract` PASS (in-memory only) and `build-windows-candidate` PASS, including the re-query source tests, PowerShell parse, Windows runtime build, exact-candidate double build, identity verification and evidence upload. `standard-user-native` authenticated the candidate and passed standard-user product acceptance, then failed at `Record required unavailable surfaces honestly`; evidence upload passed. The overall workflow is FAILURE because the GitHub service session cannot supply qualified interactive GUI, genuine logoff/new-logon, IPC and observer evidence. No native acceptance is claimed.
 
 The exact-head [P027 PostgreSQL workflow #44011585872](https://github.com/nghianguyen150612/Synveil/actions/runs/44011585872) passed Windows PostgreSQL transactions/recovery and Windows compilation/contracts; Linux PostgreSQL transactions/recovery also passed, but Linux strict Clippy/format validation failed in `crates/server-storage/src/wizard.rs:1098` with `clippy::needless_bool`. This is unrelated to P028 and was not changed. Independent P027 SQLx security review and P036 signing remain open.
+
+## P028-A9 checkpoint
+
+Recovered the open Draft PR #189 and remote branch at `17ef16fbe6188f36cedaa1df9bc17dbe71fe9b58`. Worked in `/workspace/Synveil-p028`, preserving the original clean `work` branch at `604499fce0dfd134d82da3d5bb5d4a055c5eea8d`.
+
+The controller records a protected, pre-logoff task definition and Operational log anchor. The separate observer can corroborate a 119 LogonTrigger instance with 100/129/200 records, the live client image and ordinary-user token, 4688 target SID/LUID, and the exact 4624/4634 sequence. Scope and account requirements are in the [qualification](../security/P028_WINDOWS_NATIVE_ACCEPTANCE_QUALIFICATION.md). Unsupported, contradictory or inaccessible sources block. The scheduler does not expose the triggering authentication LUID, and installed file bytes do not attest the mapped image. No diagnostic advances native state. The legacy collectors leave task provenance blocked.
+
+Portable checks passed on Linux with PowerShell 7.7.0: 61 synthetic PowerShell cases, 12 Python provenance, 15 protected-state source, 12 fixture coordinator, 50 evidence, 4 ledger and 21 install contract tests. The PowerShell scripts parsed and C# declarations compiled. Windows installer, native acceptance and installer security source validators passed. Native Windows execution and NTFS effective access were unavailable locally. The hosted workflow adds read-only current-token and provider metadata smoke checks without starting a task or relaxing the required interactive surface check.
+
+A8 exact-head [Windows native #44014905082](https://github.com/nghianguyen150612/Synveil/actions/runs/44014905082) and [#44014915391](https://github.com/nghianguyen150612/Synveil/actions/runs/44014915391) passed in-memory ACL and candidate jobs. Both failed the intentional hosted interactive surface step. The [Windows installer](https://github.com/nghianguyen150612/Synveil/actions/runs/44014915503) and [installer security](https://github.com/nghianguyen150612/Synveil/actions/runs/44014915461) workflows passed. [P027 #44014915132](https://github.com/nghianguyen150612/Synveil/actions/runs/44014915132) passed Windows PostgreSQL and compilation/contracts. The Linux strict Clippy checkpoint failed on the independent `wizard.rs:1098` finding tracked at A8. Exact A9 runs are tracked in the draft PR.
+
+| Gate | Status | Evidence or blocker |
+| --- | --- | --- |
+| `P028_ACL_CONTRACT_PASS` | PASS on recovered A8, scoped | Hosted in-memory descriptor contract. Track the A9 rerun on PR #189. |
+| `P028_PROTECTED_STATE_IMPLEMENTED` | BLOCKED | Approved-machine effective access, write-side path races and interruption recovery are unqualified. |
+| `P028_TRUSTED_OBSERVER_IMPLEMENTED` | BLOCKED | Scheduler-to-authentication causality, loaded-image proof and independent Windows qualification remain open. |
+| `P028_COORDINATOR_IMPLEMENTED` | BLOCKED | Native authority and native phase advancement are unavailable. |
+| `P028_HARNESS_IMPLEMENTED` | BLOCKED | Native GUI/IPC, lifecycle, recovery and independent cleanup/finalization orchestration are incomplete. |
+| `P028_NATIVE_ACCEPTED` | BLOCKED | No approved Windows 11 AMD64 interactive qualification. |

@@ -53,6 +53,17 @@ class CoordinatorTests(unittest.TestCase):
         self.assertFalse(other.exists())
         self.rejected('STATE_ALREADY_EXISTS', c.initialize, self.path, fixture=True, approval='I_APPROVE_DISPOSABLE_FIXTURE_ONLY', expires=self.expiry)
 
+    def test_native_observation_cannot_advance_fixture_or_native_state(self):
+        for mode, result in (("WINDOWS_NATIVE_OBSERVER", "OBSERVED"), ("WINDOWS_NATIVE_OBSERVER", "PASS"),
+                             ("FIXTURE_ONLY", "OBSERVED")):
+            with self.subTest(mode=mode, result=result):
+                observation = json.dumps({
+                    'run_id': self.run, 'phase': 'PREFLIGHT', 'mode': mode, 'result': result,
+                }).encode()
+                self.rejected('EVIDENCE_NOT_FIXTURE_PASS', c.advance, self.path, 'PREFLIGHT', observation)
+        self.assertEqual(c.read_state(self.path)['completed'], [])
+        self.assertEqual(c.read_state(self.path)['native_result'], 'BLOCKED_UNVERIFIED_NATIVE_PROVENANCE')
+
     def test_concurrent_advance_serialized(self):
         ctx = multiprocessing.get_context('spawn')
         q = ctx.Queue()

@@ -3,6 +3,8 @@ $ErrorActionPreference = 'Stop'
 $adminSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
 $systemSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
 $subject = [Security.Principal.SecurityIdentifier]::new('S-1-5-21-1-2-3-1001')
+$observer = [Security.Principal.SecurityIdentifier]::new('S-1-5-21-1-2-3-1002')
+. (Join-Path $PSScriptRoot 'windows-native-observer-support.ps1')
 $script:acls = @{}
 function Set-Acl { param($LiteralPath, $AclObject) $script:acls[$LiteralPath] = $AclObject }
 function Get-Acl { param($LiteralPath) return $script:acls[$LiteralPath] }
@@ -41,4 +43,15 @@ Set-RunAcl 'wrong-rights' $true $true
 $wrong = [Security.AccessControl.FileSystemAccessRule]::new($subject, [Security.AccessControl.FileSystemRights]::ReadAndExecute, ([Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit), [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
 [void]$script:acls['wrong-rights'].SetAccessRule($wrong)
 Assert-Failure { Get-ExpectedAcl 'wrong-rights' $true $true } 'P028_UNEXPECTED_ACL_RULE'
-Write-Output 'P028_ACL_CONTRACT_TESTS_PASS: 4 policies, 6 negative checks (in-memory only)'
+Set-RunAcl 'split-root' $false $false Read
+Set-RunAcl 'split-observer-inbox' $false $false Write
+Get-ExpectedAcl 'split-root' $false $false Read
+Get-ExpectedAcl 'split-observer-inbox' $false $false Write
+Assert-Failure { Get-ExpectedAcl 'split-root' $false $false Write } 'P028_UNEXPECTED_ACL_RULE'
+Assert-Failure { Get-ExpectedAcl 'split-observer-inbox' $false $true Write } 'P028_REQUIRED_ACL_MISSING'
+$group = [Security.Principal.SecurityIdentifier]::new('S-1-5-21-1-2-3-2001')
+$groupRule = [Security.AccessControl.FileSystemAccessRule]::new($group, [Security.AccessControl.FileSystemRights]::Modify,
+    [Security.AccessControl.InheritanceFlags]3, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
+[void]$script:acls['split-root'].AddAccessRule($groupRule)
+Assert-Failure { Get-ExpectedAcl 'split-root' $false $false Read } 'P028_UNEXPECTED_ACL_RULE'
+Write-Output 'P028_ACL_CONTRACT_TESTS_PASS (in-memory only)'

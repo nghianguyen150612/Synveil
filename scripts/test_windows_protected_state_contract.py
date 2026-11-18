@@ -8,10 +8,11 @@ SOURCE = Path(__file__).with_name('protect-windows-native-run-state.ps1').read_t
 
 
 class ProtectedStateContractTests(unittest.TestCase):
-    def test_admin_only_directories_are_verified_with_same_policy(self):
-        for name in ('observerInbox', 'evidenceRoot'):
-            self.assertEqual(1, len(re.findall(rf'(?m)^\s*Set-RunAcl \${name} \$false \$false\s*$', SOURCE)))
-            self.assertEqual(2, len(re.findall(rf'(?m)^\s*Get-ExpectedAcl \${name} \$false \$false\s*$', SOURCE)))
+    def test_protected_directories_are_verified_with_same_policy(self):
+        for name, role in (('observerInbox', ' Write'), ('evidenceRoot', '')):
+            expression = rf'\${name} \$false \$false{role}'
+            self.assertEqual(1, len(re.findall(rf'(?m)^\s*Set-RunAcl {expression}\s*$', SOURCE)))
+            self.assertEqual(2, len(re.findall(rf'(?m)^\s*Get-ExpectedAcl {expression}\s*$', SOURCE)))
 
     def test_account_sid_includes_rid(self):
         match = re.search(r"ValidatePattern\('([^']+)'\)\]\[string\]\$SubjectSid", SOURCE)
@@ -58,7 +59,7 @@ class ProtectedStateContractTests(unittest.TestCase):
 
     def test_native_observer_queries_os_sources_under_verified_token(self):
         self.assertIn("$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)", SOURCE)
-        self.assertIn("[P028TokenElevationCheck]::IsElevated()", SOURCE)
+        self.assertIn("[P028ObserverAccess]::IsElevated([uint32]$PID, $identity.User.Value)", SOURCE)
         self.assertIn("Get-WinEvent -FilterHashtable @{LogName='Security';Id=$EventId", SOURCE)
         self.assertIn("Microsoft-Windows-Security-Auditing", SOURCE)
         self.assertIn("[P028ObserverNative]::ProcessToken", SOURCE)
@@ -112,7 +113,7 @@ class ProtectedStateContractTests(unittest.TestCase):
         self.assertIn("$actual.Data.LogonType -notin @('2','10')", verifier)
 
         start = SOURCE.index('function Verify-P028ObserverSequence')
-        end = SOURCE.index('$root = Assert-NoReparsePath', start)
+        end = SOURCE.index('$allowedRoot =', start)
         sequence = SOURCE[start:end]
         for record, event_id in (('initial', 4624), ('logoff', 4634), ('newLogon', 4624)):
             self.assertIn(f'Assert-P028ObserverEventRequery ${record}.Record {event_id}', sequence)
@@ -125,6 +126,23 @@ class ProtectedStateContractTests(unittest.TestCase):
         self.assertIn("throw 'P028_NATIVE_AUTHORITY_UNAVAILABLE'", SOURCE)
         self.assertLess(SOURCE.index("throw 'P028_NATIVE_AUTHORITY_UNAVAILABLE'"),
                         SOURCE.index('$raw = [P028SafeEvidenceReader]::Read($sourcePath, 4194304)'))
+
+    def test_controller_gate_does_not_consume_observer_assertions(self):
+        role_gate = SOURCE.index("if ($isObserverAction)")
+        state_read = SOURCE.index("$stateBytes = [P028SafeEvidenceReader]::Read")
+        self.assertLess(role_gate, state_read)
+        self.assertIn("$identity.User -eq $observer", SOURCE[role_gate:state_read])
+        self.assertIn("if (-not $isObserverAction -and $state.controller_sid_sha256 -cne $controllerHash)", SOURCE)
+        self.assertIn("if ($observer -eq $subject)", SOURCE)
+        self.assertIn("Assert-P028RoleAccess", SOURCE)
+
+    def test_ancestor_and_leaf_native_reads_are_checked(self):
+        reader = Path(__file__).with_name('windows-native-observer-support.ps1').read_text(encoding='utf-8')
+        for guard in ("handles.Add(Open(parents[index].FullName, true))",
+                      "info.LinkCount != 1", "info.DeletePending != 0",
+                      "directory ? 0x02200000u : 0x00200000u"):
+            self.assertIn(guard, reader)
+        self.assertIn("Assert-P028CanonicalPath $ApprovedRoot", SOURCE)
 
     def test_phase_evidence_is_durable_before_checkpoint_and_retry_is_idempotent(self):
         start = SOURCE.index("$destination = Join-Path $evidenceRoot ($Phase + '.json')")

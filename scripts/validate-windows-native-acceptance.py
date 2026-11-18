@@ -161,15 +161,14 @@ def main() -> None:
         require(forbidden not in ipc_probe, f"acceptance probe cannot create a mock/guessed endpoint: {forbidden}")
     for token in (
         "Security';Id=4624", "TargetLogonId", "TargetUserSid", "LogonType",
-        "Microsoft-Windows-TaskScheduler/Operational", "Id=100,107,110",
         "NotBeforeUtc", "Export-ScheduledTask", "LogonTrigger", "InteractiveToken",
         "LeastPrivilege", "logoff_shutdown='NOT_RUN'", "P013_OPERATOR_APPROVAL_REQUIRED",
-        "scheduler_manual_run_absent", "P013_MANUAL_TASK_RUN_CANNOT_PROVE_LOGON_TRIGGER",
+        "scheduler_manual_run_absent", "protected observer and qualified LogonTrigger attribution required",
     ):
         require(token in logon_collector, f"missing read-only genuine-logon evidence: {token}")
     for forbidden in ("Register-ScheduledTask", "Unregister-ScheduledTask", "schtasks.exe", "New-LocalUser", "Remove-LocalUser", "Start-Process"):
         require(forbidden not in logon_collector, f"logon evidence collection cannot mutate state or run tasks: {forbidden}")
-    for token in ("TargetLogonId", "TargetUserSid", "Id=4634", "Id=100,102",
+    for token in ("TargetLogonId", "TargetUserSid", "Id=4634", "protected task instance",
                   "authentication_luid_sha256", "P013_CLIENT_REMAINS_AFTER_LOGOFF",
                   "raw_logon_ids_recorded=$false", "P013_OPERATOR_APPROVAL_REQUIRED"):
         require(token in logoff_collector, f"missing real logoff and client shutdown correlation: {token}")

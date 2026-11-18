@@ -55,6 +55,8 @@ def _validate_context(record: Any, now: dt.datetime) -> dict[str, Any]:
              "OBSERVER_SUBJECT_IDENTITY_COLLISION")
     _require(context["controller_sid_sha256"] != context["subject_sid_sha256"],
              "CONTROLLER_SUBJECT_IDENTITY_COLLISION")
+    _require(context["controller_sid_sha256"] != context["observer_sid_sha256"],
+             "CONTROLLER_OBSERVER_IDENTITY_COLLISION")
     for key, pattern in (("source_commit", re.compile(r"^[0-9a-f]{40}$")),
                          ("harness_commit", re.compile(r"^[0-9a-f]{40}$"))):
         _require(isinstance(context.get(key), str) and pattern.fullmatch(context[key]) is not None,
@@ -113,7 +115,7 @@ def validate_fixture_sequence(records: dict[str, Any], *, now: str) -> dict[str,
     logoff_time, logoff_key = _validate_event(logoff, 4634, "Security", instant, context)
     new_time, new_key = _validate_event(new_logon, 4624, "Security", instant, context)
     trigger_time, trigger_key = _validate_event(
-        trigger, 107, "Microsoft-Windows-TaskScheduler/Operational", instant, context
+        trigger, 119, "Microsoft-Windows-TaskScheduler/Operational", instant, context
     )
     keys = (initial_key, logoff_key, new_key, trigger_key)
     _require(len(set(keys)) == len(keys), "EVENT_RECORD_REPLAY")
