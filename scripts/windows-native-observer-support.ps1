@@ -144,6 +144,8 @@ public static class P028ObserverAccess {
     }
     internal static void AssertOrdinaryToken(SafeAccessTokenHandle token, WindowsIdentity identity, bool observer) {
         if (P028ObserverNative.TokenInt(token, 20) != 0) throw new InvalidDataException("P028_ROLE_TOKEN_ELEVATED");
+        if (P028ObserverNative.TokenInt(token, 21) != 0 || P028ObserverNative.TokenInt(token, 29) != 0)
+            throw new InvalidDataException("P028_ROLE_TOKEN_RESTRICTED");
         var readers = new SecurityIdentifier("S-1-5-32-573");
         foreach (string sid in P028ObserverNative.GroupSids(token)) {
             if (sid.StartsWith("S-1-5-32-", StringComparison.Ordinal) &&
@@ -170,8 +172,16 @@ public static class P028ObserverAccess {
             return true;
         });
     }
-    public static uint MaximumAccess(uint pid, string expectedSid, byte[] descriptor) {
+    public static uint MaximumAccess(uint pid, string expectedSid, string role, byte[] descriptor) {
         return WithToken(pid, 0x000A, expectedSid, (token, identity) => {
+            if (role == "Controller") {
+                if (P028ObserverNative.TokenInt(token, 20) != 1 ||
+                    !new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
+                    throw new InvalidDataException("P028_CONTROLLER_TOKEN_UNVERIFIABLE");
+            } else {
+                if (role != "Observer" && role != "Subject") throw new InvalidDataException("P028_ROLE_TOKEN_INVALID");
+                AssertOrdinaryToken(token, identity, role == "Observer");
+            }
             SafeAccessTokenHandle duplicate;
             if (!DuplicateToken(token, 2, out duplicate)) throw new Win32Exception();
             using (duplicate) {
@@ -212,8 +222,9 @@ public static class P028SafeEvidenceReader {
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int infoClass, out FileStandardInfo info, uint size);
     static SafeFileHandle Open(string path, bool directory) {
         // FILE_FLAG_OPEN_REPARSE_POINT, and BACKUP_SEMANTICS for directories.
-        // Deny sharing for writes and deletes while these path components are open.
-        var handle = CreateFile(path, directory ? 0x80u : 0x80000000u, 1, IntPtr.Zero, 3,
+        // FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES makes directory opens participate in
+        // share checks. An attributes-only open cannot pin the name against delete/rename.
+        var handle = CreateFile(path, directory ? 0x81u : 0x80000000u, 1, IntPtr.Zero, 3,
             directory ? 0x02200000u : 0x00200000u, IntPtr.Zero);
         try {
             if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -302,8 +313,6 @@ function Assert-P028RoleAccess {
     if (-not $ObserverProcessId -or -not $SubjectProcessId -or $ObserverProcessId -eq $SubjectProcessId) {
         throw 'P028_ROLE_PROCESS_REFERENCES_REQUIRED'
     }
-    [P028ObserverAccess]::AssertRoleToken($ObserverProcessId, $observer.Value, $true)
-    [P028ObserverAccess]::AssertRoleToken($SubjectProcessId, $subject.Value, $false)
     $full = 0x1F01FF
     $read = 0x1200A9
     $modify = 0x1301BF
@@ -323,9 +332,9 @@ function Assert-P028RoleAccess {
     foreach ($entry in $policies) {
         [void](Assert-NoReparsePath $entry.Path)
         $descriptor = (Get-Acl -LiteralPath $entry.Path).GetSecurityDescriptorBinaryForm()
-        Assert-P028AccessMask ([P028ObserverAccess]::MaximumAccess($PID, $identity.User.Value, $descriptor)) $full 0
-        $observerAccess = [P028ObserverAccess]::MaximumAccess($ObserverProcessId, $observer.Value, $descriptor)
-        $subjectAccess = [P028ObserverAccess]::MaximumAccess($SubjectProcessId, $subject.Value, $descriptor)
+        Assert-P028AccessMask ([P028ObserverAccess]::MaximumAccess($PID, $identity.User.Value, 'Controller', $descriptor)) $full 0
+        $observerAccess = [P028ObserverAccess]::MaximumAccess($ObserverProcessId, $observer.Value, 'Observer', $descriptor)
+        $subjectAccess = [P028ObserverAccess]::MaximumAccess($SubjectProcessId, $subject.Value, 'Subject', $descriptor)
         Assert-P028AccessMask $observerAccess $entry.Observer ($full -bxor $entry.Observer)
         Assert-P028AccessMask $subjectAccess $entry.Subject ($full -bxor $entry.Subject)
     }
@@ -334,8 +343,8 @@ function Assert-P028RoleAccess {
     for ($parent = [IO.Directory]::GetParent($root); $null -ne $parent; $parent = $parent.Parent) {
         $descriptor = (Get-Acl -LiteralPath $parent.FullName).GetSecurityDescriptorBinaryForm()
         $forbidden = $write -band (-bnot 0x00000006)
-        Assert-P028AccessMask ([P028ObserverAccess]::MaximumAccess($ObserverProcessId, $observer.Value, $descriptor)) 0 $forbidden
-        Assert-P028AccessMask ([P028ObserverAccess]::MaximumAccess($SubjectProcessId, $subject.Value, $descriptor)) 0 $forbidden
+        Assert-P028AccessMask ([P028ObserverAccess]::MaximumAccess($ObserverProcessId, $observer.Value, 'Observer', $descriptor)) 0 $forbidden
+        Assert-P028AccessMask ([P028ObserverAccess]::MaximumAccess($SubjectProcessId, $subject.Value, 'Subject', $descriptor)) 0 $forbidden
     }
 }
 

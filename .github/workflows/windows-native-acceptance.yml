@@ -31,6 +31,9 @@ jobs:
       - name: Test in-memory protected ACL contract
         shell: pwsh
         run: ./scripts/test-windows-protected-acl-contract.ps1
+      - name: Exercise LogonTrigger fixtures and read-only Windows API contracts
+        shell: pwsh
+        run: ./scripts/test-windows-native-logon-task.ps1
 
   build-windows-candidate:
     runs-on: windows-2025
@@ -104,10 +107,6 @@ jobs:
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $scriptPath).Path,[ref]$tokens,[ref]$parseErrors) | Out-Null
             if ($parseErrors.Count -gt 0) { throw "P013_POWERSHELL_PARSE_FAILURE: $scriptPath" }
           }
-      - name: Exercise LogonTrigger fixtures and read-only Windows API contracts
-        if: github.event_name != 'workflow_dispatch'
-        shell: pwsh
-        run: ./scripts/test-windows-native-logon-task.ps1
       - name: Build runtime once
         if: github.event_name != 'workflow_dispatch'
         shell: bash

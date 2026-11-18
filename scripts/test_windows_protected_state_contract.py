@@ -140,7 +140,7 @@ class ProtectedStateContractTests(unittest.TestCase):
         reader = Path(__file__).with_name('windows-native-observer-support.ps1').read_text(encoding='utf-8')
         for guard in ("handles.Add(Open(parents[index].FullName, true))",
                       "info.LinkCount != 1", "info.DeletePending != 0",
-                      "directory ? 0x02200000u : 0x00200000u"):
+                      "directory ? 0x02200000u : 0x00200000u", "directory ? 0x81u"):
             self.assertIn(guard, reader)
         self.assertIn("Assert-P028CanonicalPath $ApprovedRoot", SOURCE)
 

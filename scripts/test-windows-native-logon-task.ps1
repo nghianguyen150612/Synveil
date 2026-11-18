@@ -165,6 +165,8 @@ if ($IsWindows) {
     try {
         if ([P028ObserverAccess]::IsElevated([uint32]$PID, $current.User.Value) -isnot [bool]) { throw 'TEST_CURRENT_TOKEN_UNAVAILABLE' }
     } finally { $current.Dispose() }
+    $scriptDigest = (Get-FileHash -LiteralPath $PSCommandPath).Hash.ToLowerInvariant()
+    if ([P028SafeEvidenceReader]::Digest($PSCommandPath, 262144) -cne $scriptDigest) { throw 'TEST_PINNED_READ_DIGEST_MISMATCH' }
     $provider = Microsoft.PowerShell.Diagnostics\Get-WinEvent -ListProvider 'Microsoft-Windows-TaskScheduler' -ErrorAction Stop
     $knownFields = @{119=@('TaskName','InstanceId','UserName'); 110=@('TaskName','InstanceId','UserContext')
         100=@('TaskName','InstanceId','UserContext'); 129=@('TaskName','Path','ProcessID'); 200=@('TaskName','TaskInstanceId','ActionName')}
@@ -178,5 +180,5 @@ if ($IsWindows) {
             }
         }
     }
-    Write-Output 'P028_WINDOWS_TOKEN_AND_PROVIDER_METADATA_SMOKE_PASS'
+    Write-Output 'P028_WINDOWS_TOKEN_PINNED_READ_AND_PROVIDER_METADATA_SMOKE_PASS'
 }
