@@ -77,7 +77,9 @@ function Assert-P028BaselineContext($baseline, $RunState) {
         $baseline.machine_guid_sha256 -cne $RunState.machine_guid_sha256 -or $baseline.boot_time_sha256 -cne $RunState.boot_time_sha256 -or
         $baseline.controller_sid_sha256 -cne $RunState.controller_sid_sha256 -or $baseline.subject_sid_sha256 -cne $RunState.subject_sid_sha256 -or
         $baseline.observer_sid_sha256 -cne $RunState.observer_sid_sha256 -or
-        $baseline.client_sha256 -cnotmatch '^[0-9a-f]{64}$' -or $baseline.definition_sha256 -cnotmatch '^[0-9a-f]{64}$') {
+        $baseline.client_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+        $baseline.client_file_identity_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+        $baseline.definition_sha256 -cnotmatch '^[0-9a-f]{64}$') {
         throw 'P028_TASK_BASELINE_CONTEXT_MISMATCH'
     }
 }
@@ -90,7 +92,8 @@ function Save-P028LogonTaskBaseline($RunState) {
     $anchor = Get-P028Event $latest $latest.Id $P028SchedulerChannel @()
     $taskContext = Get-P028TaskContext $TaskProfileId
     [void](Assert-NoReparsePath $taskContext.ClientPath)
-    if ([P028SafeEvidenceReader]::Digest($taskContext.ClientPath, 134217728) -cne $CandidateClientSha256) {
+    $clientInspection = [P028SafeEvidenceReader]::Inspect($taskContext.ClientPath, 134217728)
+    if ($clientInspection.Sha256 -cne $CandidateClientSha256) {
         throw 'P028_INSTALLED_CLIENT_DIGEST_MISMATCH'
     }
     $baseline = [ordered]@{
@@ -100,6 +103,7 @@ function Save-P028LogonTaskBaseline($RunState) {
         subject_sid_sha256=$RunState.subject_sid_sha256; observer_sid_sha256=$RunState.observer_sid_sha256
         captured_at_utc=[DateTimeOffset]::UtcNow.ToString('o')
         profile_id=$TaskProfileId; definition_sha256=$taskContext.DefinitionSha256; client_sha256=$CandidateClientSha256
+        client_file_identity_sha256=$clientInspection.FileIdentitySha256
         anchor_id=$anchor.Id; anchor_record_id=$anchor.RecordId; anchor_sha256=$anchor.XmlSha256
     }
     Save-P028ObserverRecord $baseline $P028TaskBaselineFile $trustedPath
@@ -147,6 +151,9 @@ function Get-P028LogonTaskInstance([object[]]$Events, $TaskContext, [string]$Sub
         }
         $byId[$record.Id] = $record
     }
+    # On the checked Windows 11 24H2 publisher metadata, event 119 identifies
+    # a user-logon-triggered task. Event 107 is a time trigger and event 110 a
+    # user-initiated run; both remain conflict events and cannot satisfy this chain.
     $trigger = $byId[119]; $start = $byId[100]; $created = $byId[129]; $action = $byId[200]
     foreach ($record in @($start,$created,$action)) {
         if ($record.RecordId -le $trigger.RecordId -or $record.TimeUtc -lt $trigger.TimeUtc) { throw 'P028_TASK_EVENT_ORDER_INVALID' }
@@ -232,18 +239,28 @@ function Invoke-P028LogonTaskObservation($RunState, $NewLogon, [bool]$Verify) {
     Assert-P028TaskProcess $process $instance $taskContext $session $newLogonEvent.TimeUtc
     $processAudit = Get-P028ProcessAudit $instance.ProcessId $process $newLogonEvent $session
     [void](Assert-NoReparsePath $taskContext.ClientPath)
-    if ([P028SafeEvidenceReader]::Digest($taskContext.ClientPath, 134217728) -cne $baseline.client_sha256) { throw 'P028_INSTALLED_CLIENT_DIGEST_MISMATCH' }
+    $clientInspection = [P028SafeEvidenceReader]::Inspect($taskContext.ClientPath, 134217728)
+    if ($clientInspection.Sha256 -cne $baseline.client_sha256 -or
+        $clientInspection.FileIdentitySha256 -cne $baseline.client_file_identity_sha256) {
+        throw 'P028_INSTALLED_CLIENT_IDENTITY_CHANGED'
+    }
     $references = foreach ($event in $instance.Events) {
         Assert-P028SchedulerEventRequery $event
         [ordered]@{event_id=$event.Id; record_id=$event.RecordId; record_sha256=$event.XmlSha256; occurred_at_filetime_utc=$event.TimeUtc.ToFileTime()}
     }
     $details = [ordered]@{
         task_sha256=(Hash-P028Text $taskContext.TaskPath); definition_sha256=$baseline.definition_sha256
-        candidate_client_sha256=$baseline.client_sha256; instance_sha256=(Hash-P028Text $instance.InstanceId)
+        candidate_client_sha256=$baseline.client_sha256
+        client_file_identity_sha256=$clientInspection.FileIdentitySha256
+        mapped_image_identity='UNAVAILABLE_FROM_SUPPORTED_USER_MODE_API'
+        instance_sha256=(Hash-P028Text $instance.InstanceId)
         process_id=$instance.ProcessId; process_created_filetime_utc=$process.CreatedUtc.ToFileTime(); scheduler_records=@($references)
         process_audit=[ordered]@{event_id=4688; record_id=$processAudit.RecordId; record_sha256=$processAudit.XmlSha256
             occurred_at_filetime_utc=$processAudit.TimeUtc.ToFileTime()}
-        status='BLOCKED_NATIVE_CAUSALITY_UNQUALIFIED'
+        trigger_kind='TASK_SCHEDULER_LOGON_TRIGGER_EVENT_119'
+        causality_status='BLOCKED_TASK_EVENT_HAS_NO_AUTHENTICATION_LUID'
+        mapped_image_status='BLOCKED_MAPPED_IMAGE_PROVENANCE_UNAVAILABLE'
+        status='BLOCKED_NATIVE_LOGON_TRIGGER_UNVERIFIED'
     }
     if ($Verify) {
         $stored = (Read-P028ObserverRecord $P028TaskObservationFile 'ObserveLogonTrigger' $RunState).Record

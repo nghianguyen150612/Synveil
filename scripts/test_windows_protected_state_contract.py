@@ -144,6 +144,33 @@ class ProtectedStateContractTests(unittest.TestCase):
             self.assertIn(guard, reader)
         self.assertIn("Assert-P028CanonicalPath $ApprovedRoot", SOURCE)
 
+    def test_executable_disk_file_identity_is_handle_backed_but_not_mapped_image_proof(self):
+        reader = Path(__file__).with_name('windows-native-observer-support.ps1').read_text(encoding='utf-8')
+        task = Path(__file__).with_name('windows-native-logon-task.ps1').read_text(encoding='utf-8')
+        self.assertIn('struct FileIdInfo', reader)
+        self.assertIn('public ulong FileIdLow, FileIdHigh', reader)
+        self.assertIn('GetFileInformationByHandleEx(handle, 18, out id', reader)
+        self.assertIn('public static FileInspection Inspect', reader)
+        self.assertIn('P028SafeEvidenceReader]::Inspect($taskContext.ClientPath', task)
+        self.assertIn('client_file_identity_sha256=$clientInspection.FileIdentitySha256', task)
+        self.assertIn("mapped_image_identity='UNAVAILABLE_FROM_SUPPORTED_USER_MODE_API'", task)
+        self.assertIn("causality_status='BLOCKED_TASK_EVENT_HAS_NO_AUTHENTICATION_LUID'", task)
+        self.assertIn("mapped_image_status='BLOCKED_MAPPED_IMAGE_PROVENANCE_UNAVAILABLE'", task)
+        self.assertIn("status='BLOCKED_NATIVE_LOGON_TRIGGER_UNVERIFIED'", task)
+
+    def test_real_role_qualification_rejects_nested_groups_and_reads_both_event_channels(self):
+        observer = Path(__file__).with_name('windows-native-observer-support.ps1').read_text(encoding='utf-8')
+        probe = Path(__file__).with_name('windows-native-role-probe.ps1').read_text(encoding='utf-8')
+        self.assertIn('P028_ROLE_UNEXPECTED_NESTED_GROUP', observer)
+        self.assertIn('P028_CONTROLLER_UNEXPECTED_GROUP', observer)
+        self.assertIn('sid.StartsWith("S-1-5-21-"', observer)
+        self.assertIn("Get-WinEvent -LogName 'Security' -MaxEvents 1", probe)
+        self.assertIn("Get-WinEvent -LogName 'Microsoft-Windows-TaskScheduler/Operational' -MaxEvents 1", probe)
+        harness = Path(__file__).with_name('qualify-windows-native-role-access.ps1').read_text(encoding='utf-8')
+        self.assertIn('CandidateSha256', harness)
+        self.assertIn('ManifestSha256', harness)
+        self.assertIn('HarnessComponents=$components', harness)
+
     def test_phase_evidence_is_durable_before_checkpoint_and_retry_is_idempotent(self):
         start = SOURCE.index("$destination = Join-Path $evidenceRoot ($Phase + '.json')")
         end = SOURCE.index('Write-Output "P028_PHASE_RECORDED', start)

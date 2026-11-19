@@ -142,15 +142,44 @@ public static class P028ObserverAccess {
             return true;
         });
     }
+    public static void AssertControllerToken(uint pid, string expectedSid) {
+        WithToken(pid, 8, expectedSid, (token, identity) => {
+            if (P028ObserverNative.TokenInt(token, 20) != 1 ||
+                P028ObserverNative.TokenInt(token, 21) != 0 || P028ObserverNative.TokenInt(token, 29) != 0 ||
+                !new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
+                throw new InvalidDataException("P028_CONTROLLER_TOKEN_UNVERIFIABLE");
+            var allowed = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal) {
+                "S-1-1-0", "S-1-2-0", "S-1-2-1", "S-1-5-4", "S-1-5-11", "S-1-5-15",
+                "S-1-5-32-544", "S-1-5-32-545", "S-1-5-32-555", "S-1-5-113", "S-1-5-114",
+                "S-1-16-8192", "S-1-16-12288"
+            };
+            foreach (string sid in P028ObserverNative.GroupSids(token)) {
+                if (allowed.Contains(sid) || System.Text.RegularExpressions.Regex.IsMatch(
+                    sid, @"^S-1-5-5-[0-9]+-[0-9]+$", System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+                    continue;
+                throw new InvalidDataException("P028_CONTROLLER_UNEXPECTED_GROUP");
+            }
+            return true;
+        });
+    }
     internal static void AssertOrdinaryToken(SafeAccessTokenHandle token, WindowsIdentity identity, bool observer) {
         if (P028ObserverNative.TokenInt(token, 20) != 0) throw new InvalidDataException("P028_ROLE_TOKEN_ELEVATED");
         if (P028ObserverNative.TokenInt(token, 21) != 0 || P028ObserverNative.TokenInt(token, 29) != 0)
             throw new InvalidDataException("P028_ROLE_TOKEN_RESTRICTED");
         var readers = new SecurityIdentifier("S-1-5-32-573");
+        var knownGroups = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal) {
+            "S-1-1-0", "S-1-2-0", "S-1-2-1", "S-1-5-4", "S-1-5-11", "S-1-5-15",
+            "S-1-5-32-545", "S-1-5-32-555", "S-1-5-113", "S-1-16-8192"
+        };
+        if (observer) knownGroups.Add(readers.Value);
         foreach (string sid in P028ObserverNative.GroupSids(token)) {
-            if (sid.StartsWith("S-1-5-32-", StringComparison.Ordinal) &&
-                sid != "S-1-5-32-545" && sid != "S-1-5-32-555" && !(observer && sid == readers.Value))
-                throw new InvalidDataException("P028_ROLE_UNEXPECTED_BUILTIN_GROUP");
+            if (knownGroups.Contains(sid) || System.Text.RegularExpressions.Regex.IsMatch(
+                sid, @"^S-1-5-5-[0-9]+-[0-9]+$", System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+                continue;
+            if (sid.StartsWith("S-1-5-32-", StringComparison.Ordinal) ||
+                sid.StartsWith("S-1-5-21-", StringComparison.Ordinal))
+                throw new InvalidDataException("P028_ROLE_UNEXPECTED_NESTED_GROUP");
+            throw new InvalidDataException("P028_ROLE_UNSUPPORTED_GROUP");
         }
         if (observer && !new WindowsPrincipal(identity).IsInRole(readers))
             throw new InvalidDataException("P028_OBSERVER_EVENT_READERS_REQUIRED");
@@ -175,9 +204,7 @@ public static class P028ObserverAccess {
     public static uint MaximumAccess(uint pid, string expectedSid, string role, byte[] descriptor) {
         return WithToken(pid, 0x000A, expectedSid, (token, identity) => {
             if (role == "Controller") {
-                if (P028ObserverNative.TokenInt(token, 20) != 1 ||
-                    !new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
-                    throw new InvalidDataException("P028_CONTROLLER_TOKEN_UNVERIFIABLE");
+                AssertControllerToken(pid, expectedSid);
             } else {
                 if (role != "Observer" && role != "Subject") throw new InvalidDataException("P028_ROLE_TOKEN_INVALID");
                 AssertOrdinaryToken(token, identity, role == "Observer");
@@ -216,10 +243,19 @@ public static class P028SafeEvidenceReader {
         public uint LinkCount;
         public byte DeletePending, Directory;
     }
+    [StructLayout(LayoutKind.Sequential)] struct FileIdInfo {
+        public ulong VolumeSerialNumber;
+        public ulong FileIdLow, FileIdHigh;
+    }
+    public sealed class FileInspection {
+        public string Sha256, FileIdentitySha256;
+        public long Length;
+    }
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
     static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int infoClass, out FileAttributeTagInfo info, uint size);
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int infoClass, out FileStandardInfo info, uint size);
+    [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int infoClass, out FileIdInfo info, uint size);
     static SafeFileHandle Open(string path, bool directory) {
         // FILE_FLAG_OPEN_REPARSE_POINT, and BACKUP_SEMANTICS for directories.
         // FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES makes directory opens participate in
@@ -239,7 +275,7 @@ public static class P028SafeEvidenceReader {
             throw;
         }
     }
-    static T ReadPinned<T>(string path, int maximum, Func<FileStream,int,T> read) {
+    static T ReadPinned<T>(string path, int maximum, Func<FileStream,int,SafeFileHandle,T> read) {
         var parents = new List<DirectoryInfo>();
         for (var parent = Directory.GetParent(path); parent != null; parent = parent.Parent) {
             if (parents.Count >= 64) throw new InvalidDataException("P028_PATH_DEPTH_INVALID");
@@ -255,7 +291,7 @@ public static class P028SafeEvidenceReader {
                 if (info.LinkCount != 1 || info.DeletePending != 0) throw new InvalidDataException("P028_UNSAFE_FILE_LINK");
                 if (info.EndOfFile <= 0 || info.EndOfFile > maximum) throw new InvalidDataException("P028_EVIDENCE_SIZE_INVALID");
                 using (var stream = new FileStream(handle, FileAccess.Read)) {
-                    return read(stream, (int)info.EndOfFile);
+                    return read(stream, (int)info.EndOfFile, handle);
                 }
             }
         } finally {
@@ -263,7 +299,7 @@ public static class P028SafeEvidenceReader {
         }
     }
     public static byte[] Read(string path, int maximum) {
-        return ReadPinned(path, maximum, (stream, length) => {
+        return ReadPinned(path, maximum, (stream, length, handle) => {
             byte[] bytes = new byte[length];
             int offset = 0;
             while (offset < bytes.Length) {
@@ -276,10 +312,28 @@ public static class P028SafeEvidenceReader {
         });
     }
     public static string Digest(string path, int maximum) {
-        return ReadPinned(path, maximum, (stream, length) => {
+        return ReadPinned(path, maximum, (stream, length, handle) => {
             string result = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
             if (stream.Position != length) throw new IOException("P028_EVIDENCE_CHANGED_DURING_READ");
             return result;
+        });
+    }
+    public static FileInspection Inspect(string path, int maximum) {
+        return ReadPinned(path, maximum, (stream, length, handle) => {
+            FileIdInfo id;
+            if (!GetFileInformationByHandleEx(handle, 18, out id, (uint)Marshal.SizeOf<FileIdInfo>()))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            string digest = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+            if (stream.Position != length) throw new IOException("P028_EVIDENCE_CHANGED_DURING_READ");
+            byte[] identity = new byte[24];
+            Buffer.BlockCopy(BitConverter.GetBytes(id.VolumeSerialNumber), 0, identity, 0, 8);
+            Buffer.BlockCopy(BitConverter.GetBytes(id.FileIdLow), 0, identity, 8, 8);
+            Buffer.BlockCopy(BitConverter.GetBytes(id.FileIdHigh), 0, identity, 16, 8);
+            return new FileInspection {
+                Sha256 = digest,
+                FileIdentitySha256 = Convert.ToHexString(SHA256.HashData(identity)).ToLowerInvariant(),
+                Length = length
+            };
         });
     }
 }

@@ -142,7 +142,7 @@ $runState = @{machine_guid_sha256='machine'; boot_time_sha256='boot'; controller
 $baseline = $runState.Clone()
 $baseline.schema_version=1; $baseline.run_id=$RunId; $baseline.source_commit=$SourceCommit; $baseline.harness_commit=$HarnessCommit
 $baseline.candidate_sha256=$CandidateSha256; $baseline.manifest_sha256=$ManifestSha256
-$baseline.client_sha256='a'*64; $baseline.definition_sha256='b'*64
+$baseline.client_sha256='a'*64; $baseline.client_file_identity_sha256='c'*64; $baseline.definition_sha256='b'*64
 Assert-P028BaselineContext $baseline $runState
 $script:checks++
 foreach ($field in @('run_id','source_commit','harness_commit','candidate_sha256','manifest_sha256','machine_guid_sha256','boot_time_sha256','observer_sid_sha256','subject_sid_sha256','controller_sid_sha256')) {
@@ -168,7 +168,8 @@ if ($IsWindows) {
     $scriptDigest = (Get-FileHash -LiteralPath $PSCommandPath).Hash.ToLowerInvariant()
     if ([P028SafeEvidenceReader]::Digest($PSCommandPath, 262144) -cne $scriptDigest) { throw 'TEST_PINNED_READ_DIGEST_MISMATCH' }
     $provider = Microsoft.PowerShell.Diagnostics\Get-WinEvent -ListProvider 'Microsoft-Windows-TaskScheduler' -ErrorAction Stop
-    $knownFields = @{119=@('TaskName','InstanceId','UserName'); 110=@('TaskName','InstanceId','UserContext')
+    $knownFields = @{107=@('TaskName'); 110=@('TaskName','InstanceId','UserContext')
+        119=@('TaskName','InstanceId','UserName')
         100=@('TaskName','InstanceId','UserContext'); 129=@('TaskName','Path','ProcessID'); 200=@('TaskName','TaskInstanceId','ActionName')}
     foreach ($eventId in $knownFields.Keys) {
         $metadata = @($provider.Events | Where-Object { $_.Id -eq $eventId -and $_.Version -eq 0 })
