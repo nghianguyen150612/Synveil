@@ -172,6 +172,24 @@ foreach ($exited in @($true,$false)) {
 $fakeProcess.HasExited=$false; $fakeProcess.Completes=$false
 Assert-Rejected { Stop-P028RoleProbe $fakeProcess } 'P028_ROLE_PROBE_CLEANUP_FAILED'
 
+# Execute the real wrapper call/exit guard against inert child scripts only.
+$wrapperAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'qualify-windows-native-lifecycle.ps1'), [ref]$null, [ref]$null)
+$call = @($wrapperAst.EndBlock.Statements | Where-Object { $_.Extent.Text.StartsWith("& (Join-Path `$PSScriptRoot 'qualify-windows-native-role-access.ps1')") })
+$exitGuard = @($wrapperAst.EndBlock.Statements | Where-Object { $_.Extent.Text.StartsWith('if ($LASTEXITCODE -ne 0)') })
+if ($call.Count -ne 1 -or $exitGuard.Count -ne 1) { throw 'TEST_WRAPPER_EXIT_GUARD_MISSING' }
+$stubRoot = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory($stubRoot)
+try {
+    $invokeStub = $call[0].Extent.Text.Replace('$PSScriptRoot', '$stubRoot')
+    $guardText = $exitGuard[0].Extent.Text
+    [IO.File]::WriteAllText((Join-Path $stubRoot 'qualify-windows-native-role-access.ps1'), 'exit 2')
+    Assert-Rejected { Invoke-Expression $invokeStub; Invoke-Expression $guardText } 'P028_ROLE_ACCESS_QUALIFICATION_FAILED'
+    [IO.File]::WriteAllText((Join-Path $stubRoot 'qualify-windows-native-role-access.ps1'), 'exit 0')
+    Invoke-Expression $invokeStub
+    Invoke-Expression $guardText
+    $script:checks++
+} finally { [IO.Directory]::Delete($stubRoot, $true) }
+
 Write-Output "P028_LOGON_TASK_FIXTURES_PASS ($script:checks cases; synthetic inputs)"
 
 if ($IsWindows) {

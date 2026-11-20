@@ -323,7 +323,7 @@ Local exit-0 validation: lifecycle execution 17, native lifecycle 19, provenance
 protected-state 17, fixture coordinator 12, evidence 50, ledger 4, lifecycle 6
 (137 Python tests); install acceptance 21; all three Windows/installer security
 validators; PowerShell parse of 29 scripts and observer declaration compilation;
-64 synthetic scheduler/cleanup cases; `git diff --check`. Cargo unavailable locally.
+66 synthetic scheduler/cleanup cases; `git diff --check`. Cargo unavailable locally.
 The Windows-only token branch and candidate reproducibility require hosted CI.
 Initial repair [run #44670557965](https://github.com/nghianguyen150612/Synveil/actions/runs/44670557965)
 is at `b62bcbc`; final-head results are tracked on PR after push, without claiming
@@ -340,10 +340,21 @@ No further placeholder authority layers were added.
 
 All five native implementation/acceptance gates remain BLOCKED. Evaluate
 `P028_ACL_CONTRACT_PASS` separately from exact-head CI (in-memory descriptor only).
-Do not enable `P028_NATIVE_AUTHORITY_UNAVAILABLE`: protected monotonic recovery,
+Retain `P028_NATIVE_AUTHORITY_UNAVAILABLE`: protected monotonic recovery,
 real-token NTFS/race qualification, automatic-trigger Authentication LUID causality,
 and original mapped-executable provenance remain unproven. Unknown credentials,
 retained protected evidence or pending effects block cleanup/finalization.
 P027 Linux strict Clippy `wizard.rs:1098`, `chrono`/`chrono-tz` advisories,
 independent SQLx review and P036 signing remain untouched. PR #189 stays Open,
 Draft and unmerged. No P029/P036 or v0.2 behavior changes.
+
+A12 final failure-path follow-up: an inert PowerShell child exiting 2 confirmed
+that the caller can continue and exit 0. The role harness now explicitly exits 0
+on success, and the qualification wrapper rejects nonzero child exit before
+reporting any result. Two portable cases execute the real wrapper invocation and
+exit guard against inert temporary child scripts, never the native harness.
+The scheduler/cleanup suite now has 66 synthetic cases. At source head
+`5d8b0bd1055a4350db27ab755a8a55b9014a0b47`, [Windows #44671032128](https://github.com/nghianguyen150612/Synveil/actions/runs/44671032128)
+passed checkpoint wiring (04:00:55 UTC), PowerShell parser and ACL/scheduler job.
+That verifies the path repair on Windows. The final failure-path follow-up needs
+its own exact-head CI inspection; final links/results remain tracked on PR #189.

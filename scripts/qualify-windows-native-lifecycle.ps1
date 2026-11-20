@@ -36,6 +36,7 @@ if ($machineHash -cne $ApprovedMachineUuidSha256) { throw 'P028_APPROVED_MACHINE
     -ManifestPath $ManifestPath -ManifestSha256 $ManifestSha256 `
     -ExpectedSourceCommit $ExpectedSourceCommit `
     -ObserverCredential $ObserverCredential -SubjectCredential $SubjectCredential
+if ($LASTEXITCODE -ne 0) { throw 'P028_ROLE_ACCESS_QUALIFICATION_FAILED' }
 # Role probes do not establish the missing OS guarantees. Never report acceptance.
 [ordered]@{
     mode='WINDOWS_NATIVE_QUALIFICATION'; native_acceptance='BLOCKED'

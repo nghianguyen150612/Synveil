@@ -455,3 +455,5 @@ try {
 }
 Write-Output ("P028_ROLE_ACCESS_{0} evidence_sha256={1}" -f $roleResult, (Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant())
 if ($roleResult -ne 'PASS') { exit 2 }
+
+exit 0

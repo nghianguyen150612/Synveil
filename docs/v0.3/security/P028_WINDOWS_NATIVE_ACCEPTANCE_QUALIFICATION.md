@@ -466,7 +466,7 @@ All following commands exit 0; tests are portable/synthetic unless stated:
 | `python3 scripts/validate-installer-security-hardening.py` | PASS |
 | `bash scripts/validate-install-acceptance.sh` | PASS, 21 tests |
 | `/tmp/p028-pwsh/pwsh -NoProfile -File /tmp/p028-a11/parse.ps1` | PowerShell 7.5.4: 29 scripts parsed, observer native declarations compiled; no Windows API calls |
-| `/tmp/p028-pwsh/pwsh -NoProfile -File scripts/test-windows-native-logon-task.ps1` | 64 synthetic cases; Windows-only token branch NOT_RUN locally |
+| `/tmp/p028-pwsh/pwsh -NoProfile -File scripts/test-windows-native-logon-task.ps1` | 66 synthetic cases; Windows-only token branch NOT_RUN locally |
 | `git diff --check` | PASS |
 
 137 focused Python tests plus 21 install contracts. Cargo unavailable locally;
@@ -543,3 +543,14 @@ execution or installation command is authorized by merely running role probes.
 | `P028_COORDINATOR_IMPLEMENTED` | BLOCKED: no secure enabled native transitions/recovery. |
 | `P028_HARNESS_IMPLEMENTED` | BLOCKED: full native adapter orchestration and independent cleanup discovery incomplete. |
 | `P028_NATIVE_ACCEPTED` | BLOCKED: approved interactive end-to-end execution NOT_RUN. |
+
+A12 final failure-path follow-up: an inert PowerShell child exiting 2 confirmed
+that the caller can continue and exit 0. The role harness now explicitly exits 0
+on success, and the qualification wrapper rejects nonzero child exit before
+reporting any result. Two portable cases execute the real wrapper invocation and
+exit guard against inert temporary child scripts, never the native harness.
+The scheduler/cleanup suite now has 66 synthetic cases. At source head
+`5d8b0bd1055a4350db27ab755a8a55b9014a0b47`, [Windows #44671032128](https://github.com/nghianguyen150612/Synveil/actions/runs/44671032128)
+passed checkpoint wiring (04:00:55 UTC), PowerShell parser and ACL/scheduler job.
+That verifies the path repair on Windows. The final failure-path follow-up needs
+its own exact-head CI inspection; final links/results remain tracked on PR #189.
