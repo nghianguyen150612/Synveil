@@ -165,6 +165,14 @@ function Wait-P028RoleProbe([Diagnostics.Process]$Process) {
     }
 }
 
+function Stop-P028RoleProbe($Process) {
+    if (-not $Process.HasExited) {
+        $Process.Kill($true)
+        # Killing is a request, not proof that a process has stopped using files.
+        if (-not $Process.WaitForExit(5000)) { throw 'P028_ROLE_PROBE_CLEANUP_FAILED' }
+    }
+}
+
 function Assert-P028Access([uint32]$Granted, [uint32]$Expected) {
     if (($Granted -band $Expected) -ne $Expected -or ($Granted -band ($full -bxor $Expected)) -ne 0) {
         throw 'P028_ROLE_EFFECTIVE_ACCESS_MISMATCH'
@@ -380,13 +388,20 @@ try {
     $blockReason = $_.Exception.Message
     if ($blockReason -notmatch '^P028_[A-Z0-9_]+$') { $blockReason = 'P028_NATIVE_ROLE_ACCESS_BLOCKED' }
 } finally {
+    $allProbesStopped = $true
     foreach ($process in $processes) {
-        if ($process -and -not $process.HasExited) {
-            try { $process.Kill($true); $process.WaitForExit(5000) | Out-Null } catch { $roleResult = 'BLOCKED'; $blockReason = 'P028_ROLE_PROBE_CLEANUP_FAILED' }
+        if ($process) {
+            try { Stop-P028RoleProbe $process }
+            catch {
+                $allProbesStopped = $false
+                $roleResult = 'BLOCKED'; $blockReason = 'P028_ROLE_PROBE_CLEANUP_FAILED'
+            }
+            $process.Dispose()
         }
-        if ($process) { $process.Dispose() }
     }
-    if ($createdRoot) {
+    # Retain the unique tree for manual reconciliation if any process outcome is
+    # unknown. Never remove its files while a probe may still be executing.
+    if ($createdRoot -and $allProbesStopped) {
         try {
             [void](Assert-P028NoReparse $createdRoot)
             $reparse = @(Get-ChildItem -LiteralPath $createdRoot -Force -Recurse | Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 })

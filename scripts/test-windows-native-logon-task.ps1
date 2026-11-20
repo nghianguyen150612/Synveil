@@ -157,13 +157,61 @@ Assert-Rejected { Assert-P028AccessMask 0x40 0 0x40 } 'P028_ROLE_EFFECTIVE_ACCES
 foreach ($invalid in @('C:\path\..\substitute','C:\path:stream','\\server\share','C:\path\NUL.txt','C:\path.\P028')) {
     Assert-Rejected { Assert-P028CanonicalPath $invalid } 'P028_PATH_NOT_CANONICAL'
 }
+# Exercise the production cleanup stop guard with inert process doubles.
+$roleAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'qualify-windows-native-role-access.ps1'), [ref]$null, [ref]$null)
+$stopNode = $roleAst.Find({param($item) $item -is [Management.Automation.Language.FunctionDefinitionAst] -and $item.Name -eq 'Stop-P028RoleProbe'}, $true)
+Invoke-Expression $stopNode.Extent.Text
+foreach ($exited in @($true,$false)) {
+    $fakeProcess = [pscustomobject]@{HasExited=$exited; Killed=$false; Completes=$true}
+    $fakeProcess | Add-Member ScriptMethod Kill {param($tree) $this.Killed=$true}
+    $fakeProcess | Add-Member ScriptMethod WaitForExit {param($milliseconds) return $this.Completes}
+    Stop-P028RoleProbe $fakeProcess
+    if ($fakeProcess.Killed -eq $exited) { throw 'TEST_PROCESS_STOP_GUARD_FAILED' }
+    $script:checks++
+}
+$fakeProcess.HasExited=$false; $fakeProcess.Completes=$false
+Assert-Rejected { Stop-P028RoleProbe $fakeProcess } 'P028_ROLE_PROBE_CLEANUP_FAILED'
+
 Write-Output "P028_LOGON_TASK_FIXTURES_PASS ($script:checks cases; synthetic inputs)"
 
 if ($IsWindows) {
     # Non-mutating hosted smoke checks. This probes metadata and the current token, with no interactive logon or task execution.
     $current = [Security.Principal.WindowsIdentity]::GetCurrent()
     try {
-        if ([P028ObserverAccess]::IsElevated([uint32]$PID, $current.User.Value) -isnot [bool]) { throw 'TEST_CURRENT_TOKEN_UNAVAILABLE' }
+        $elevated = [P028ObserverAccess]::IsElevated([uint32]$PID, $current.User.Value)
+        if ($elevated -isnot [bool]) { throw 'TEST_CURRENT_TOKEN_UNAVAILABLE' }
+        # Actual-token negative checks, not synthetic SID assertions. No host mutation.
+        $wrongSid = if ($current.User.Value -ceq 'S-1-5-18') { 'S-1-5-19' } else { 'S-1-5-18' }
+        foreach ($role in @('Observer','Subject','Controller')) {
+            $rejected = $false
+            try {
+                if ($role -ceq 'Controller') {
+                    [P028ObserverAccess]::AssertControllerToken([uint32]$PID, $wrongSid)
+                } else {
+                    [P028ObserverAccess]::AssertRoleToken([uint32]$PID, $wrongSid, ($role -ceq 'Observer'))
+                }
+            } catch {
+                $cause = $_.Exception
+                while ($cause.InnerException) { $cause = $cause.InnerException }
+                if ($cause.Message -cne 'P028_ROLE_TOKEN_SID_MISMATCH') { throw }
+                $rejected = $true
+            }
+            if (-not $rejected) { throw 'TEST_WRONG_ROLE_TOKEN_ACCEPTED' }
+        }
+        if ($elevated) {
+            foreach ($observerRole in @($true,$false)) {
+                $rejected = $false
+                try { [P028ObserverAccess]::AssertRoleToken([uint32]$PID, $current.User.Value, $observerRole) }
+                catch {
+                    $cause = $_.Exception
+                    while ($cause.InnerException) { $cause = $cause.InnerException }
+                    if ($cause.Message -cne 'P028_ROLE_TOKEN_ELEVATED') { throw }
+                    $rejected = $true
+                }
+                if (-not $rejected) { throw 'TEST_ELEVATED_ORDINARY_ROLE_ACCEPTED' }
+            }
+        }
+        Write-Output 'P028_WINDOWS_WRONG_ROLE_TOKEN_REJECTED'
     } finally { $current.Dispose() }
     $scriptDigest = (Get-FileHash -LiteralPath $PSCommandPath).Hash.ToLowerInvariant()
     if ([P028SafeEvidenceReader]::Digest($PSCommandPath, 262144) -cne $scriptDigest) { throw 'TEST_PINNED_READ_DIGEST_MISMATCH' }

@@ -254,6 +254,31 @@ class ExecutionTests(unittest.TestCase):
             for invalid in (Path(root.drive + 'relative.exe'), Path('\\candidate\\setup.exe')):
                 self.fails('ADAPTER_PATH_INVALID', dataclasses.replace(inputs, setup=invalid).validate)
 
+    def test_restart_cannot_reinitialize_terminal_run(self):
+        for terminal in ('CANCELLED', 'EXPIRED'):
+            with tempfile.TemporaryDirectory() as directory:
+                engine = e.FixtureExecution(Path(directory) / self.path.name, self.ctx)
+                engine.initialize(self.inventory)
+                if terminal == 'EXPIRED':
+                    with patch.object(e, '_clock', return_value='2099-01-01T00:00:00+00:00'):
+                        engine.terminate(terminal)
+                else:
+                    engine.terminate(terminal)
+                restarted = e.FixtureExecution(engine.path, self.ctx)
+                with self.assertRaises(FileExistsError):
+                    restarted.initialize(self.inventory)
+                self.assertEqual(restarted.status()['status'], terminal)
+                self.fails('RUN_TERMINAL', restarted.prepare, 'PREFLIGHT')
+        attempt = self.engine.prepare('PREFLIGHT')
+        self.engine.execute('PREFLIGHT', attempt, self.runner)
+        original = self.verifier.requery
+        with patch.object(self.verifier, 'requery', side_effect=lambda *args:
+                          {**original(*args), 'outcome': 'CONFIRMED_FAILURE'}):
+            self.engine.reconcile('PREFLIGHT', attempt, self.verifier, self.inspector)
+        restarted = e.FixtureExecution(self.path, self.ctx)
+        self.fails('RECONCILIATION_REQUIRED', restarted.prepare, 'PREFLIGHT')
+        self.fails('AUTOMATIC_REPLAY_FORBIDDEN', restarted.execute, 'PREFLIGHT', attempt, self.runner)
+
     def test_real_adapter_argument_contracts(self):
         fixture_root = Path(self.tmp.name).resolve()
         inputs = a.CandidateInputs(fixture_root / 'candidate' / 'setup.exe',
@@ -268,6 +293,13 @@ class ExecutionTests(unittest.TestCase):
                                    ('-EvidenceDirectory', inputs.evidence_directory)):
                 self.assertEqual(args[args.index(flag) + 1], str(expected))
             self.assertTrue(Path(args[5]).is_file())
+            import re
+            parameter_block = Path(args[5]).read_text().split('\n)', 1)[0]
+            names = set(re.findall(r'\]\$(\w+)', parameter_block))
+            required = set(re.findall(r'Mandatory=\$true[^\n]+\]\$(\w+)', parameter_block))
+            supplied = {arg[1:] for arg in args[6::2]}
+            self.assertLessEqual(supplied, names)
+            self.assertLessEqual(required, supplied)
         self.fails('HOST_MUTATION_APPROVAL_REQUIRED', a.build_arguments, 'journey', Path('/'), self.ctx, inputs, approval='yes')
         self.fails('DISPOSABLE_SUBJECT_INVALID', a.build_arguments, 'cleanup', Path('/'), self.ctx, inputs,
                    approval='I_APPROVE_DISPOSABLE_SYNVEIL_WINDOWS_ACCEPTANCE', test_user='Administrator')
