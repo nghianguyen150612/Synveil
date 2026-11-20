@@ -215,3 +215,126 @@ The current independent blockers remain P027 strict Clippy at `crates/server-sto
 ### A10 handoff
 
 Run the opt-in three-role harness on the approved disposable machine and review its redacted record; qualify actual write-denial, ACL inheritance, nested membership, cleanup and crash behavior. Resolve or preserve the privileged path race. Use real automatic and manual trigger runs to evaluate 119 alongside exact 4624/4634/4688 records and task instance/process identities; keep blocked unless the causal relationship is independently established. Resolve mapped-image provenance or keep the executable gate blocked. Then implement protected observer/verifier adapters and authority-owned ordered transitions, integrate the 13-phase ordinary-user lifecycle, require independent cleanup before finalization, and execute complete interactive qualification. Retain `P028_NATIVE_AUTHORITY_UNAVAILABLE` until all these prerequisites pass.
+
+## P028-A11 — durable fixture execution, recovery and cleanup protocol
+
+Recovery on 2026-11-20 found `/workspace/Synveil` clean on `work` at
+`604499fce0dfd134d82da3d5bb5d4a055c5eea8d`. Preserved that worktree/branch and
+created `/workspace/Synveil-p028` on `feat/v03-p028-windows-native-acceptance`
+from the live PR #189 head `6c0402232fc85776fab8947a98db37ea8ac1cc3d`.
+Remote PR head matched the supplied SHA; no newer commit was discarded.
+PR remains Open, Draft and unmerged, based on `develop/v0.3`.
+
+Source implementation now includes:
+
+- `windows_lifecycle_execution.py`: executable, separately named FIXTURE_ONLY
+  SQLite coordinator for all 13 phases. Immediate transactions and FULL sync
+  serialize reservations/completions. New database directory entries are synced
+  on POSIX. Context, phase, attempt and bounded unique evidence references are
+  checked on every checkpoint load. A phase requires all preceding phases VERIFIED.
+- Protocol: PREPARED → EXECUTING → RECONCILING → VERIFIED; UNKNOWN → BLOCKED,
+  confirmed failure → FAILED. No automatic retries, lease stealing or phase reset.
+  Before preparation there is no effect. A crash after PREPARED permits the first
+  execution. After EXECUTING intent, including timeout or a crash after the effect,
+  outcome is unknown: only independent re-query can continue. Recovery must prove
+  the original operation quiescent and successful; PREPARED cannot be reconciled
+  as success. A crash in verification/finalization rolls back the SQLite transaction
+  and requires fresh re-query. No external effect is enclosed in a pretend database
+  transaction. Cancellation/expiry stop advancement and preserve pending resources;
+  independent cleanup auditing remains available. No exception text or credentials
+  enter the journal.
+- Cleanup protocol: immutable pre-effect inventory, bounded hashed references,
+  explicit DELETE versus RETAIN_PROTECTED audit state, all nine resource classes
+  mandatory. Missing/unknown/present resources block cleanup. Both cleanup and
+  finalization re-query inventory; finalization also re-queries every earlier
+  evidence receipt. No component deletes unfamiliar resources.
+- `windows_lifecycle_adapters.py`: typed candidate inputs and deterministic argv
+  builders matching actual environment, combined Setup/GUI/IPC journey, installed
+  uninstall and disposable-account cleanup script interfaces. Subject journey and
+  uninstall remain ordinary-user; account cleanup requires controller elevation.
+  Contracts specify effects, timeouts, evidence/recovery/cleanup obligations. Launch
+  discards raw output and treats timeout as unknown. Native launch is unreachable:
+  `P028_NATIVE_AUTHORITY_UNAVAILABLE` executes before process creation.
+- `inspect-windows-native-cleanup.ps1`: read-only native diagnostic queries for
+  accounts, profiles, tasks, processes and exact filesystem/component references.
+  No deletion. Errors, secrets, protected retention and pending-operation queries
+  without authority-owned enumerators remain UNKNOWN; overall CLEANUP_BLOCKED.
+  Caller-supplied inventory hash/context is integrity input, never native authority.
+- `qualify-windows-native-lifecycle.ps1`: opt-in entrypoint checks explicit operator
+  approval bound to the Windows machine UUID SHA-256, Windows 11 AMD64 and non-hosted
+  environment before invoking the existing three-role harness with its actual
+  credential interface. An external operator must approve the disposable machine;
+  neither the UUID nor A10's local marker proves disposability. Creates no account,
+  task or logoff. Reports recovery/complete cleanup NOT_RUN and race qualification
+  BLOCKED. This is a qualification entrypoint, not complete native acceptance.
+- Hosted CI runs the new integration/adversarial tests and parses the new scripts;
+  it does not invoke mutating qualification and retains its interactive blocker.
+
+This is working portable execution and cleanup **protocol**, not qualified native
+orchestration. Dependency-injected fixture runner/verifier/inspector are trusted
+synthetic test code; their receipts cannot authorize native launch or advancement.
+The fixture journal detects accidental corruption and rejects context substitution,
+partial transactions and evidence replay. It cannot authenticate a maliciously
+rewritten database or detect replacement by a whole older snapshot. Protected
+monotonic authority-owned state, parent/leaf race resistance and real Windows
+interruption durability are prerequisites to any native implementation. A10's
+pending native journal and guard are unchanged. Candidate verifier, startup task,
+Security observer and native logon scripts retain their existing interfaces; no
+claim is made that these are connected to a trusted native executor.
+
+Local validation (all listed executed commands exit 0):
+
+| Command | Result |
+| --- | --- |
+| `python3 scripts/test_windows_lifecycle_execution.py` | 15 tests; complete 13-phase fixture with crash after install effect, reopen, resume, independent cleanup and final chain check |
+| `python3 scripts/test_windows_native_lifecycle.py` | 19 tests |
+| `python3 scripts/test_windows_native_provenance.py` | 12 tests |
+| `python3 scripts/test_windows_protected_state_contract.py` | 17 tests |
+| `python3 scripts/test_windows_native_coordinator.py` | 12 tests |
+| `python3 scripts/test_windows_native_evidence.py` | 50 tests |
+| `python3 scripts/test_windows_native_phase_ledger.py` | 4 tests |
+| `python3 scripts/test_windows_lifecycle.py` | 6 tests |
+| `python3 scripts/validate-windows-installer.py` | PASS |
+| `python3 scripts/validate-windows-native-acceptance.py` | PASS; checkpoint blocked |
+| `python3 scripts/validate-installer-security-hardening.py` | PASS |
+| `bash scripts/validate-install-acceptance.sh` | PASS; 21 tests, non-native |
+| `/tmp/p028-pwsh/pwsh -NoProfile -File /tmp/p028-a11/parse.ps1` | PowerShell 7.5.4; Parser.ParseFile on all 29 scripts, dot-source observer support/task declarations; no Windows API invocation |
+| `/tmp/p028-pwsh/pwsh -NoProfile -File scripts/test-windows-native-logon-task.ps1` | 61 synthetic cases PASS |
+| `git diff --check` | PASS |
+
+135 focused Python tests plus 21 install-contract tests. New adversarial coverage
+includes concurrent reservation/completion, duplicate submissions, execution replay,
+crash boundaries, UNKNOWN reconciliation, confirmed failure, corrupted/partial writes,
+run/machine substitutions, incorrect observer identity, untrusted verifier shapes,
+cleanup failure for every class, changed final-chain evidence and native launch denial.
+Existing provenance suites cover stale/missing/modified OS record fixtures. All
+completion is FIXTURE_ONLY. No approved Windows machine exists in this environment;
+real token, NTFS, GUI, IPC, event/session or cleanup acceptance is NOT_RUN/BLOCKED.
+`cargo` is unavailable locally; Rust checks NOT_RUN.
+
+Recovered-head CI: [Windows native #44489877389](https://github.com/nghianguyen150612/Synveil/actions/runs/44489877389)
+passed ACL contract and candidate jobs; standard-user job failed exactly at
+`Record required unavailable surfaces honestly`. [P027 #44489877285](https://github.com/nghianguyen150612/Synveil/actions/runs/44489877285)
+passed Windows transactions/contracts and failed Linux qualification. Preserve the
+independent `wizard.rs:1098` strict-Clippy blocker. Rust dependency-policy advisories
+for `chrono`/`chrono-tz`, independent P027 SQLx review and P036 signing remain open;
+none were changed or bypassed.
+
+| Gate | A11 status |
+| --- | --- |
+| `P028_ACL_CONTRACT_PASS` | PASS scoped to recovered-head hosted in-memory ACL contract; current-head CI tracked on PR |
+| `P028_PROTECTED_STATE_IMPLEMENTED` | BLOCKED: real tokens, NTFS effective operations, path races, monotonic state and native persistence recovery |
+| `P028_TRUSTED_OBSERVER_IMPLEMENTED` | BLOCKED: causal LogonTrigger→new Authentication LUID and actual mapped image provenance |
+| `P028_COORDINATOR_IMPLEMENTED` | BLOCKED: portable engine implemented, trusted native transitions/recovery unqualified |
+| `P028_HARNESS_IMPLEMENTED` | BLOCKED: command contracts implemented, native orchestration and complete independent resource enumerators unqualified/incomplete |
+| `P028_NATIVE_ACCEPTED` | BLOCKED: approved interactive Windows 11 AMD64 end-to-end run unavailable |
+
+A12 requirements: independently approve/provision a disposable Windows 11 AMD64
+machine and three distinct roles; execute positive/negative NTFS role probes and
+ancestor/write-race assessment; qualify durable protected monotonic state under
+interruption; supply supported independent causal and mapped-image proofs or retain
+the explicit blockers; implement authority-owned inventory/secret/pending-operation
+queries and protected retained-evidence verification; bind every adapter to real
+verified execution tokens and candidate/run/boot context; exercise full interactive
+journey, unknown-outcome recovery and independent cleanup. Native authority cannot
+safely be enabled on the strength of this portable run.
