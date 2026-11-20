@@ -358,3 +358,32 @@ The scheduler/cleanup suite now has 66 synthetic cases. At source head
 passed checkpoint wiring (04:00:55 UTC), PowerShell parser and ACL/scheduler job.
 That verifies the path repair on Windows. The final failure-path follow-up needs
 its own exact-head CI inspection; final links/results remain tracked on PR #189.
+
+## P028-A13 — qualification closeout assessment
+
+Recovered remote PR #189 at `fb0ee55c704e61a4e387598e93aafd39eb3fd1e7`; no newer
+head. Fresh Linux workspace had neither prior checkout nor original `work` branch;
+cloned the existing branch into `/workspace/Synveil-p028` without resetting or
+removing anything. Connected Windows terminal unavailable; no exact approved host,
+three roles, snapshot or mutation scope supplied. Native phases and nine-class
+cleanup NOT_RUN, authority BLOCKED. Decision: **BLOCKED_NATIVE_ENVIRONMENT_UNAVAILABLE**;
+provenance and native implementation blockers also remain.
+
+Substantive new evidence: inspected all 35 exact-source Actions runs (PR and push),
+all jobs and failed logs. A12 final Windows candidate, checkpoint wiring, parser,
+reproducibility, ACL/scheduler and bounded standard-user checks passed. Native
+workflows failed only at the mandatory hosted interactive blocker. Independent
+Clippy, dependency/security, PostgreSQL-version/test-fixture, Ubuntu package and
+Linux package acceptance failures are classified individually in the
+[redacted evidence index](../security/P028_A13_EVIDENCE.json) and
+[A13 report](../security/P028_WINDOWS_NATIVE_ACCEPTANCE_QUALIFICATION.md#p028-a13--native-qualification-and-release-gate-assessment).
+No unrelated fix or additional fixture implementation phase was created.
+
+Local 137 focused Python tests, 21 install contracts and three source validators
+passed. Cargo/PowerShell unavailable locally. ACL contract PASS is scoped to
+inspected fb0ee55; documentation-head CI requires separate inspection. All five
+native implementation/acceptance gates remain BLOCKED. The report contains the
+complete six-gate matrix, unsupported guarantees, architectural decision and exact
+approved-host handoff. Corrected older handoff readiness/role/finalization wording.
+Native authority guard unchanged; PR remains Open/Draft/unmerged. A13 is evidence
+and documentation only, with no v0.2 behavior change.

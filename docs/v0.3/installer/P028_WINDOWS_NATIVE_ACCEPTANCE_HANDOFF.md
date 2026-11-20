@@ -1,6 +1,17 @@
 # P028 Windows native acceptance handoff
 
-Status: **P028_SOURCE_READY / NATIVE_ACCEPTANCE_BLOCKED**. This handoff does not change any mandatory workflow exit condition.
+Status: **PARTIAL_SOURCE_IMPLEMENTATION / NATIVE_ACCEPTANCE_BLOCKED**.
+The current A13 qualification and approved-machine entrypoint are in the
+[security report](../security/P028_WINDOWS_NATIVE_ACCEPTANCE_QUALIFICATION.md#p028-a13--native-qualification-and-release-gate-assessment).
+Native authority, protected recovery, full orchestration and independent cleanup
+remain incomplete or unqualified. The sections below preserve the earlier
+component-level diagnostic procedure; they are not an executable secure 13-phase
+acceptance coordinator. A summary PASS cannot close the six P028 security gates.
+No command or approval literal below grants operator permission. The current role
+contract requires an elevated controller, a separate non-elevated Event Log Readers
+observer and an ordinary subject; any peer used for IPC testing is additional.
+Do not execute installation, sign-out or cleanup without exact-host approval for
+those actions. This handoff changes no mandatory workflow exit condition.
 
 ## Inspected evidence
 

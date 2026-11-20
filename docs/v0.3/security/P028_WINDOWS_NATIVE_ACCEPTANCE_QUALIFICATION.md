@@ -554,3 +554,179 @@ The scheduler/cleanup suite now has 66 synthetic cases. At source head
 passed checkpoint wiring (04:00:55 UTC), PowerShell parser and ACL/scheduler job.
 That verifies the path repair on Windows. The final failure-path follow-up needs
 its own exact-head CI inspection; final links/results remain tracked on PR #189.
+
+## P028-A13 — native qualification and release gate assessment
+
+Decision: **BLOCKED_NATIVE_ENVIRONMENT_UNAVAILABLE**. Native authority BLOCKED;
+all 13 native phases NOT_RUN. Security guarantees and native implementation also
+remain unresolved; obtaining a host alone will not close P028.
+
+### Recovery and environment
+
+On 2026-11-20, the available `/workspace` was a fresh Linux x86_64 workspace.
+Neither `/workspace/Synveil` nor `/workspace/Synveil-p028` existed; no local Git
+worktrees, modifications or original `work` branch were available to recover.
+Nothing at those prior locations was deleted or reset. Cloned the existing PR
+branch into `/workspace/Synveil-p028`. Remote branch, PR ref and PR metadata all
+matched starting SHA `fb0ee55c704e61a4e387598e93aafd39eb3fd1e7`; no newer remote
+commit existed. Base remains `develop/v0.3` at `b8beb109e58c847cb136607e4948c564cf6d2aa7`.
+The clone was clean with one worktree. No AGENTS.md was found. PR #189 was Open,
+Draft and unmerged. No replacement PR, reset, force-push or merge was performed.
+
+The connected Windows terminal returned `tunnel_client_not_seen` (HTTP 404,
+client absent for 300 seconds) before executing a read-only OS/location query.
+Its OS, files and tokens could not be inspected. This is unavailable connectivity,
+not evidence of Windows 11 capability. No exact disposable host, operator scope,
+three role identities, interactive session, recovery snapshot, auditing/event
+permissions or lifecycle-operation approval was supplied or verified. None is
+inferred from CI, administrator access, machine identifiers or marker files.
+No Windows mutation or native qualification was attempted.
+
+### Completed exact-source CI inspection
+
+[Redacted evidence index](P028_A13_EVIDENCE.json) records **35/35** exact-SHA runs,
+including push runs omitted by the PR-only connector. Actions REST listing used
+`head_sha=fb0ee55c704e61a4e387598e93aafd39eb3fd1e7&per_page=100`; total count
+matched returned count. Every run's job count matched its retrieved jobs. Failed
+job logs were read; unlike the earlier checkpoint, downloads succeeded. No raw
+logs, credentials, machine identities or event XML are published in the index.
+
+- [Windows PR #44672582317](https://github.com/nghianguyen150612/Synveil/actions/runs/44672582317)
+  and [push #44672574186](https://github.com/nghianguyen150612/Synveil/actions/runs/44672574186):
+  ACL/scheduler and candidate jobs SUCCESS, including checkpoint wiring, all 17
+  lifecycle execution tests, native lifecycle/provenance/protected-state/coordinator/
+  evidence/ledger contracts, Rust IPC probe/contracts, install contracts,
+  PowerShell parser, runtime compilation, double-build byte identity, candidate
+  identity and upload. The A11 Windows ADAPTER_PATH_INVALID regression remains fixed.
+  Standard-user candidate authentication and bounded product acceptance SUCCESS;
+  the only failed step is `Record required unavailable surfaces honestly`.
+  Logs identify Windows Server 2025 service sessions, not an approved Windows 11
+  desktop. Both workflows are FAILURE by the required environment blocker.
+- [Windows installer #44672582260](https://github.com/nghianguyen150612/Synveil/actions/runs/44672582260)
+  and push #44672574178 SUCCESS; all jobs in installer security #44672582290 and
+  installation resilience #44672582236 SUCCESS. These do not qualify native isolation.
+- Rust CI #44672582302 and push #44672574087: platform tests/checks, quality, UI
+  and web SUCCESS; dependency policy FAILURE. Logs confirm unmaintained `chrono`
+  RUSTSEC-2026-0543 and `chrono-tz` RUSTSEC-2026-0555. Independent dependency/security
+  blockers; no policy or dependency change is authorized by this assessment.
+- P027 #44672582320: Windows compilation/contracts SUCCESS and Linux live database
+  suites SUCCESS; Linux aggregate quality failed `wizard.rs:1098` needless_bool.
+  Windows database setup rejected the runner tools with P027_PG_VERSION_FAILURE
+  (reviewed 17.11 required); artifact upload then failed because no evidence files
+  existed. Actual installed PostgreSQL version was not printed. Classify as test/
+  environment incompatibility, retaining the version guard. P015, P017–P026 and
+  repair/recovery quality jobs show the same independent wizard.rs Clippy defect;
+  the evidence index enumerates each failed job, not just a representative sample.
+- Five Ubuntu desktop setup jobs failed because `qml6-module-qtquick-nativestyle`
+  is unavailable on their Ubuntu 26.04 image: environment/package incompatibility.
+  No P028 code regression is established by these setup failures.
+- Linux packages PR #44672582329 built packages but APT and DNF acceptance exited
+  50 (package-manager failure). Logs establish the exit and step, not the detailed
+  package-manager cause; classify as independent qualification failures with root
+  cause unresolved. Do not guess an authorization failure from the preceding
+  “authorization will be requested” message. Push #44672574102 was cancelled;
+  downstream acceptance was skipped, not PASS (infrastructure/cancellation).
+- Scheduled-maintenance push #44672574139: 19 tests passed, one failed.
+  `scheduler_failure_prevents_worker_step` at
+  `backup_scheduled_maintenance_cycle_postgres.rs:1656` could not construct its
+  corrupt-revision fixture because `backup_schedules_effective_time_order` rejected
+  it (SQLSTATE 23514). Independent test incompatibility; determinism/root cause
+  beyond that constraint rejection is unqualified. Its PR counterpart succeeded.
+
+The index identifies every remaining successful workflow as well. None of these
+independent failures was repaired in this PR. Independent P027 SQLx security review
+and P036 signing remain open; skipped signature recording is not signing evidence.
+Candidate bytes/digests were not downloaded or independently authenticated here.
+CI's candidate identity success is a hosted check, not a native candidate qualification.
+
+### Source audit, unsupported guarantees and architectural decision
+
+A12's component and cleanup classification above remains accurate on recovered
+HEAD. Rechecked actual native launch, pending coordinator, protected controller,
+role qualification and cleanup code. `launch()` invokes the closed authority guard
+before process creation; protected `Advance` still throws. The native pending
+journal cannot authorize phases. The executable fixture engine's ordering,
+evidence-before-commit, expiry/terminal rejection, interruption/reconciliation and
+cleanup protocol are portable contracts, not Windows authority or rollback protection.
+No fixture record was converted to native authority.
+
+The existing observer implements exact event re-query, strict schema/context checks,
+Security 4624/4634/4688, Scheduler 119/100/129/200 with manual/time-trigger conflicts,
+live SID/LUID/WTS/task/process and inspected-file identity checks. No target OS
+schema or actual event was qualified in A13. Event 119's task instance and user do
+not independently bind the *causing* Security authentication LUID. Process token
+LUID establishes execution context, not the cause. The supported executable
+statement remains “the inspected on-disk file matched the baseline identity/hash
+at the observations”; it does not attest original mapped image bytes or defeat
+replacement-and-restore/in-place-write races at process creation.
+
+A possible session-notification broker would be a different architecture, not a
+minimal event-parser correction. [WTSRegisterSessionNotification](https://learn.microsoft.com/en-us/windows/win32/api/wtsapi32/nf-wtsapi32-wtsregistersessionnotification)
+reports session changes, not a Scheduler-instance-to-4624 causal receipt.
+[WTSQueryUserToken](https://learn.microsoft.com/en-us/windows/win32/api/wtsapi32/nf-wtsapi32-wtsqueryusertoken)
+requires a highly trusted LocalSystem caller with SeTcbPrivilege; it is not a
+least-privilege drop-in for the existing ordinary observer. Neither supplies original
+mapped-image content attestation. No supported alternative satisfying all six
+requested constraints has been established. Do not add a persistent privileged
+service or silently substitute “runs in the new session” for causal attribution.
+Required architectural decision: independently review a supported design with
+explicit causal and executable provenance guarantees under the existing trusted
+kernel/admin boundary, or retain the blocked guarantee. No alternative implemented.
+
+For cleanup, no run resources were created or independently inspected on Windows.
+All nine classes (account, profile, installation, tasks, harness processes,
+temporary filesystem, credentials, protected state/audit retention, pending effects)
+are NOT_RUN with actual presence UNKNOWN. The existing inspector queries exact
+SID/PID/task/path references but does not prove complete discovery. Credentials,
+protected retention and pending operations remain UNKNOWN by construction.
+Authorized retained audit evidence must be reopened and checked for identity,
+content and ACLs; it cannot be removed to obtain a clean result. Script exit status
+cannot authorize finalization. No cleanup or destructive action was replayed.
+
+### A13 local regression and handoff
+
+Executed on Linux: `python3 scripts/test_windows_lifecycle_execution.py` (17),
+`test_windows_native_lifecycle.py` (19), `test_windows_native_provenance.py` (12),
+`test_windows_protected_state_contract.py` (17), `test_windows_native_coordinator.py`
+(12), `test_windows_native_evidence.py` (50), `test_windows_native_phase_ledger.py`
+(4), `test_windows_lifecycle.py` (6): **137 tests PASS**. All names after the first
+use the same `python3 scripts/` prefix. Three existing source validators
+(`validate-windows-installer.py`, `validate-windows-native-acceptance.py`,
+`validate-installer-security-hardening.py`) PASS; `bash scripts/validate-install-acceptance.sh`
+PASS with 21 tests. These are source/portable evidence only. Local Cargo and
+PowerShell are unavailable; Windows parser/declaration/token/scheduler results above
+come from exact-source hosted jobs, not a local execution claim.
+
+No new implementation defect was confirmed, so no code or artificial regression
+suite was added. Corrected the older handoff's misleading SOURCE_READY wording and
+clarified that its component commands cannot finalize native security acceptance.
+A13 changes evidence documentation only. Final documentation-commit CI must be
+inspected separately; prior-SHA checks are never relabelled exact-final-head PASS.
+
+Use the A12 **Executable approved-machine handoff** above, with its exact wrapper
+parameters and credential prompts, after external approval binds the disposable
+Windows 11 AMD64 UUID, snapshot/recovery, candidate/manifests/harness commits,
+controller/observer/subject identities, audit policy and allowed role-test mutations.
+The first executable step is scoped role qualification only. Review real token and
+NTFS allowed/denied operations independently; test inheritance/nested groups,
+reparse/ancestor/handle substitution and interrupted protected writes. Any unexpected
+access fails qualification. Preserve uncertain processes/tree for reconciliation.
+Resolve provenance and protected authority/cleanup prerequisites before independently
+approving installation, interactive GUI/IPC, startup, real sign-out/sign-in,
+lifecycle/uninstall and finalization. No full secure native runner exists to invoke
+now; the older component-command sequence cannot replace it. Stop at the first
+unqualified phase, preserve protected audit evidence, never backfill results.
+
+| Gate | A13 assessment at inspected source SHA | Minimum missing evidence |
+| --- | --- | --- |
+| P028_ACL_CONTRACT_PASS | PASS, hosted in-memory contract at fb0ee55; documentation-head rerun required | Exact-final-head Windows contract; never effective NTFS proof. |
+| P028_PROTECTED_STATE_IMPLEMENTED | BLOCKED | Three real tokens, effective NTFS/ancestor/write/handle attacks and protected persistence/recovery qualification. |
+| P028_TRUSTED_OBSERVER_IMPLEMENTED | BLOCKED | Target schema/event qualification, independent causal session binding and supported original executable provenance. |
+| P028_COORDINATOR_IMPLEMENTED | BLOCKED | Qualified protected native authority, monotonic durable transitions and uncertain-effect recovery. |
+| P028_HARNESS_IMPLEMENTED | BLOCKED | Trusted native adapter execution/resume and complete independent nine-class cleanup. |
+| P028_NATIVE_ACCEPTED | BLOCKED / NOT_RUN | Approved Windows 11 AMD64 interactive end-to-end evidence with independent cleanup/finalization. |
+
+No closeout candidate exists. Minimum next action: externally allocate and approve
+the exact disposable interactive Windows host for scoped role qualification while
+independent review resolves the two provenance guarantees and missing native authority.
+Keep PR #189 Open, Draft and unmerged, and preserve v0.2 behavior and every guard.
