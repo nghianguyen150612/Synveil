@@ -3,7 +3,7 @@
 import dataclasses
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import sqlite3
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -231,13 +231,42 @@ class ExecutionTests(unittest.TestCase):
         bad = Observation(obs.phase, obs.context_sha256, obs.references, self.ctx.subject_sid_sha256)
         self.fails('OBSERVER_IDENTITY_MISMATCH', bad.validate, self.ctx)
 
+    def test_candidate_inputs_require_native_absolute_paths(self):
+        root = Path(self.tmp.name).resolve()
+        inputs = a.CandidateInputs(root / 'setup.exe', root / 'manifest.json', root / 'evidence', 123)
+        inputs.validate()
+        # Rooted POSIX spelling is not a drive-qualified Windows absolute path.
+        self.assertTrue(PurePosixPath('/candidate/setup.exe').is_absolute())
+        self.assertFalse(PureWindowsPath('/candidate/setup.exe').is_absolute())
+        for field in ('setup', 'manifest', 'evidence_directory'):
+            for invalid in (Path('relative'), Path('.'), Path(''),
+                            root / 'bad\nname', root / 'bad\rname', root / 'bad\0name',
+                            str(root / 'not-a-Path')):
+                with self.subTest(field=field, invalid=repr(invalid)):
+                    self.fails('ADAPTER_PATH_INVALID', dataclasses.replace(inputs, **{field: invalid}).validate)
+        rooted = dataclasses.replace(inputs, setup=Path('/candidate/setup.exe'))
+        if Path('/candidate/setup.exe').is_absolute():
+            rooted.validate()
+        else:
+            self.fails('ADAPTER_PATH_INVALID', rooted.validate)
+        # Drive-relative and root-relative forms must fail on actual Windows.
+        if root.drive:
+            for invalid in (Path(root.drive + 'relative.exe'), Path('\\candidate\\setup.exe')):
+                self.fails('ADAPTER_PATH_INVALID', dataclasses.replace(inputs, setup=invalid).validate)
+
     def test_real_adapter_argument_contracts(self):
-        inputs = a.CandidateInputs(Path('/candidate/setup.exe'), Path('/candidate/manifest.json'), Path('/evidence'), 123)
+        fixture_root = Path(self.tmp.name).resolve()
+        inputs = a.CandidateInputs(fixture_root / 'candidate' / 'setup.exe',
+                                   fixture_root / 'candidate' / 'manifest.json',
+                                   fixture_root / 'evidence', 123)
         for kind in a.CONTRACTS:
             args = a.build_arguments(kind, Path(__file__).resolve().parent.parent, self.ctx, inputs,
                 approval='I_APPROVE_DISPOSABLE_SYNVEIL_WINDOWS_ACCEPTANCE', test_user='synveil_p013_1234abcd')
             self.assertIn(self.ctx.candidate_sha256, args)
             self.assertIn(self.ctx.source_commit, args)
+            for flag, expected in (('-Setup', inputs.setup), ('-ReleaseManifest', inputs.manifest),
+                                   ('-EvidenceDirectory', inputs.evidence_directory)):
+                self.assertEqual(args[args.index(flag) + 1], str(expected))
             self.assertTrue(Path(args[5]).is_file())
         self.fails('HOST_MUTATION_APPROVAL_REQUIRED', a.build_arguments, 'journey', Path('/'), self.ctx, inputs, approval='yes')
         self.fails('DISPOSABLE_SUBJECT_INVALID', a.build_arguments, 'cleanup', Path('/'), self.ctx, inputs,
