@@ -307,3 +307,43 @@ queries and protected retained-evidence verification; bind every adapter to real
 verified execution tokens and candidate/run/boot context; exercise full interactive
 journey, unknown-outcome recovery and independent cleanup. Native authority cannot
 safely be enabled on the strength of this portable run.
+
+## P028-A12 — CI recovery and native-readiness audit
+
+Recovered live PR #189 at `2b36b6a0374439c2532f538c0632248dd631be07`; no newer
+head or uncommitted changes. Preserved both worktrees and original `work` branch.
+Fixed confirmed Windows `ADAPTER_PATH_INVALID` in `test_real_adapter_argument_contracts`
+using native absolute temporary paths (commit `b62bcbc`). Production validation
+remains strict and unchanged. Added malformed/relative/cross-platform path coverage,
+actual script parameter/argv checks, terminal restart tests, read-only Windows
+wrong-token rejection checks, and a concrete role-probe cleanup guard: if exit
+cannot be confirmed after termination request, preserve the unique tree and block.
+
+Local exit-0 validation: lifecycle execution 17, native lifecycle 19, provenance 12,
+protected-state 17, fixture coordinator 12, evidence 50, ledger 4, lifecycle 6
+(137 Python tests); install acceptance 21; all three Windows/installer security
+validators; PowerShell parse of 29 scripts and observer declaration compilation;
+64 synthetic scheduler/cleanup cases; `git diff --check`. Cargo unavailable locally.
+The Windows-only token branch and candidate reproducibility require hosted CI.
+Initial repair [run #44670557965](https://github.com/nghianguyen150612/Synveil/actions/runs/44670557965)
+is at `b62bcbc`; final-head results are tracked on PR after push, without claiming
+pending steps passed. A11 [#44669821473](https://github.com/nghianguyen150612/Synveil/actions/runs/44669821473)
+failed at checkpoint wiring, so its candidate/interactive jobs did not qualify.
+
+See the [A12 security audit and executable handoff](../security/P028_WINDOWS_NATIVE_ACCEPTANCE_QUALIFICATION.md#p028-a12--windows-ci-repair-and-native-readiness-audit)
+for component classification, provenance API review, per-resource cleanup discovery
+and limitations, exact commands, role/account/approval requirements, and the opt-in
+PowerShell invocation. No approved interactive Windows host was supplied; native
+qualification NOT_RUN. The source fixture engine is working; the native coordinator,
+complete adapter orchestration and independent cleanup enumerators are incomplete.
+No further placeholder authority layers were added.
+
+All five native implementation/acceptance gates remain BLOCKED. Evaluate
+`P028_ACL_CONTRACT_PASS` separately from exact-head CI (in-memory descriptor only).
+Do not enable `P028_NATIVE_AUTHORITY_UNAVAILABLE`: protected monotonic recovery,
+real-token NTFS/race qualification, automatic-trigger Authentication LUID causality,
+and original mapped-executable provenance remain unproven. Unknown credentials,
+retained protected evidence or pending effects block cleanup/finalization.
+P027 Linux strict Clippy `wizard.rs:1098`, `chrono`/`chrono-tz` advisories,
+independent SQLx review and P036 signing remain untouched. PR #189 stays Open,
+Draft and unmerged. No P029/P036 or v0.2 behavior changes.

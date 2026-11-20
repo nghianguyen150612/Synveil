@@ -338,3 +338,208 @@ queries and protected retained-evidence verification; bind every adapter to real
 verified execution tokens and candidate/run/boot context; exercise full interactive
 journey, unknown-outcome recovery and independent cleanup. Native authority cannot
 safely be enabled on the strength of this portable run.
+
+## P028-A12 — Windows CI repair and native-readiness audit
+
+Recovery started from live PR head `2b36b6a0374439c2532f538c0632248dd631be07`.
+Remote refs and PR #189 matched; both worktrees were clean. Preserved
+`/workspace/Synveil` on original `work` (`604499f`) and continued only in
+`/workspace/Synveil-p028` on `feat/v03-p028-windows-native-acceptance`.
+PR #189 remains Open, Draft and unmerged; no reset or force-push.
+
+### Confirmed CI regression and repair
+
+Exact A11 [Windows run #44669821473](https://github.com/nghianguyen150612/Synveil/actions/runs/44669821473)
+failed `build-windows-candidate` / `Validate checkpoint wiring` in
+`test_real_adapter_argument_contracts`: `ADAPTER_PATH_INVALID`. The fixture's
+`Path('/candidate/setup.exe')` is absolute on POSIX but root-relative without a
+drive on Windows. The production `CandidateInputs.validate()` was correct and
+is unchanged. Commit `b62bcbcbd68d8689ff55c454c568bff5511c34d5` uses native
+absolute paths beneath `TemporaryDirectory`, tests every input field against
+relative paths, string impostors and NUL/CR/LF, checks POSIX/Windows rooted-path
+semantics, and checks actual argv values. No fictional drive letter is used.
+The suite runs on Windows in the existing checkpoint-wiring step. A12 also
+compares supplied/required argument names with the real acceptance scripts'
+parameter blocks, without invoking those scripts.
+
+### Actual implementation classification
+
+| Component | Source status | Qualification and missing executable behavior |
+| --- | --- | --- |
+| Protected PowerShell controller | Partial implementation | Role/ACL/ancestor checks, bounded handle reads, mutex and flushed writes exist. Native Advance deliberately throws; no qualified authority-owned resumable executor or monotonic rollback protection. |
+| Security observer / scheduler module | Implemented diagnostics, not native-qualified observer authority | Exact 4624/4634/4688 and 119/100/129/200 re-query, task definition/instance, WTS and process-token checks exist. Records are OBSERVED, not phase authorization. Causality and mapped-image guarantees remain blocked. |
+| NativePendingJournal / NativeLifecycleCoordinator | Partial implementation | Durable pending observations and verifier receipts; cannot authorize any native phase. Fixture observer/verifier injection only exercises pending state. |
+| FixtureExecution | FIXTURE_ONLY, portable tested | Ordered durable execution and unknown-outcome reconciliation work with trusted synthetic dependencies. Not protected authority, cannot resist malicious whole-file rewrite/rollback, and must never become the native state store. |
+| Lifecycle adapters | Partial implementation | Four real command builders with strict inputs; no execution-token enforcement behind a qualified native launch boundary. Candidate/startup/event tools remain separate; full native orchestration is absent. |
+| Three-role access harness | Implemented but not natively qualified; incomplete overall qualification | Real token/access-check and allowed/denied OS operations exist for a unique temporary ACL tree. No ancestor substitution stress or interrupted protected checkpoint qualification. Does not implement lifecycle acceptance. |
+| Cleanup inspector | Partial native diagnostic | CIM account/profile/PID, literal task and exact path queries exist. No authority-owned complete discovery; secrets, retained protected state and pending effects remain UNKNOWN. Always CLEANUP_BLOCKED. |
+| Qualification wrapper | Executable opt-in role entrypoint, not qualified | Machine UUID digest plus explicit external approval and existing protected marker required. Neither alone proves disposability. It runs role probes only; native recovery/complete cleanup remain NOT_RUN. |
+
+Audit of intended trust boundaries: controller-owned protected state exists in
+source; subject and observer have separated inbox descriptors and cannot submit
+phase authority. The verifier re-queries OS records. Fixture/native filenames,
+modes and schemas differ and cannot be used interchangeably. A7–A11 regressions
+retain forged observer/verifier, context substitution, corrupted journal,
+interruption, destructive replay, cleanup and premature-finalization rejection.
+Restart does not reinitialize an existing fixture file, including FAILED,
+CANCELLED and EXPIRED runs (new reopen tests). None of this establishes real
+NTFS isolation or native recovery on an unqualified host.
+
+A12 found a concrete cleanup bug: the role harness ignored a false
+`WaitForExit(5000)` after `Kill`. `Stop-P028RoleProbe` now requires observed probe
+exit; the finally block preserves the unique ACL tree if any probe exit is
+unknown, reports BLOCKED and requires manual reconciliation. Three inert process
+fault cases test already-exited, confirmed-exit and unknown-exit behavior. This
+does not establish that all possible descendants or other harness processes have
+exited; that remains an independent native cleanup responsibility.
+
+The existing hosted read-only Windows smoke test now requires wrong-SID rejection
+for controller/observer/subject APIs and, when elevated, rejection of that actual
+token for both ordinary roles. It does not provision users, adjust permissions,
+launch a task, install software or sign out. A pass is current-token rejection
+coverage only, not three-role NTFS qualification.
+
+### Supported provenance limits
+
+Reviewed Microsoft documentation:
+
+- [IRunningTask](https://learn.microsoft.com/en-us/windows/win32/api/taskschd/nn-taskschd-irunningtask)
+  exposes instance GUID, engine PID, action/name/path/state. It does not expose
+  the authentication LUID of the logon that caused the task.
+- [ILogonTrigger](https://learn.microsoft.com/en-us/windows/win32/api/taskschd/nn-taskschd-ilogontrigger)
+  configures the trigger's user and delay; it is not a record binding a particular
+  invocation to a particular Security 4624. Event 119's implemented schema has
+  TaskName/UserName/InstanceId, not AuthenticationId or a Security record reference.
+  Event 4688 plus a live token can bind the launched process's LUID; that is not
+  independent proof of the triggering session's causality. Timestamp adjacency
+  and absence of another observed logon do not supply the missing relationship.
+- [QueryFullProcessImageName](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-queryfullprocessimagenamea)
+  returns an image name. [GetMappedFileName](https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-getmappedfilenamea)
+  returns a mapped file's name for an address. Neither documents a content
+  attestation of the original executable mapping or a backing-file identity
+  handle suitable for comparison with the candidate. Hashing a newly opened file
+  with matching FILE_ID_INFO proves the inspected disk file, not original mapped
+  bytes. Hashing loaded memory is not a disk-image hash (relocations/imports and
+  mutable pages differ). No supported complete mapped-image proof was established
+  in this checkpoint. No driver, unsupported query or signing-policy change added.
+
+Existing narrower file/token/event checks and explicit
+`BLOCKED_TASK_EVENT_HAS_NO_AUTHENTICATION_LUID`,
+`BLOCKED_MAPPED_IMAGE_PROVENANCE_UNAVAILABLE` and
+`P028_NATIVE_AUTHORITY_UNAVAILABLE` remain unchanged. This is a documented gap in
+the implemented evidence path, not a claim that every future Windows facility is
+incapable of offering stronger evidence.
+
+### Cleanup discovery and qualification boundary
+
+| Resource | Existing independent query / remaining requirement |
+| --- | --- |
+| Disposable account | Query exact independently recorded SID with Win32_UserAccount; ordinary subject token and ownership must be qualified. |
+| User profile | Win32_UserProfile for recorded SID plus separate inventory of actual profile directory; query errors are UNKNOWN. |
+| Installed components | Exact inventory path queries only; installation registration, component completeness and candidate ownership still require independent enumeration. |
+| Test tasks | Enumerate Get-ScheduledTask and compare literal TaskPath+TaskName; protected pre-effect inventory must establish ownership. |
+| Harness processes | Win32_Process for inventoried PID; present/reused PID blocks conservatively. This does not discover escaped/uninventoried descendants. Record creation identity before effects and independently reconcile descendants. |
+| Temporary filesystem resources | Get-Item literal path and accessible parent check. Protected ancestors/no-reparse race qualification still required; path-only diagnostic absence is not authority. |
+| Temporary credentials | UNKNOWN. No credential enumerator exists. A future scoped CredEnumerate query under each actual role could check declared stored targets only; it cannot prove all transient OS/in-memory secret copies erased. Dispose credential holders and revoke approved disposable accounts; record the precise remaining guarantee. |
+| Protected evidence/state | UNKNOWN. Independently reopen and verify retained audit ACL/identity/content and enumerate transient state; fixture cleanup receipts are insufficient. |
+| Pending effects/interruption records | UNKNOWN. Requires authority-owned protected operation journal plus fresh OS reconciliation and quiescence; absence of a file or script exit code is insufficient. |
+
+A12 intentionally adds no fake native cleanup success or secret enumerator.
+Unverifiable resources block finalization. No native host mutation was attempted.
+
+### Validation executed in this Linux workspace
+
+All following commands exit 0; tests are portable/synthetic unless stated:
+
+| Command | Result |
+| --- | --- |
+| `python3 scripts/test_windows_lifecycle_execution.py` | 17 tests |
+| `python3 scripts/test_windows_native_lifecycle.py` | 19 tests |
+| `python3 scripts/test_windows_native_provenance.py` | 12 tests |
+| `python3 scripts/test_windows_protected_state_contract.py` | 17 tests |
+| `python3 scripts/test_windows_native_coordinator.py` | 12 tests |
+| `python3 scripts/test_windows_native_evidence.py` | 50 tests |
+| `python3 scripts/test_windows_native_phase_ledger.py` | 4 tests |
+| `python3 scripts/test_windows_lifecycle.py` | 6 tests |
+| `python3 scripts/validate-windows-installer.py` | PASS |
+| `python3 scripts/validate-windows-native-acceptance.py` | PASS, native checkpoint blocked |
+| `python3 scripts/validate-installer-security-hardening.py` | PASS |
+| `bash scripts/validate-install-acceptance.sh` | PASS, 21 tests |
+| `/tmp/p028-pwsh/pwsh -NoProfile -File /tmp/p028-a11/parse.ps1` | PowerShell 7.5.4: 29 scripts parsed, observer native declarations compiled; no Windows API calls |
+| `/tmp/p028-pwsh/pwsh -NoProfile -File scripts/test-windows-native-logon-task.ps1` | 64 synthetic cases; Windows-only token branch NOT_RUN locally |
+| `git diff --check` | PASS |
+
+137 focused Python tests plus 21 install contracts. Cargo unavailable locally;
+Rust checks NOT_RUN here. Existing Windows CI runs Rust IPC probe/contracts,
+candidate reproducibility, PowerShell parser and the token/provider smoke checks.
+The hosted interactive-surface blocker is untouched. Exact final-head run links
+and statuses are recorded on PR #189 after push; an in-progress job is not PASS.
+The initial repair run is [#44670557965](https://github.com/nghianguyen150612/Synveil/actions/runs/44670557965)
+at `b62bcbc`; ACL passed while candidate wiring was still pending at this audit.
+
+No approved interactive Windows 11 AMD64 host/approval was supplied. Genuine
+three-role, NTFS, recovery, GUI/logoff/logon and full cleanup qualification remain
+NOT_RUN. Independent P027 Linux strict Clippy (`wizard.rs:1098`), Rust dependency
+policy (`chrono`, `chrono-tz`), P027 SQLx security review and P036 signing remain
+open and outside this change.
+
+### Executable approved-machine handoff
+
+External operator requirements: approved disposable Windows 11 AMD64 allocation,
+explicit scope authorizing the role harness's unique ACL-tree creation, token
+processes and confined cleanup; elevated unrestricted controller; separately
+provisioned non-elevated Event Log Readers observer (`synveil_obs_<8hex>`) and
+ordinary disposable subject (`synveil_p013_<8hex>`, required P013 description).
+No extra/nested privilege groups are accepted. Provisioning itself requires
+separate explicit authorization; this command does not create accounts.
+
+Use a trusted pinned checkout. Authenticate Setup and release-manifest digests and
+source independently, and record the checkout commit and machine UUID digest in
+the external approval. Prepare the existing controller-only ProgramData Synveil
+P028 directory and protected marker exactly as the A10 harness requires, only
+within approved scope. A marker is an additional guard, never approval by itself.
+In an elevated PowerShell 7 session, fill the variables from that approval record:
+
+```powershell
+# Values must come from the externally reviewed allocation/candidate record.
+$observerCredential = Get-Credential -UserName $approvedObserverAccount
+$subjectCredential = Get-Credential -UserName $approvedSubjectAccount
+$parameters = @{
+    OperatorApproval = 'I_APPROVE_P028_DISPOSABLE_MACHINE_ROLE_QUALIFICATION'
+    ApprovedMachineUuidSha256 = $approvedMachineUuidSha256
+    EvidenceDirectory = $approvedProtectedEvidenceDirectory
+    CandidatePath = $authenticatedSetupPath
+    CandidateSha256 = $authenticatedSetupSha256
+    ManifestPath = $authenticatedManifestPath
+    ManifestSha256 = $authenticatedManifestSha256
+    ExpectedSourceCommit = $authenticatedSourceCommit
+    ObserverCredential = $observerCredential
+    SubjectCredential = $subjectCredential
+}
+& ./scripts/qualify-windows-native-lifecycle.ps1 @parameters
+```
+
+Expected evidence: protected `role-access-<nonce>.json`, candidate/manifest and
+harness component identities, machine/controller hashes, role checks and scoped
+ACL-tree cleanup status. Independently review actual role tokens, OS allowed and
+denied operations and tree absence. A result here cannot qualify full acceptance.
+If a probe cannot be confirmed exited, retain its tree and reconcile that exact
+recorded process/tree manually; do not rerun cleanup blindly. Keep credentials out
+of command lines/logs; dispose credential holders after the approved operation.
+The operator owns explicit revocation/account/profile cleanup and independent
+checks, including resources outside the role harness's unique temporary tree.
+
+Only after role evidence review: qualify protected ancestor/race and interrupted
+write recovery on this approved allocation; resolve or retain the two provenance
+blockers; implement the missing protected native transition and cleanup behavior;
+then separately approve the full interactive lifecycle. No real logoff, task
+execution or installation command is authorized by merely running role probes.
+
+| Gate | A12 disposition |
+| --- | --- |
+| `P028_ACL_CONTRACT_PASS` | Evaluate from exact final-head hosted in-memory contract, linked on PR; not NTFS qualification. |
+| `P028_PROTECTED_STATE_IMPLEMENTED` | BLOCKED: real-token NTFS, write races and protected monotonic recovery unqualified. |
+| `P028_TRUSTED_OBSERVER_IMPLEMENTED` | BLOCKED: trigger causality and mapped-image proof remain unsupported in the implemented path. |
+| `P028_COORDINATOR_IMPLEMENTED` | BLOCKED: no secure enabled native transitions/recovery. |
+| `P028_HARNESS_IMPLEMENTED` | BLOCKED: full native adapter orchestration and independent cleanup discovery incomplete. |
+| `P028_NATIVE_ACCEPTED` | BLOCKED: approved interactive end-to-end execution NOT_RUN. |
