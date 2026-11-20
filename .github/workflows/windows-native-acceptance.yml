@@ -92,6 +92,7 @@ jobs:
           python3 scripts/test_windows_native_phase_ledger.py
           python3 scripts/test_windows_native_coordinator.py
           python3 scripts/test_windows_native_lifecycle.py
+          python3 scripts/test_windows_lifecycle_execution.py
           python3 scripts/test_windows_protected_state_contract.py
           python3 scripts/test_windows_native_provenance.py
           cargo check --locked -p synveil-client --example p013_windows_control_probe
@@ -101,7 +102,7 @@ jobs:
         if: github.event_name != 'workflow_dispatch'
         shell: pwsh
         run: |
-          $scriptPaths = @('scripts/qualify-windows-native-environment.ps1','scripts/qualify-windows-native-role-access.ps1','scripts/windows-native-role-probe.ps1','scripts/protect-windows-native-run-state.ps1','scripts/windows-native-observer-support.ps1','scripts/windows-native-logon-task.ps1','scripts/test-windows-native-logon-task.ps1','scripts/test-windows-gui-journey.ps1','scripts/test-windows-installed-uninstall.ps1','scripts/collect-windows-new-logon-evidence.ps1','scripts/collect-windows-logoff-evidence.ps1','scripts/provision-windows-p013-test-user.ps1','scripts/cleanup-windows-p013-test-user.ps1')
+          $scriptPaths = @('scripts/qualify-windows-native-environment.ps1','scripts/qualify-windows-native-role-access.ps1', 'scripts/qualify-windows-native-lifecycle.ps1', 'scripts/inspect-windows-native-cleanup.ps1','scripts/windows-native-role-probe.ps1','scripts/protect-windows-native-run-state.ps1','scripts/windows-native-observer-support.ps1','scripts/windows-native-logon-task.ps1','scripts/test-windows-native-logon-task.ps1','scripts/test-windows-gui-journey.ps1','scripts/test-windows-installed-uninstall.ps1','scripts/collect-windows-new-logon-evidence.ps1','scripts/collect-windows-logoff-evidence.ps1','scripts/provision-windows-p013-test-user.ps1','scripts/cleanup-windows-p013-test-user.ps1')
           foreach ($scriptPath in $scriptPaths) {
             $tokens = $null
             $parseErrors = $null
