@@ -1,0 +1,1660 @@
+{
+  "assessment": "P028-A13",
+  "inspected_date_utc": "2026-11-20",
+  "evidence_kind": "SOURCE_AND_HOSTED_CI_ONLY",
+  "source_commit": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+  "native_acceptance": "NOT_RUN",
+  "native_authority": "BLOCKED",
+  "environment": {
+    "available_os": "Linux x86_64",
+    "windows_terminal": "UNREACHABLE_TUNNEL_CLIENT_NOT_SEEN",
+    "approved_host": null,
+    "operator_scope": null,
+    "controller_token": null,
+    "observer_token": null,
+    "subject_token": null,
+    "snapshot": null,
+    "audit_configuration": null
+  },
+  "candidate": {
+    "producer_run_id": 44672582317,
+    "hosted_identity_and_reproducibility_steps": "SUCCESS",
+    "independently_downloaded_setup_sha256": null,
+    "independently_downloaded_manifest_sha256": null,
+    "native_candidate_qualified": false
+  },
+  "native_phases": "ALL_13_NOT_RUN",
+  "native_cleanup": "ALL_9_CLASSES_NOT_RUN; RESOURCE_PRESENCE_UNKNOWN",
+  "run_listing": {
+    "total_count": 35,
+    "returned": 35,
+    "includes": [
+      "pull_request",
+      "push"
+    ],
+    "job_pages_complete": true
+  },
+  "runs": [
+    {
+      "id": 44672582385,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582385",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "Linux AppImage",
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "id": 136076873284,
+          "name": "Build, reproduce, inspect, and smoke AppImage",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 44672582369,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582369",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "v0.3 P025 identity authorization qualification",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076806137,
+          "name": "P025 contracts (windows-latest)",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Strict Clippy for qualified boundaries"
+          ],
+          "category": "Independent code/quality blocker",
+          "reason": "crates/server-storage/src/wizard.rs:1098 clippy::needless_bool"
+        },
+        {
+          "id": 136076806553,
+          "name": "P025 contracts (ubuntu-24.04)",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Strict Clippy for qualified boundaries"
+          ],
+          "category": "Independent code/quality blocker",
+          "reason": "crates/server-storage/src/wizard.rs:1098 clippy::needless_bool"
+        }
+      ]
+    },
+    {
+      "id": 44672582320,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582320",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "v0.3 P027 PostgreSQL authority ledger",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076881318,
+          "name": "P027 Windows compilation and contracts (no live PostgreSQL)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076881478,
+          "name": "P027 Linux PostgreSQL 17 transactions and recovery",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Formatting, strict Clippy, documentation and whitespace"
+          ],
+          "category": "Independent code/quality blocker",
+          "reason": "crates/server-storage/src/wizard.rs:1098 clippy::needless_bool"
+        },
+        {
+          "id": 136076881716,
+          "name": "P027 Windows PostgreSQL 17.11 transactions and recovery",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Initialize a new loopback-only disposable PostgreSQL cluster",
+            "Run actions/upload-artifact@v4"
+          ],
+          "category": "Test or environment incompatibility",
+          "reason": "P027_PG_VERSION_FAILURE: reviewed PostgreSQL 17.11 required; evidence upload missing files"
+        }
+      ]
+    },
+    {
+      "id": 44672582377,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582377",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "v0.3 P022 pairing ceremony",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076877264,
+          "name": "P022 ceremony (windows-latest)",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Strict Clippy"
+          ],
+          "category": "Independent code/quality blocker",
+          "reason": "crates/server-storage/src/wizard.rs:1098 clippy::needless_bool"
+        },
+        {
+          "id": 136076877736,
+          "name": "P022 ceremony (ubuntu-24.04)",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Strict Clippy"
+          ],
+          "category": "Independent code/quality blocker",
+          "reason": "crates/server-storage/src/wizard.rs:1098 clippy::needless_bool"
+        }
+      ]
+    },
+    {
+      "id": 44672582363,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582363",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "v0.3 P021 invitation ledger",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076805045,
+          "name": "P021 ledger (ubuntu-24.04)",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Strict Clippy including P019 debt repair"
+          ],
+          "category": "Independent code/quality blocker",
+          "reason": "crates/server-storage/src/wizard.rs:1098 clippy::needless_bool"
+        },
+        {
+          "id": 136076805338,
+          "name": "P021 ledger (windows-latest)",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Strict Clippy including P019 debt repair"
+          ],
+          "category": "Independent code/quality blocker",
+          "reason": "crates/server-storage/src/wizard.rs:1098 clippy::needless_bool"
+        }
+      ]
+    },
+    {
+      "id": 44672582325,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582325",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "v0.3 P018 authenticated path qualification",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076762247,
+          "name": "P018 deterministic HTTPS contracts (ubuntu-24.04)",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Clippy"
+          ],
+          "category": "Independent code/quality blocker",
+          "reason": "crates/server-storage/src/wizard.rs:1098 clippy::needless_bool"
+        }
+      ]
+    },
+    {
+      "id": 44672582317,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582317",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "Windows native acceptance",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076840827,
+          "name": "protected-acl-contract",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "conclusion": "success"
+            },
+            {
+              "name": "Test in-memory protected ACL contract",
+              "conclusion": "success"
+            },
+            {
+              "name": "Exercise LogonTrigger fixtures and read-only Windows API contracts",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success"
+            }
+          ]
+        },
+        {
+          "id": 136076841258,
+          "name": "build-windows-candidate",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "conclusion": "success"
+            },
+            {
+              "name": "Download the exact assembled release candidate",
+              "conclusion": "skipped"
+            },
+            {
+              "name": "Run actions/setup-python@v6",
+              "conclusion": "skipped"
+            },
+            {
+              "name": "Run dtolnay/rust-toolchain@stable",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run ilammy/msvc-dev-cmd@v1",
+              "conclusion": "success"
+            },
+            {
+              "name": "Select and authenticate the MSVC linker and runtime",
+              "conclusion": "success"
+            },
+            {
+              "name": "Pin the reproducible ZIP writer runtime",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run jurplel/install-qt-action@v4",
+              "conclusion": "success"
+            },
+            {
+              "name": "Keep Qt installer diagnostics outside the source tree",
+              "conclusion": "success"
+            },
+            {
+              "name": "Validate checkpoint wiring",
+              "conclusion": "success"
+            },
+            {
+              "name": "Parse PowerShell acceptance tools without running them",
+              "conclusion": "success"
+            },
+            {
+              "name": "Build runtime once",
+              "conclusion": "success"
+            },
+            {
+              "name": "Build exact candidate twice",
+              "conclusion": "success"
+            },
+            {
+              "name": "Inspect and identify exact candidate",
+              "conclusion": "success"
+            },
+            {
+              "name": "Record exact Setup signature state",
+              "conclusion": "skipped"
+            },
+            {
+              "name": "Verify and stage the exact assembled release candidate",
+              "conclusion": "skipped"
+            },
+            {
+              "name": "Run actions/upload-artifact@v4",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run jurplel/install-qt-action@v4",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Pin the reproducible ZIP writer runtime",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success"
+            }
+          ]
+        },
+        {
+          "id": 136087806433,
+          "name": "standard-user-native",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Record required unavailable surfaces honestly"
+          ],
+          "category": "Required native environment unavailable",
+          "reason": "Hosted service session: interactive GUI, real logon, installed IPC unqualified",
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/download-artifact@v4",
+              "conclusion": "success"
+            },
+            {
+              "name": "Authenticate transferred candidate",
+              "conclusion": "success"
+            },
+            {
+              "name": "Native standard-user product acceptance",
+              "conclusion": "success"
+            },
+            {
+              "name": "Record required unavailable surfaces honestly",
+              "conclusion": "failure"
+            },
+            {
+              "name": "Upload bounded native evidence",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 44672582329,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582329",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "Linux native packages (DEB + RPM)",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076911542,
+          "name": "Desktop Qt reproducibility with generated-input diagnosis",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076911829,
+          "name": "sysusers/tmpfiles validation on systemd 249",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076912070,
+          "name": "Build and validate DEB + RPM (unsigned CI artifacts)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136095038111,
+          "name": "APT install, non-root launch, removal, and preservation",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Install exact DEB through authenticated quick install and verify rerun"
+          ],
+          "category": "Independent qualification failure; root cause unresolved",
+          "reason": "Native Linux package acceptance exited 50 (package-manager failure); detailed cause not established"
+        },
+        {
+          "id": 136095038265,
+          "name": "Fedora 42 userspace DNF install, launch, erase, and preservation",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "DNF install exact RPM through authenticated quick install and verify rerun"
+          ],
+          "category": "Independent qualification failure; root cause unresolved",
+          "reason": "Native Linux package acceptance exited 50 (package-manager failure); detailed cause not established"
+        }
+      ]
+    },
+    {
+      "id": 44672582355,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582355",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "repair and recovery UX",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076763274,
+          "name": "quality",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Run cargo clippy --workspace --all-targets --locked -- -D warnings"
+          ],
+          "category": "Independent code/quality blocker",
+          "reason": "crates/server-storage/src/wizard.rs:1098 clippy::needless_bool"
+        },
+        {
+          "id": 136076763498,
+          "name": "installer-repair-contract",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076763537,
+          "name": "dependency-policy",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Run cargo deny check"
+          ],
+          "category": "Independent dependency/security blocker",
+          "reason": "chrono RUSTSEC-2026-0543; chrono-tz RUSTSEC-2026-0555"
+        },
+        {
+          "id": 136076763575,
+          "name": "desktop-and-qml",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Install Qt and native dependencies"
+          ],
+          "category": "Test or environment incompatibility",
+          "reason": "Ubuntu 26.04 package qml6-module-qtquick-nativestyle unavailable"
+        },
+        {
+          "id": 136076763627,
+          "name": "client-process-lifecycle",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076763650,
+          "name": "formatting",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076763698,
+          "name": "root-and-data-safety",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076763704,
+          "name": "static-and-docs",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076763712,
+          "name": "recovery-projection",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 44672582302,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582302",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "Rust CI",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076891687,
+          "name": "Native desktop UI (Windows Qt 6)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076891885,
+          "name": "Check (windows-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076891887,
+          "name": "Test (macos-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076891929,
+          "name": "Test (ubuntu-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076891933,
+          "name": "Dependency policy",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Check dependency policy"
+          ],
+          "category": "Independent dependency/security blocker",
+          "reason": "chrono RUSTSEC-2026-0543; chrono-tz RUSTSEC-2026-0555"
+        },
+        {
+          "id": 136076892012,
+          "name": "Native desktop UI (Linux Qt 6)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076892033,
+          "name": "Web quality",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076892072,
+          "name": "Quality (format and clippy)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076892128,
+          "name": "Check (macos-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076892129,
+          "name": "Check (ubuntu-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076892158,
+          "name": "Test (windows-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 44672582202,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582202",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "v0.3 P023 pairing revocation and recovery",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076767148,
+          "name": "P023 contracts (ubuntu-24.04)",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Strict Clippy for qualified boundaries"
+          ],
+          "category": "Independent code/quality blocker",
+          "reason": "crates/server-storage/src/wizard.rs:1098 clippy::needless_bool"
+        },
+        {
+          "id": 136076767574,
+          "name": "P023 contracts (windows-latest)",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Strict Clippy for qualified boundaries"
+          ],
+          "category": "Independent code/quality blocker",
+          "reason": "crates/server-storage/src/wizard.rs:1098 clippy::needless_bool"
+        }
+      ]
+    },
+    {
+      "id": 44672582145,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582145",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "v0.3 P019 installer network preflight",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076766649,
+          "name": "P019 preflight contracts (ubuntu-24.04)",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Strict Clippy"
+          ],
+          "category": "Independent code/quality blocker",
+          "reason": "crates/server-storage/src/wizard.rs:1098 clippy::needless_bool"
+        },
+        {
+          "id": 136076767018,
+          "name": "P019 preflight contracts (windows-latest)",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Strict Clippy"
+          ],
+          "category": "Independent code/quality blocker",
+          "reason": "crates/server-storage/src/wizard.rs:1098 clippy::needless_bool"
+        }
+      ]
+    },
+    {
+      "id": 44672582119,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582119",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "v0.3 P024 pairing compatibility qualification",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076761475,
+          "name": "P024 contracts (windows-latest)",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Strict Clippy for qualified boundaries"
+          ],
+          "category": "Independent code/quality blocker",
+          "reason": "crates/server-storage/src/wizard.rs:1098 clippy::needless_bool"
+        },
+        {
+          "id": 136076761663,
+          "name": "P024 contracts (ubuntu-24.04)",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Strict Clippy for qualified boundaries"
+          ],
+          "category": "Independent code/quality blocker",
+          "reason": "crates/server-storage/src/wizard.rs:1098 clippy::needless_bool"
+        }
+      ]
+    },
+    {
+      "id": 44672582214,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582214",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "v0.3 P017 transport discovery",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076762017,
+          "name": "P017 contracts (ubuntu-24.04)",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Clippy"
+          ],
+          "category": "Independent code/quality blocker",
+          "reason": "crates/server-storage/src/wizard.rs:1098 clippy::needless_bool"
+        },
+        {
+          "id": 136076762432,
+          "name": "P017 contracts (windows-latest)",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Clippy"
+          ],
+          "category": "Independent code/quality blocker",
+          "reason": "crates/server-storage/src/wizard.rs:1098 clippy::needless_bool"
+        }
+      ]
+    },
+    {
+      "id": 44672582240,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582240",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "library first-run wizard",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076761442,
+          "name": "documentation-and-quality",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076761726,
+          "name": "library-setup-and-root-safety",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076761866,
+          "name": "desktop-presentation-and-qml",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Install Qt and native dependencies"
+          ],
+          "category": "Test or environment incompatibility",
+          "reason": "Ubuntu 26.04 package qml6-module-qtquick-nativestyle unavailable"
+        }
+      ]
+    },
+    {
+      "id": 44672582249,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582249",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "connection setup simplification",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076761382,
+          "name": "address-and-ownership",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076761637,
+          "name": "desktop-presentation",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Install Qt and native build dependencies"
+          ],
+          "category": "Test or environment incompatibility",
+          "reason": "Ubuntu 26.04 package qml6-module-qtquick-nativestyle unavailable"
+        },
+        {
+          "id": 136076761844,
+          "name": "quality",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 44672582290,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582290",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "Installer security hardening",
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "id": 136076767340,
+          "name": "Installer lifecycle, journal, AppImage security (Linux)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076767344,
+          "name": "Windows ownership, options, reparse and compiler security",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076767395,
+          "name": "Installer crypto dependency policy",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076767457,
+          "name": "Acquisition, channel, and downgrade security (windows-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076767507,
+          "name": "Security structural and documentation gates",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076767510,
+          "name": "Linux invocation, path, hook security",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076767776,
+          "name": "Acquisition, channel, and downgrade security (ubuntu-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 44672582236,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582236",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "Installation resilience hardening",
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "id": 136076767520,
+          "name": "Strict format and installer-engine quality",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076767726,
+          "name": "Windows ownership lifecycle and Inno process interruption",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076767729,
+          "name": "Resilience docs and acceptance-scope validator",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076767798,
+          "name": "Acquisition and deterministic ENOSPC (windows-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076767827,
+          "name": "Linux APT/DNF reconciliation boundaries",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076767832,
+          "name": "AppImage partial integration recovery",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076767834,
+          "name": "Preservation and recovery static regression",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076767896,
+          "name": "Lifecycle and common-engine interruption fixtures",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076767917,
+          "name": "Acquisition and deterministic ENOSPC (ubuntu-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076768079,
+          "name": "Journal durability faults and process restart",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 44672582260,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582260",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "Windows installer",
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "id": 136076843975,
+          "name": "installer-smoke",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 44672582114,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582114",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "Linux clean-machine acceptance",
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "id": 136076801651,
+          "name": "Acceptance contract and adapter gates",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076801832,
+          "name": "Build fixture artifacts or import exact release candidate",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136091011138,
+          "name": "${{ matrix.platform }} ${{ matrix.version }} clean-machine acceptance",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "id": 136091011705,
+          "name": "Phase C evidence gate",
+          "status": "completed",
+          "conclusion": "skipped"
+        }
+      ]
+    },
+    {
+      "id": 44672582095,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582095",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "iOS Build",
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "id": 136076761485,
+          "name": "Xcode Simulator Build",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 44672582100,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582100",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "v0.3 P020 pairing trust contracts",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076765447,
+          "name": "P020 contracts (windows-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076765754,
+          "name": "P020 contracts (ubuntu-24.04)",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Strict Clippy for pairing and authorization/client/server boundaries"
+          ],
+          "category": "Independent code/quality blocker",
+          "reason": "crates/server-storage/src/wizard.rs:1098 clippy::needless_bool"
+        }
+      ]
+    },
+    {
+      "id": 44672582256,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582256",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "v0.3 P015 PostgreSQL ObjectStore authorization",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076762042,
+          "name": "P015 joined owner-to-byte qualification",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Check API Clippy"
+          ],
+          "category": "Independent code/quality blocker",
+          "reason": "crates/server-storage/src/wizard.rs:1098 clippy::needless_bool"
+        }
+      ]
+    },
+    {
+      "id": 44672582271,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582271",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "iOS Rust Apple Build",
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "id": 136076761815,
+          "name": "Rust Apple Target Build",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 44672582263,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582263",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "v0.3 P026 RBAC policy delegation qualification",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076803648,
+          "name": "P026 contracts (windows-latest)",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Strict Clippy for qualified boundaries"
+          ],
+          "category": "Independent code/quality blocker",
+          "reason": "crates/server-storage/src/wizard.rs:1098 clippy::needless_bool"
+        },
+        {
+          "id": 136076803971,
+          "name": "P026 contracts (ubuntu-24.04)",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Strict Clippy for qualified boundaries"
+          ],
+          "category": "Independent code/quality blocker",
+          "reason": "crates/server-storage/src/wizard.rs:1098 clippy::needless_bool"
+        }
+      ]
+    },
+    {
+      "id": 44672582153,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582153",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "PostgreSQL 17 scheduled-maintenance",
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "id": 136076767387,
+          "name": "PG17 live suites (scheduling, worker, cycle, lifecycle, stress)",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 44672582233,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582233",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "iOS Simulator Tests",
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "id": 136077107128,
+          "name": "Xcode Simulator Unit Tests",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 44672582272,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582272",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "authentication UX polish",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076761876,
+          "name": "auth-security-regressions",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076762282,
+          "name": "auth-domain-and-controller",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076762311,
+          "name": "quality",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076762382,
+          "name": "desktop-auth-presentation",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Install Qt and native dependencies"
+          ],
+          "category": "Test or environment incompatibility",
+          "reason": "Ubuntu 26.04 package qml6-module-qtquick-nativestyle unavailable"
+        }
+      ]
+    },
+    {
+      "id": 44672582072,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672582072",
+      "event": "pull_request",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "installation to sync progress",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076761045,
+          "name": "desktop-and-qml",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Install Qt and native dependencies"
+          ],
+          "category": "Test or environment incompatibility",
+          "reason": "Ubuntu 26.04 package qml6-module-qtquick-nativestyle unavailable"
+        },
+        {
+          "id": 136076761269,
+          "name": "docs-and-quality",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076761279,
+          "name": "progress-projection",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076761468,
+          "name": "sync-truth-regressions",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 44672574178,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672574178",
+      "event": "push",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "Windows installer",
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "id": 136076740955,
+          "name": "installer-smoke",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 44672574139,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672574139",
+      "event": "push",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "PostgreSQL 17 scheduled-maintenance",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076879252,
+          "name": "PG17 live suites (scheduling, worker, cycle, lifecycle, stress)",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Prompt 67 \u2014 backup_scheduled_maintenance_cycle_postgres (20)"
+          ],
+          "category": "Test or environment incompatibility",
+          "reason": "Independent PostgreSQL test fixture at backup_scheduled_maintenance_cycle_postgres.rs:1656 violates backup_schedules_effective_time_order; 19 passed, 1 failed. Determinism not established."
+        }
+      ]
+    },
+    {
+      "id": 44672574186,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672574186",
+      "event": "push",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "Windows native acceptance",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076819075,
+          "name": "build-windows-candidate",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "conclusion": "success"
+            },
+            {
+              "name": "Download the exact assembled release candidate",
+              "conclusion": "skipped"
+            },
+            {
+              "name": "Run actions/setup-python@v6",
+              "conclusion": "skipped"
+            },
+            {
+              "name": "Run dtolnay/rust-toolchain@stable",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run ilammy/msvc-dev-cmd@v1",
+              "conclusion": "success"
+            },
+            {
+              "name": "Select and authenticate the MSVC linker and runtime",
+              "conclusion": "success"
+            },
+            {
+              "name": "Pin the reproducible ZIP writer runtime",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run jurplel/install-qt-action@v4",
+              "conclusion": "success"
+            },
+            {
+              "name": "Keep Qt installer diagnostics outside the source tree",
+              "conclusion": "success"
+            },
+            {
+              "name": "Validate checkpoint wiring",
+              "conclusion": "success"
+            },
+            {
+              "name": "Parse PowerShell acceptance tools without running them",
+              "conclusion": "success"
+            },
+            {
+              "name": "Build runtime once",
+              "conclusion": "success"
+            },
+            {
+              "name": "Build exact candidate twice",
+              "conclusion": "success"
+            },
+            {
+              "name": "Inspect and identify exact candidate",
+              "conclusion": "success"
+            },
+            {
+              "name": "Record exact Setup signature state",
+              "conclusion": "skipped"
+            },
+            {
+              "name": "Verify and stage the exact assembled release candidate",
+              "conclusion": "skipped"
+            },
+            {
+              "name": "Run actions/upload-artifact@v4",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run jurplel/install-qt-action@v4",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Pin the reproducible ZIP writer runtime",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success"
+            }
+          ]
+        },
+        {
+          "id": 136076819386,
+          "name": "protected-acl-contract",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "conclusion": "success"
+            },
+            {
+              "name": "Test in-memory protected ACL contract",
+              "conclusion": "success"
+            },
+            {
+              "name": "Exercise LogonTrigger fixtures and read-only Windows API contracts",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success"
+            }
+          ]
+        },
+        {
+          "id": 136088512613,
+          "name": "standard-user-native",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Record required unavailable surfaces honestly"
+          ],
+          "category": "Required native environment unavailable",
+          "reason": "Hosted service session: interactive GUI, real logon, installed IPC unqualified",
+          "steps": [
+            {
+              "name": "Set up job",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/download-artifact@v4",
+              "conclusion": "success"
+            },
+            {
+              "name": "Authenticate transferred candidate",
+              "conclusion": "success"
+            },
+            {
+              "name": "Native standard-user product acceptance",
+              "conclusion": "success"
+            },
+            {
+              "name": "Record required unavailable surfaces honestly",
+              "conclusion": "failure"
+            },
+            {
+              "name": "Upload bounded native evidence",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "conclusion": "success"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 44672574068,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672574068",
+      "event": "push",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "Linux AppImage",
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "id": 136076738104,
+          "name": "Build, reproduce, inspect, and smoke AppImage",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 44672574087,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672574087",
+      "event": "push",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "Rust CI",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 136076742547,
+          "name": "Quality (format and clippy)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076742698,
+          "name": "Test (macos-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076742711,
+          "name": "Dependency policy",
+          "status": "completed",
+          "conclusion": "failure",
+          "failed_steps": [
+            "Check dependency policy"
+          ],
+          "category": "Independent dependency/security blocker",
+          "reason": "chrono RUSTSEC-2026-0543; chrono-tz RUSTSEC-2026-0555"
+        },
+        {
+          "id": 136076742767,
+          "name": "Check (macos-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076742769,
+          "name": "Web quality",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076742822,
+          "name": "Native desktop UI (Linux Qt 6)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076742865,
+          "name": "Native desktop UI (Windows Qt 6)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076742959,
+          "name": "Check (ubuntu-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076742966,
+          "name": "Test (windows-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076743012,
+          "name": "Test (ubuntu-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076743059,
+          "name": "Check (windows-latest)",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 44672574102,
+      "url": "https://github.com/nghianguyen150612/Synveil/actions/runs/44672574102",
+      "event": "push",
+      "head_sha": "fb0ee55c704e61a4e387598e93aafd39eb3fd1e7",
+      "name": "Linux native packages (DEB + RPM)",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "jobs": [
+        {
+          "id": 136076869519,
+          "name": "Desktop Qt reproducibility with generated-input diagnosis",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136076869971,
+          "name": "Build and validate DEB + RPM (unsigned CI artifacts)",
+          "status": "completed",
+          "conclusion": "cancelled"
+        },
+        {
+          "id": 136076869994,
+          "name": "sysusers/tmpfiles validation on systemd 249",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 136097180608,
+          "name": "Fedora 42 userspace DNF install, launch, erase, and preservation",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "id": 136097180978,
+          "name": "APT install, non-root launch, removal, and preservation",
+          "status": "completed",
+          "conclusion": "skipped"
+        }
+      ]
+    }
+  ],
+  "local_checks": [
+    {
+      "command": "python3 scripts/test_windows_lifecycle_execution.py",
+      "exit_code": 0,
+      "output_sha256": "066f99d36131f59a7b69f2ab797d166dd66eec343bf7c7e3c761f42563222c42"
+    },
+    {
+      "command": "python3 scripts/test_windows_native_lifecycle.py",
+      "exit_code": 0,
+      "output_sha256": "01b5ab63c4152644fc71d9d0e664da6a45a821d1fa5c21db6bb49b72fbf849c3"
+    },
+    {
+      "command": "python3 scripts/test_windows_native_provenance.py",
+      "exit_code": 0,
+      "output_sha256": "d14fea084e0de5b0c969f88ba78e4412a2d53c7f5c985f884a1dd11b182c4263"
+    },
+    {
+      "command": "python3 scripts/test_windows_protected_state_contract.py",
+      "exit_code": 0,
+      "output_sha256": "707d17a2ecf45983575cc9d2d20fe00349a2d6d7cf4702da14f6835a9115eaa6"
+    },
+    {
+      "command": "python3 scripts/test_windows_native_coordinator.py",
+      "exit_code": 0,
+      "output_sha256": "59c8180ae7b349c36f1a88f4a5d2462435ca9cfa9d18c789c9271ab86024dc8f"
+    },
+    {
+      "command": "python3 scripts/test_windows_native_evidence.py",
+      "exit_code": 0,
+      "output_sha256": "f11374e0afb086271f89719baf22272488b14bcae0298605c49c796a91e50350"
+    },
+    {
+      "command": "python3 scripts/test_windows_native_phase_ledger.py",
+      "exit_code": 0,
+      "output_sha256": "66d6e314674f6e6ea71cf48674237688347597b068c9457453dcd6ce6dfe124b"
+    },
+    {
+      "command": "python3 scripts/test_windows_lifecycle.py",
+      "exit_code": 0,
+      "output_sha256": "c6b9b1f09add0403cc07e90bfdf272129b1ddfa2f8f7675ea8218862f2516371"
+    },
+    {
+      "command": "python3 scripts/validate-windows-installer.py",
+      "exit_code": 0,
+      "output_sha256": "60aea0318b1ffb2b2f236ba6b3d6c067c44b1c456e7610453335ecb41f00a1b5"
+    },
+    {
+      "command": "python3 scripts/validate-windows-native-acceptance.py",
+      "exit_code": 0,
+      "output_sha256": "99ee443fc7337a77aca6a9e69542c225e6d94b60a6b3485e480e6362dc585f19"
+    },
+    {
+      "command": "python3 scripts/validate-installer-security-hardening.py",
+      "exit_code": 0,
+      "output_sha256": "50714efb7072fc24ab5f7861d5c62b768790ebbd50d336a9302db0687722850c"
+    },
+    {
+      "command": "bash scripts/validate-install-acceptance.sh",
+      "exit_code": 0,
+      "output_sha256": "f413fb37d5de3e3c838656e4ac91bdb28ce3abdd0a744b6c085407b29169c09e"
+    }
+  ],
+  "local_limitations": [
+    "PowerShell unavailable",
+    "Cargo unavailable",
+    "No Windows API execution"
+  ],
+  "redaction": "No credentials, raw SIDs, LUIDs, machine UUID, event XML, usernames or native paths collected. This manifest is an audit index, not authenticated native authority."
+}

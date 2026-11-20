@@ -71,48 +71,51 @@ try {
     }
     $checks.candidate_identity = 'PASS'
 
-    $priorPath = (Resolve-Path -LiteralPath $NewLogonEvidence).Path
-    $prior = Get-Content -LiteralPath $priorPath -Raw | ConvertFrom-Json
+    . (Join-Path $PSScriptRoot 'windows-native-observer-support.ps1')
+    $priorPath = Assert-P028CanonicalPath ([IO.Path]::GetFullPath($NewLogonEvidence))
+    $prior = [Text.Encoding]::UTF8.GetString([P028SafeEvidenceReader]::Read($priorPath, 262144)) | ConvertFrom-Json
     if ($prior.schema_version -ne 1 -or $prior.source_commit -cne $ExpectedSourceCommit -or
         $prior.candidate.sha256 -cne $setupHash -or [long]$prior.candidate.size_bytes -ne $setupSize -or
         $prior.candidate.release_manifest_sha256 -cne $manifestHash -or
         $prior.checks.matching_security_4624 -cne 'PASS' -or $prior.checks.interactive_logon_type -cne 'PASS' -or
-        $prior.checks.exact_logon_trigger_definition -cne 'PASS' -or $prior.checks.scheduler_logon_trigger_event -cne 'PASS' -or
-        $prior.checks.task_started_after_logon -cne 'PASS' -or $prior.checks.client_started_from_task -cne 'PASS' -or
+        $prior.checks.exact_logon_trigger_definition -cne 'PASS' -or
         $prior.session.classification -cne 'genuine_interactive' -or
         $prior.session.user_sid_sha256 -notmatch '^[0-9a-f]{64}$' -or $prior.session.authentication_luid_sha256 -notmatch '^[0-9a-f]{64}$') {
         throw 'P013_PRIOR_LOGON_EVIDENCE_INCOMPLETE'
     }
-    $checks.prior_real_logon = 'PASS'
     $targetSidHash = [string]$prior.session.user_sid_sha256
     $luidHash = [string]$prior.session.authentication_luid_sha256
-    $logonTime = [DateTimeOffset]::Parse([string]$prior.session.logon_time_utc).UtcDateTime
-    $triggerTime = [DateTimeOffset]::Parse([string]$prior.session.task_trigger_time_utc).UtcDateTime
-    $taskStartTime = [DateTimeOffset]::Parse([string]$prior.session.task_start_time_utc).UtcDateTime
-    if ($taskStartTime -lt $triggerTime -or $triggerTime -lt $logonTime) { throw 'P013_PRIOR_LOGON_TIMELINE_INVALID' }
+    $logonTime = ([DateTimeOffset]$prior.session.logon_time_utc).UtcDateTime
+    if ($logonTime -gt [DateTime]::UtcNow -or [DateTime]::UtcNow - $logonTime -gt [TimeSpan]::FromMinutes(15)) {
+        throw 'P013_PRIOR_LOGON_TIMELINE_INVALID'
+    }
 
     try {
-        $newLogons = @(Get-WinEvent -FilterHashtable @{LogName='Security';Id=4624;StartTime=$logonTime.AddSeconds(-10);EndTime=[DateTime]::UtcNow} -MaxEvents 2000 -ErrorAction Stop | Where-Object {
+        $logonEvents = @(Get-WinEvent -FilterHashtable @{LogName='Security';Id=4624;StartTime=$logonTime;EndTime=$logonTime.AddSeconds(1)} -MaxEvents 2001 -ErrorAction Stop)
+        if ($logonEvents.Count -gt 2000) { throw 'P013_SECURITY_QUERY_TRUNCATED' }
+        $newLogons = @($logonEvents | Where-Object {
             $data = Get-P013EventData $_
             $targetLogon = Convert-P013LogonId ([string]$data.TargetLogonId)
             $targetLogon -and (Hash-P013Text $targetLogon) -ceq $luidHash -and
                 (Hash-P013Text ([string]$data.TargetUserSid)) -ceq $targetSidHash -and [string]$data.LogonType -in @('2','10')
         })
-        $securityEvents = @(Get-WinEvent -FilterHashtable @{LogName='Security';Id=4634;StartTime=$taskStartTime.AddSeconds(-30);EndTime=[DateTime]::UtcNow} -MaxEvents 4000 -ErrorAction Stop)
+        $securityEvents = @(Get-WinEvent -FilterHashtable @{LogName='Security';Id=4634;StartTime=$logonTime;EndTime=[DateTime]::UtcNow} -MaxEvents 4001 -ErrorAction Stop)
+        if ($securityEvents.Count -gt 4000) { throw 'P013_SECURITY_QUERY_TRUNCATED' }
     } catch {
         $checks.security_logoff = 'BLOCKED_BY_ENVIRONMENT'
         throw 'P013_BLOCKED_BY_ENVIRONMENT: required Security event channel is unavailable to the separate observer'
     }
-    if ($newLogons.Count -eq 0) { throw 'P013_PRIOR_LOGON_EVENT_NOT_RECONFIRMED' }
+    if ($newLogons.Count -ne 1) { throw 'P013_PRIOR_LOGON_EVENT_NOT_RECONFIRMED' }
+    $checks.prior_real_logon = 'PASS'
     $matchingLogoffs = @($securityEvents | Where-Object {
         $data = Get-P013EventData $_
         $targetLogon = Convert-P013LogonId ([string]$data.TargetLogonId)
         $targetLogon -and (Hash-P013Text $targetLogon) -ceq $luidHash -and
             (Hash-P013Text ([string]$data.TargetUserSid)) -ceq $targetSidHash -and
-            $_.TimeCreated.ToUniversalTime() -ge $taskStartTime.AddSeconds(-30)
+            $_.TimeCreated -gt $newLogons[0].TimeCreated
     })
-    $logoff = $matchingLogoffs | Sort-Object TimeCreated | Select-Object -First 1
-    if (-not $logoff) { throw 'P013_REAL_LOGOFF_EVENT_MISSING' }
+    if ($matchingLogoffs.Count -ne 1) { throw 'P013_REAL_LOGOFF_EVENT_MISSING_OR_AMBIGUOUS' }
+    $logoff = $matchingLogoffs[0]
     $logoffTime = $logoff.TimeCreated.ToUniversalTime()
     $checks.security_logoff = 'PASS'
 
@@ -133,7 +136,8 @@ try {
         (Hash-P013Text (Resolve-P013Sid (Get-Acl -LiteralPath $config).Owner)) -cne $targetSidHash) {
         throw 'P013_LOGOFF_PROFILE_CONFIG_OWNER_MISMATCH'
     }
-    $configLines = @([IO.File]::ReadAllLines($config) | Where-Object { $_ -match '^\s*profile_id\s*=' })
+    $configText = [Text.Encoding]::UTF8.GetString([P028SafeEvidenceReader]::Read($config, 262144))
+    $configLines = @($configText -split '\r?\n' | Where-Object { $_ -match '^\s*profile_id\s*=' })
     if ($configLines.Count -ne 1 -or $configLines[0] -notmatch '^\s*profile_id\s*=\s*([0-9a-f-]{36})\s*$') { throw 'P013_LOGOFF_PROFILE_ID_UNAVAILABLE' }
     $profileId = $Matches[1].ToLowerInvariant()
     if ($profileId -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') { throw 'P013_LOGOFF_PROFILE_ID_UNAVAILABLE' }
@@ -161,28 +165,6 @@ try {
         throw 'P013_LOGOFF_TASK_IDENTITY_MISMATCH'
     }
 
-    try {
-        $taskEvents = @(Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-TaskScheduler/Operational';Id=100,102;StartTime=$triggerTime.AddSeconds(-5);EndTime=[DateTime]::UtcNow} -MaxEvents 4000 -ErrorAction Stop)
-    } catch { throw 'P013_BLOCKED_BY_ENVIRONMENT: Task Scheduler Operational channel is unavailable' }
-    $matchingStarts = @($taskEvents | Where-Object {
-        if ($_.Id -ne 100) { return $false }
-        $data = Get-P013EventData $_
-        ([string]$data.TaskName).TrimEnd('\') -ieq ($taskPath + $taskName).TrimEnd('\') -and
-            $_.TimeCreated.ToUniversalTime() -ge $triggerTime -and $_.TimeCreated.ToUniversalTime() -le $triggerTime.AddSeconds(30)
-    })
-    if ($matchingStarts.Count -eq 0) { throw 'P013_TASK_START_EVENT_NOT_RECONFIRMED' }
-    $matchingCompletions = @($taskEvents | Where-Object {
-        if ($_.Id -ne 102) { return $false }
-        $data = Get-P013EventData $_
-        $at = $_.TimeCreated.ToUniversalTime()
-        ([string]$data.TaskName).TrimEnd('\') -ieq ($taskPath + $taskName).TrimEnd('\') -and
-            $at -ge $logoffTime.AddSeconds(-30) -and $at -le $logoffTime.AddSeconds(90)
-    })
-    $completion = $matchingCompletions | Sort-Object TimeCreated | Select-Object -First 1
-    if (-not $completion) { throw 'P013_TASK_COMPLETION_AFTER_LOGOFF_MISSING' }
-    $taskCompletionTime = $completion.TimeCreated.ToUniversalTime()
-    $checks.task_completion = 'PASS'
-
     $productProcesses = @(Get-CimInstance Win32_Process -Filter "Name='synveil-client.exe' OR Name='synveil-desktop.exe'")
     $ownedProcesses = [Collections.Generic.List[int]]::new()
     foreach ($process in $productProcesses) {
@@ -192,7 +174,8 @@ try {
     }
     if ($ownedProcesses.Count -ne 0) { throw 'P013_CLIENT_REMAINS_AFTER_LOGOFF' }
     $checks.client_absent_after_logoff = 'PASS'; $checks.independent_process_check = 'PASS'
-    $result = 'PASS'
+    $checks.task_completion = 'BLOCKED_BY_ENVIRONMENT'
+    throw 'P013_BLOCKED_BY_ENVIRONMENT: protected task instance and independent completion evidence required'
 } catch {
     $message = [string]$_.Exception.Message
     $result = if ($message -match '^P013_BLOCKED_BY_ENVIRONMENT') { 'BLOCKED_BY_ENVIRONMENT' } else { 'FAIL' }
