@@ -11,6 +11,17 @@ impl Ledger {
     pub async fn new() -> Self {
         Self::modified(&[]).await
     }
+    /// P029 extends the same isolated P027 schema with evidence-only tables.
+    /// The tables are test fixtures and are never installed as migrations.
+    #[allow(dead_code)]
+    pub async fn new_p029() -> Self {
+        let ledger = Self::new().await;
+        sqlx::raw_sql(include_str!("p029.sql"))
+            .execute(&ledger.pool)
+            .await
+            .unwrap();
+        ledger
+    }
     pub async fn modified(replacements: &[(&str, &str)]) -> Self {
         let url = std::env::var("SYNVEIL_P027_DATABASE_URL")
             .expect("P027 requires an explicitly disposable PostgreSQL database");
