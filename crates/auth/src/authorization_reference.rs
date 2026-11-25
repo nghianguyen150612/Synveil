@@ -1,6 +1,8 @@
 //! Provisional, isolated qualification model. Inputs must come from trusted
 //! authentication and authority stores; this module is not production policy.
 
+pub mod audit_v1;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Principal {
     Browser { id: String },

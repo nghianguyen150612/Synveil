@@ -1,0 +1,141 @@
+name: v0.3 P029 security audit and revocation reference
+
+on:
+  pull_request:
+    branches: [develop/v0.3]
+    paths:
+      - 'crates/auth/src/authorization_reference.rs'
+      - 'crates/auth/src/authorization_reference/audit_v1.rs'
+      - 'crates/auth/tests/p025_reference.rs'
+      - 'crates/auth/tests/p026_reference.rs'
+      - 'crates/auth/tests/p026_transactions.rs'
+      - 'crates/auth/tests/p027_postgres.rs'
+      - 'crates/auth/tests/p029_audit_postgres.rs'
+      - 'crates/auth/tests/support/p027.rs'
+      - 'crates/auth/tests/support/p027.sql'
+      - 'crates/auth/tests/support/p029.rs'
+      - 'crates/auth/tests/support/p029.sql'
+      - 'docs/v0.3/manifests/PROMPT029_MANIFEST.md'
+      - 'docs/v0.3/security/P029_AUDIT_REVOCATION_QUALIFICATION.md'
+      - 'scripts/validate-docs.sh'
+      - '.github/workflows/v03-p029-security-audit-revocation.yml'
+  push:
+    branches: [develop/v0.3, feat/v03-p029-audit-revocation-reference]
+    paths:
+      - 'crates/auth/src/authorization_reference.rs'
+      - 'crates/auth/src/authorization_reference/audit_v1.rs'
+      - 'crates/auth/tests/p025_reference.rs'
+      - 'crates/auth/tests/p026_reference.rs'
+      - 'crates/auth/tests/p026_transactions.rs'
+      - 'crates/auth/tests/p027_postgres.rs'
+      - 'crates/auth/tests/p029_audit_postgres.rs'
+      - 'crates/auth/tests/support/p027.rs'
+      - 'crates/auth/tests/support/p027.sql'
+      - 'crates/auth/tests/support/p029.rs'
+      - 'crates/auth/tests/support/p029.sql'
+      - 'docs/v0.3/manifests/PROMPT029_MANIFEST.md'
+      - 'docs/v0.3/security/P029_AUDIT_REVOCATION_QUALIFICATION.md'
+      - 'scripts/validate-docs.sh'
+      - '.github/workflows/v03-p029-security-audit-revocation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-postgres:
+    name: Linux PostgreSQL 17 reference and recovery
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: p027
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d p027"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      SYNVEIL_P027_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/p027
+      SYNVEIL_P027_DISPOSABLE: '1'
+      SYNVEIL_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/p027
+      P029_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install auth build prerequisites
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+      - name: Record exact source and PostgreSQL
+        run: |
+          mkdir -p target/p029-evidence
+          git rev-parse HEAD | tee target/p029-evidence/source.txt
+          rustc --version | tee -a target/p029-evidence/source.txt
+          psql "$SYNVEIL_P027_DATABASE_URL" -Atc 'SHOW server_version' | tee -a target/p029-evidence/source.txt
+          psql "$SYNVEIL_P027_DATABASE_URL" -Atc 'SHOW server_version' | rg '^17\.'
+      - name: P025 and P026 compatibility contracts
+        run: cargo test -p synveil-auth --test p025_reference --test p026_reference --test p026_transactions --locked
+      - name: P027 PostgreSQL authority and revocation regressions
+        run: cargo test -p synveil-auth --test p027_postgres --locked -- --ignored --test-threads=4
+      - name: P029 PostgreSQL audit, ordering and recovery
+        run: cargo test -p synveil-auth --test p029_audit_postgres --locked -- --ignored --test-threads=4
+      - name: Prepare P029 evidence for PostgreSQL process restart
+        env:
+          SYNVEIL_P029_RESTART_PHASE: prepare
+          SYNVEIL_P029_RESTART_SCHEMA_FILE: ${{ runner.temp }}/p029-restart-schema.txt
+        run: cargo test -p synveil-auth --test p029_audit_postgres --locked p029_authority_and_evidence_survive_database_restart -- --exact --ignored
+      - name: Restart the disposable PostgreSQL service
+        run: |
+          docker restart "$P029_POSTGRES_CONTAINER"
+          for attempt in $(seq 1 30); do
+            if pg_isready -h 127.0.0.1 -p 5432 -U postgres -d p027; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: Verify P029 evidence after PostgreSQL restart
+        env:
+          SYNVEIL_P029_RESTART_PHASE: verify
+          SYNVEIL_P029_RESTART_SCHEMA_FILE: ${{ runner.temp }}/p029-restart-schema.txt
+        run: cargo test -p synveil-auth --test p029_audit_postgres --locked p029_authority_and_evidence_survive_database_restart -- --exact --ignored
+      - name: Strict auth lint and formatting
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy -p synveil-auth --all-targets --locked -- -D warnings
+      - name: Documentation and whitespace
+        run: |
+          bash scripts/validate-docs.sh
+          git diff --check
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: p029-qualification-${{ github.sha }}-${{ github.run_id }}
+          path: target/p029-evidence/source.txt
+          if-no-files-found: warn
+
+  windows-contracts:
+    name: Windows P025-P029 contracts and compile
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: P025 and P026 compatibility contracts
+        run: cargo test -p synveil-auth --test p025_reference --test p026_reference --test p026_transactions --locked
+      - name: P029 verifier and PostgreSQL harness compile
+        run: |
+          cargo test -p synveil-auth --lib authorization_reference::audit_v1 --locked
+          cargo test -p synveil-auth --test p029_audit_postgres --no-run --locked
+      - name: Strict formatting and auth lint
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy -p synveil-auth --all-targets --locked -- -D warnings
