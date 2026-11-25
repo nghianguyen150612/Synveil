@@ -55,7 +55,9 @@ The P029 qualification also prepares a committed authority mutation and its evid
 | Revocation traceability | Reference-only | P027 fence, revocation and ordering fixture tests; no global production freshness claim. |
 | Completeness/integrity checks | Implemented in reference | Checkpoint, sequence, digest and P027 linkage checks; checkpoint shares the database trust domain. |
 | Redaction/scoped access | Reference-only | Minimal typed fields, bounded identifiers, foreign/unknown denial, owner equality and bounded page; no production audit reader. |
-| P025–P027 compatibility | Local tests pass; exact-head CI pending | No policy, auth, SQL authority semantics or legacy route changed. |
+| P025–P027 compatibility | PASS in the focused exact-head Linux/Windows workflow at source SHA `a9142118ce620017c2798128b590d7a1afae3d03`; PR #190 records the latest head result. | No policy, auth, SQL authority semantics or legacy route changed. |
 | Production security | **BLOCKED** | P004 decisions, retention/privacy/access, independent integrity anchor, migrations/rollback, call-site review and independent security review remain outstanding. |
+
+The reference implementation gate is `REFERENCE_QUALIFIED` for the source SHA above. The P029 roadmap scope remains provisional; PR #190 records the latest exact-head hosted result. This qualification does not satisfy the production security gate.
 
 No claim is made that database hashes prove approval, that a database administrator cannot alter evidence, or that external effects are exactly-once. Production RBAC, privileged tokens, API endpoints, audit export and policy changes remain disabled.

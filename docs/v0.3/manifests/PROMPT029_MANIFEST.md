@@ -56,7 +56,7 @@ Local validation was run against the current P029 source before commit using Rus
 | P027 PostgreSQL regressions | PASS, 15 tests. |
 | Auth all-target Clippy with `--locked -- -D warnings` | PASS on final local source. |
 | Documentation validation and `git diff --check` | PASS; all 24 documentation validation units passed. |
-| Exact-head hosted Linux/Windows workflow | Pending push; no hosted result is claimed. |
+| Exact-head hosted Linux/Windows workflow | PASS at PR source SHA `a9142118ce620017c2798128b590d7a1afae3d03`; Linux and Windows jobs passed. The final pushed head and latest run are recorded in PR #190: https://github.com/nghianguyen150612/Synveil/pull/190. |
 
 Executed commands:
 
@@ -75,6 +75,6 @@ The local Rust 1.100.0 build emitted 40 existing deprecation warnings from vendo
 
 ## Qualification gates and handoff
 
-The reference gate is `PARTIAL` until focused tests and exact-head CI complete. Production security remains **BLOCKED** on approved role/policy semantics; retention/privacy/access rules; independent integrity anchor; production schema/migration/rollback; production call-site and API review; and independent security review. This work makes no production authority change.
+The reference implementation is `REFERENCE_QUALIFIED` for a pushed source head only when the focused Linux and Windows jobs pass. The first exact-head hosted qualification passed at `a9142118ce620017c2798128b590d7a1afae3d03`; PR #190 records the latest exact-head result. The roadmap scope remains provisional. Production security remains **BLOCKED** on approved role/policy semantics; retention/privacy/access rules; independent integrity anchor; production schema/migration/rollback; production call-site and API review; and independent security review. This work makes no production authority change.
 
 P030 may safely consider only the reviewed P027 transaction/outbox boundaries and this test-only evidence contract as context. Reconcile the authoritative roadmap before assigning P030 scope. Maintainer approval is still required for P004-D05/D06 and any production audit policy. Preserve separate P027 SQLx/dependency advisories and failures, P028 native acceptance blockers, and P036 signing dependencies; this PR does not resolve them. Do not merge this PR or start P030 from this checkpoint.
