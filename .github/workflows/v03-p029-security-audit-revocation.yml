@@ -80,7 +80,7 @@ jobs:
           git rev-parse HEAD | tee target/p029-evidence/source.txt
           rustc --version | tee -a target/p029-evidence/source.txt
           psql "$SYNVEIL_P027_DATABASE_URL" -Atc 'SHOW server_version' | tee -a target/p029-evidence/source.txt
-          psql "$SYNVEIL_P027_DATABASE_URL" -Atc 'SHOW server_version' | rg '^17\.'
+          psql "$SYNVEIL_P027_DATABASE_URL" -Atc 'SHOW server_version' | grep '^17\.'
       - name: P025 and P026 compatibility contracts
         run: cargo test -p synveil-auth --test p025_reference --test p026_reference --test p026_transactions --locked
       - name: P027 PostgreSQL authority and revocation regressions
