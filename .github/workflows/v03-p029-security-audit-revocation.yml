@@ -73,7 +73,7 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Install auth build prerequisites
-        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev ripgrep
       - name: Record exact source and PostgreSQL
         run: |
           mkdir -p target/p029-evidence
