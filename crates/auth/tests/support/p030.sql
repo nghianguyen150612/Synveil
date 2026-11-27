@@ -1,4 +1,12 @@
 -- Test-only delivery projection. The P029 event remains the evidence authority.
+-- Lock out concurrent inserts until the empty-stream check and trigger installation commit.
+BEGIN;
+LOCK TABLE p029_events IN ACCESS EXCLUSIVE MODE;
+DO $$ BEGIN
+ IF EXISTS (SELECT 1 FROM p029_events) THEN
+  RAISE EXCEPTION 'P030 installation requires an empty P029 event stream';
+ END IF;
+END $$;
 CREATE TABLE p030_delivery (
  event_id text PRIMARY KEY REFERENCES p029_events(event_id),
  owner_id text NOT NULL,
@@ -22,3 +30,5 @@ BEGIN
 END $$;
 CREATE TRIGGER p030_enqueue AFTER INSERT ON p029_events
  FOR EACH ROW EXECUTE FUNCTION p030_enqueue();
+
+COMMIT;
