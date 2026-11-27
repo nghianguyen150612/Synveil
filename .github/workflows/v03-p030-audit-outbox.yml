@@ -1,0 +1,41 @@
+name: v0.3 P030 partial projection
+on:
+  pull_request:
+    branches: [feat/v03-p029-audit-revocation-reference]
+  push:
+    branches: [feat/v03-p030-audit-outbox-recovery]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: p027
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d p027"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      SYNVEIL_P027_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/p027
+      SYNVEIL_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/p027
+      SYNVEIL_P027_DISPOSABLE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev ripgrep
+      - run: git rev-parse HEAD && psql "$SYNVEIL_P027_DATABASE_URL" -Atc 'show server_version'
+      - run: cargo fmt --all -- --check
+      - run: cargo test -p synveil-auth --test p025_reference --test p026_reference --test p026_transactions --locked
+      - run: cargo test -p synveil-auth --test p027_postgres --locked -- --ignored --test-threads=4
+      - run: cargo test -p synveil-auth --test p029_audit_postgres --locked -- --ignored --test-threads=4
+      - run: cargo test -p synveil-auth --test p030_postgres --locked -- --ignored --test-threads=4
+      - run: cargo clippy -p synveil-auth --all-targets --locked -- -D warnings
+      - run: bash scripts/validate-docs.sh && git diff --check
